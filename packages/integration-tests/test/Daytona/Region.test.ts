@@ -8,7 +8,25 @@ import * as Redacted from "effect/Redacted";
 
 const { test } = Test.make({ providers: Daytona.providers() });
 
-test.provider(
+// Daytona Cloud has no custom regions; set DAYTONA_TEST_CUSTOM_REGIONS=1
+// against a deployment that does (self-hosted, enterprise).
+const customRegions = !!process.env.DAYTONA_TEST_CUSTOM_REGIONS;
+
+test.provider.skipIf(customRegions)(
+  "a deployment without custom regions fails with CustomRegionsUnavailable",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const error = yield* stack
+        .deploy(Daytona.Region("Home", { proxyUrl: "https://proxy.example.com" }))
+        .pipe(Effect.flip);
+      expect(error._tag).toEqual("CustomRegionsUnavailable");
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 120_000 },
+);
+
+test.provider.skipIf(!customRegions)(
   "register a custom region and a runner, rotate a key, drain the runner, delete both",
   (stack) =>
     Effect.gen(function* () {

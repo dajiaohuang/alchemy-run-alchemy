@@ -3,6 +3,7 @@ import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
 import * as volumes from "@distilled.cloud/daytona/volumes";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: Daytona.providers() });
 
@@ -10,6 +11,16 @@ const state = (volumeId: string) =>
   volumes.getVolume({ volumeId }).pipe(
     Effect.map((v) => v.state),
     Effect.catchTag("VolumeNotFound", () => Effect.succeed("deleted" as const)),
+  );
+
+// Deletion is asynchronous: the volume sits in pending_delete for a few seconds.
+const deleted = (volumeId: string) =>
+  state(volumeId).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("2 seconds"),
+      until: (s) => s === "deleted",
+      times: 20,
+    }),
   );
 
 test.provider(
@@ -29,10 +40,10 @@ test.provider(
         Daytona.Volume("Data", { name: `${created.name}-renamed` }),
       );
       expect(renamed.volumeId).not.toEqual(created.volumeId);
-      expect(yield* state(created.volumeId)).toEqual("deleted");
+      expect(yield* deleted(created.volumeId)).toEqual("deleted");
 
       yield* stack.destroy();
-      expect(yield* state(renamed.volumeId)).toEqual("deleted");
+      expect(yield* deleted(renamed.volumeId)).toEqual("deleted");
     }),
   { tags: ["provider:daytona", "live"], timeout: 180_000 },
 );
