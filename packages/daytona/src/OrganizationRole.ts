@@ -1,15 +1,26 @@
 import * as organizations from "@distilled.cloud/daytona/organizations";
 import { Unowned } from "alchemy/AdoptPolicy";
-import { deepEqual } from "alchemy/Diff";
+import { deepEqual, isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import type { Permission } from "./ApiKey.ts";
 import { isOwnedName, resolveName } from "./internal/Names.ts";
-import { currentOrganizationId } from "./internal/Organization.ts";
+import {
+  currentOrganizationId,
+  movesOrganization,
+  organizationIdFor,
+  type OrganizationRef,
+} from "./internal/Organization.ts";
+import type { Ref } from "./internal/Ref.ts";
 import type { Providers } from "./Providers.ts";
 
 export interface OrganizationRoleProps {
+  /**
+   * Organization to act on, e.g. a `Daytona.Organization`. Defaults to the
+   * credentials' organization. Changing it replaces the resource.
+   */
+  organization?: Ref<OrganizationRef>;
   /**
    * Role name. If omitted, a unique name is generated from the stack,
    * stage and logical ID. Renames update in place.
@@ -88,6 +99,11 @@ export const OrganizationRoleProvider = () =>
         const roles = yield* listRoles(organizationId);
         return roles.filter((r) => !r.isGlobal).map((r) => toAttributes(organizationId, r));
       }),
+      diff: Effect.fn(function* ({ news, output }) {
+        if (!isResolved(news) || output === undefined) return undefined;
+        if (yield* movesOrganization(news.organization, output))
+          return { action: "replace" } as const;
+      }),
       read: Effect.fn(function* ({ id, olds, output }) {
         const organizationId = output?.organizationId ?? (yield* currentOrganizationId);
         const name = yield* resolveName(id, olds?.name, output?.name);
@@ -99,7 +115,7 @@ export const OrganizationRoleProvider = () =>
         return (yield* isOwnedName(id, found.name, output !== undefined)) ? attrs : Unowned(attrs);
       }),
       reconcile: Effect.fn(function* ({ id, news, output }) {
-        const organizationId = output?.organizationId ?? (yield* currentOrganizationId);
+        const organizationId = yield* organizationIdFor(news.organization);
         const name = yield* resolveName(id, news.name, output?.name);
         const description = news.description ?? "";
         // Observe

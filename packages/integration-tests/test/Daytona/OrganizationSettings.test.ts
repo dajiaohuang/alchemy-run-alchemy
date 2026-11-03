@@ -6,7 +6,29 @@ import * as Effect from "effect/Effect";
 
 const { test } = Test.make({ providers: Daytona.providers() });
 
-test.provider(
+// Daytona Cloud (v0.229) does not serve the default-queue-timeout route; set
+// DAYTONA_TEST_QUEUE_TIMEOUT=1 against a deployment that does.
+const queueTimeout = !!process.env.DAYTONA_TEST_QUEUE_TIMEOUT;
+
+test.provider.skipIf(queueTimeout)(
+  "a deployment without the queue-timeout route fails with DefaultQueueTimeoutUnavailable",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const error = yield* stack
+        .deploy(Daytona.OrganizationSettings("Settings", { defaultQueueTimeout: "90 seconds" }))
+        .pipe(Effect.flip);
+      expect(error._tag).toEqual("DefaultQueueTimeoutUnavailable");
+      yield* stack.destroy();
+    }),
+  {
+    tags: ["provider:daytona", "live"],
+    exclusive: "daytona:organization-settings",
+    timeout: 120_000,
+  },
+);
+
+test.provider.skipIf(!queueTimeout)(
   "change the default queue timeout and restore it on destroy",
   (stack) =>
     Effect.gen(function* () {

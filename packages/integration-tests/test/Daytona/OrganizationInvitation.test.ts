@@ -7,9 +7,11 @@ import * as Effect from "effect/Effect";
 const { test } = Test.make({ providers: Daytona.providers() });
 
 const pending = (organizationId: string, invitationId: string) =>
-  organizations
-    .listOrganizationInvitations({ organizationId })
-    .pipe(Effect.map((all) => all.find((i) => i.id === invitationId && i.status === "pending")));
+  organizations.listOrganizationInvitations({ organizationId }).pipe(
+    Effect.map((all) => all.find((i) => i.id === invitationId && i.status === "pending")),
+    // Destroy deletes the team organization along with its invitations.
+    Effect.catchTag("OrganizationNotFound", () => Effect.undefined),
+  );
 
 test.provider(
   "invite an email with a custom role, change the role, cancel on destroy",
@@ -20,11 +22,15 @@ test.provider(
       const deploy = (permissions: Daytona.Permission[]) =>
         stack.deploy(
           Effect.gen(function* () {
-            const role = yield* Daytona.OrganizationRole("Invitee", { permissions });
+            // Daytona refuses invitations to a personal organization.
+            const organization = yield* Daytona.Organization("Team", { defaultRegionId: "us" });
+            const role = yield* Daytona.OrganizationRole("Invitee", { organization, permissions });
             const other = yield* Daytona.OrganizationRole("Reader", {
+              organization,
               permissions: ["read:volumes"],
             });
             const invitation = yield* Daytona.OrganizationInvitation("Invite", {
+              organization,
               email: `alchemy-daytona-${stack.stage}@example.com`,
               roles: permissions.length > 1 ? [role, other] : [role],
             });

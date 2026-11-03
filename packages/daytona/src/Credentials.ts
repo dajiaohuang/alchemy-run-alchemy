@@ -26,11 +26,12 @@ export const fromAuthProvider = () =>
     lazyCredentials<DaytonaResolvedCredentials, ConfigError>()(
       DAYTONA_AUTH_PROVIDER_NAME,
       (creds) => ({
-        apiKey: creds.apiKey,
+        apiKey: creds.token,
         apiBaseUrl: creds.apiBaseUrl,
         analyticsBaseUrl: DEFAULT_ANALYTICS_BASE_URL,
         toolboxBaseUrl: DEFAULT_TOOLBOX_BASE_URL,
         organizationId: creds.organizationId,
       }),
+      { expiresAt: (creds) => creds.expires },
     ),
   );

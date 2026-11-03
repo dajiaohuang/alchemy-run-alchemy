@@ -1,5 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Daytona from "@alchemy.run/daytona";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -120,7 +121,13 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
         }
 
         return HttpServerResponse.text("not found", { status: 404 });
-      }).pipe(Effect.scoped, Effect.orDie),
+      }).pipe(
+        Effect.scoped,
+        // Answer failures and defects with the cause so a failing test shows it.
+        Effect.catchCause((cause) =>
+          Effect.succeed(HttpServerResponse.text(Cause.pretty(cause), { status: 500 })),
+        ),
+      ),
     };
   }).pipe(
     Effect.provide(

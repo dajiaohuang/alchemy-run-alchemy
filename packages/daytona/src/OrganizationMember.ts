@@ -4,12 +4,21 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { currentOrganizationId } from "./internal/Organization.ts";
+import {
+  movesOrganization,
+  organizationIdFor,
+  type OrganizationRef,
+} from "./internal/Organization.ts";
 import { resolved, type Ref } from "./internal/Ref.ts";
 import type { MemberRole, RoleRef } from "./OrganizationInvitation.ts";
 import type { Providers } from "./Providers.ts";
 
 export interface OrganizationMemberProps {
+  /**
+   * Organization to act on, e.g. a `Daytona.Organization`. Defaults to the
+   * credentials' organization. Changing it replaces the resource.
+   */
+  organization?: Ref<OrganizationRef>;
   /** The member, by user ID or email. Changing it replaces the resource. */
   user: string;
   /** Base role. */
@@ -106,6 +115,8 @@ export const OrganizationMemberProvider = () =>
       list: () => Effect.succeed([]),
       diff: Effect.fn(function* ({ news, output }) {
         if (!isResolved(news) || output === undefined) return undefined;
+        if (yield* movesOrganization(news.organization, output))
+          return { action: "replace" } as const;
         if (news.user !== output.userId && news.user !== output.email)
           return { action: "replace" } as const;
       }),
@@ -115,7 +126,7 @@ export const OrganizationMemberProvider = () =>
         return found ? toAttributes(found, output.original, output.removeOnDestroy) : undefined;
       }),
       reconcile: Effect.fn(function* ({ news, output }) {
-        const organizationId = output?.organizationId ?? (yield* currentOrganizationId);
+        const organizationId = yield* organizationIdFor(news.organization);
         const member = yield* findMember(organizationId, output?.userId ?? news.user);
         if (member === undefined) return yield* new MemberNotInOrganization({ user: news.user });
         const original = output?.original ?? {

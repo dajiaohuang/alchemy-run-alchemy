@@ -1,12 +1,23 @@
 import * as webhooks from "@distilled.cloud/daytona/webhooks";
+import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
-import { currentOrganizationId } from "./internal/Organization.ts";
+import {
+  movesOrganization,
+  organizationIdFor,
+  type OrganizationRef,
+} from "./internal/Organization.ts";
+import type { Ref } from "./internal/Ref.ts";
 import { waitForState } from "./internal/Wait.ts";
 import type { Providers } from "./Providers.ts";
 
 export interface WebhooksProps {
+  /**
+   * Organization to act on, e.g. a `Daytona.Organization`. Defaults to the
+   * credentials' organization. Changing it replaces the resource.
+   */
+  organization?: Ref<OrganizationRef>;
   /**
    * Bump to re-sync the organization's webhook endpoints with Daytona's
    * event types on the next deploy.
@@ -58,6 +69,10 @@ const status = (organizationId: string) =>
       ...s,
       state: s.svixApplicationId ? "ready" : s.lastError ? "error" : "pending",
     })),
+    // Before initialization Daytona has no status to report.
+    Effect.catchTag("WebhooksNotInitialized", () =>
+      Effect.succeed({ svixApplicationId: undefined, lastError: undefined, state: "pending" }),
+    ),
   );
 
 export const WebhooksProvider = () =>
@@ -67,8 +82,13 @@ export const WebhooksProvider = () =>
       stables: ["organizationId", "svixApplicationId"],
       nuke: { singleton: true },
       list: () => Effect.succeed([]),
+      diff: Effect.fn(function* ({ news, output }) {
+        if (!isResolved(news) || output === undefined) return undefined;
+        if (yield* movesOrganization(news.organization, output))
+          return { action: "replace" } as const;
+      }),
       reconcile: Effect.fn(function* ({ news, output }) {
-        const organizationId = output?.organizationId ?? (yield* currentOrganizationId);
+        const organizationId = yield* organizationIdFor(news.organization);
         // Observe
         let current = yield* status(organizationId);
         // Ensure

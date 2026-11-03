@@ -3,7 +3,12 @@ import { deepEqual, isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
-import { currentOrganizationId } from "./internal/Organization.ts";
+import {
+  currentOrganizationId,
+  movesOrganization,
+  organizationIdFor,
+  type OrganizationRef,
+} from "./internal/Organization.ts";
 import { resolved, type Ref } from "./internal/Ref.ts";
 import type { Providers } from "./Providers.ts";
 
@@ -14,6 +19,11 @@ export type RoleRef = { readonly roleId: string };
 export type MemberRole = "owner" | "member";
 
 export interface OrganizationInvitationProps {
+  /**
+   * Organization to act on, e.g. a `Daytona.Organization`. Defaults to the
+   * credentials' organization. Changing it replaces the resource.
+   */
+  organization?: Ref<OrganizationRef>;
   /** Email to invite. Changing it replaces the invitation. */
   email: string;
   /** Base role. @default "member" */
@@ -93,6 +103,8 @@ export const OrganizationInvitationProvider = () =>
       }),
       diff: Effect.fn(function* ({ news, output }) {
         if (!isResolved(news) || output === undefined) return undefined;
+        if (yield* movesOrganization(news.organization, output))
+          return { action: "replace" } as const;
         if (news.email !== output.email) return { action: "replace" } as const;
       }),
       read: Effect.fn(function* ({ output }) {
@@ -104,7 +116,7 @@ export const OrganizationInvitationProvider = () =>
         return found ? toAttributes(found) : undefined;
       }),
       reconcile: Effect.fn(function* ({ news, output }) {
-        const organizationId = output?.organizationId ?? (yield* currentOrganizationId);
+        const organizationId = yield* organizationIdFor(news.organization);
         const assignedRoleIds = yield* resolveRoles(news.roles);
         const role = news.role ?? "member";
         // Observe the pending invitation for this email.

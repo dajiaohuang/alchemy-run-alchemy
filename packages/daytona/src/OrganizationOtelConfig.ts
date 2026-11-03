@@ -1,13 +1,24 @@
 import * as organizations from "@distilled.cloud/daytona/organizations";
-import { deepEqual } from "alchemy/Diff";
+import { deepEqual, isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { currentOrganizationId } from "./internal/Organization.ts";
+import {
+  currentOrganizationId,
+  movesOrganization,
+  organizationIdFor,
+  type OrganizationRef,
+} from "./internal/Organization.ts";
+import type { Ref } from "./internal/Ref.ts";
 import type { Providers } from "./Providers.ts";
 
 export interface OrganizationOtelConfigProps {
+  /**
+   * Organization to act on, e.g. a `Daytona.Organization`. Defaults to the
+   * credentials' organization. Changing it replaces the resource.
+   */
+  organization?: Ref<OrganizationRef>;
   /** OTLP/HTTP endpoint sandboxes export telemetry to. */
   endpoint: string;
   /** Headers sent with every export, e.g. an API key. */
@@ -65,6 +76,11 @@ const plainHeaders = (headers: OrganizationOtelConfigProps["headers"]) =>
         ]),
       );
 
+// getOrganizationOtelConfig is for Daytona's runners and proxy (users get
+// 401); the organization itself carries the config.
+const observeOtelConfig = (organizationId: string) =>
+  Effect.map(organizations.getOrganization({ organizationId }), (o) => o.otelConfig);
+
 export const OrganizationOtelConfigProvider = () =>
   Provider.effect(
     OrganizationOtelConfig,
@@ -72,9 +88,14 @@ export const OrganizationOtelConfigProvider = () =>
       stables: ["organizationId"],
       nuke: { singleton: true },
       list: () => Effect.succeed([]),
+      diff: Effect.fn(function* ({ news, output }) {
+        if (!isResolved(news) || output === undefined) return undefined;
+        if (yield* movesOrganization(news.organization, output))
+          return { action: "replace" } as const;
+      }),
       read: Effect.fn(function* ({ output }) {
         const organizationId = output?.organizationId ?? (yield* currentOrganizationId);
-        const config = yield* organizations.getOrganizationOtelConfig({ organizationId });
+        const config = yield* observeOtelConfig(organizationId);
         if (!config?.endpoint) return undefined;
         return {
           organizationId,
@@ -83,10 +104,10 @@ export const OrganizationOtelConfigProvider = () =>
         };
       }),
       reconcile: Effect.fn(function* ({ news, olds, output }) {
-        const organizationId = output?.organizationId ?? (yield* currentOrganizationId);
+        const organizationId = yield* organizationIdFor(news.organization);
         // Observe — header values aren't returned, so they are written
         // whenever they changed since the last deploy (or on first deploy).
-        const current = yield* organizations.getOrganizationOtelConfig({ organizationId });
+        const current = yield* observeOtelConfig(organizationId);
         const headers = plainHeaders(news.headers);
         if (
           current?.endpoint !== news.endpoint ||

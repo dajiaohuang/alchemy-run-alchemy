@@ -8,8 +8,10 @@ import * as apiKeys from "@distilled.cloud/daytona/api_keys";
 import * as sandboxes from "@distilled.cloud/daytona/sandbox";
 import * as Alchemy from "alchemy";
 import { Stage } from "alchemy/Stage";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import { DevBox } from "./fixtures/resources.ts";
@@ -31,13 +33,25 @@ const Stack = Alchemy.Stack(
 const stack = beforeAll(deploy(Stack));
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
+/** The Worker answered 500: the route ran and failed, so there is nothing to retry. */
+class RouteFailed extends Data.TaggedError("RouteFailed")<{ path: string; body: string }> {
+  override get message() {
+    return `${this.path} failed: ${this.body}`;
+  }
+}
+
 const get = (path: string) =>
   Effect.gen(function* () {
     const { url, stage } = yield* stack;
-    const client = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
-    const res = yield* client
-      .get(`${url}${path}?prefix=${encodeURIComponent(stage)}`)
-      .pipe(Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }));
+    const client = yield* HttpClient.HttpClient;
+    // Retry only while the fresh workers.dev URL propagates.
+    const res = yield* client.get(`${url}${path}?prefix=${encodeURIComponent(stage)}`).pipe(
+      Effect.flatMap((res) =>
+        res.status === 500 ? Effect.succeed(res) : HttpClientResponse.filterStatusOk(res),
+      ),
+      Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }),
+    );
+    if (res.status === 500) return yield* new RouteFailed({ path, body: yield* res.text });
     return (yield* res.json) as any;
   });
 
@@ -72,11 +86,8 @@ describe("CreateSandbox", () => {
     "the Worker's key has only the sandbox permissions",
     Effect.gen(function* () {
       const keys = yield* apiKeys.listApiKeys({});
-      const key = keys.find(
-        (k) =>
-          k.name.includes("DaytonaWorkerSandboxesApiKey") ||
-          k.name.includes("daytonaworkersandboxes"),
-      );
+      // Physical names are truncated: ...-daytonaworkersandb<suffix>.
+      const key = keys.find((k) => k.name.includes("daytonaworkersandb"));
       expect([...(key?.permissions ?? [])].sort()).toEqual(["delete:sandboxes", "write:sandboxes"]);
     }).pipe(outOfBand),
     { tags, timeout: 60_000 },

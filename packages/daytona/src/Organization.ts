@@ -1,4 +1,5 @@
 import * as organizations from "@distilled.cloud/daytona/organizations";
+import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
@@ -8,7 +9,10 @@ import type { Providers } from "./Providers.ts";
 export interface OrganizationProps {
   /** Organization name. If omitted, generated from the stack, stage and logical ID. */
   name?: string;
-  /** Region new sandboxes go to by default. */
+  /**
+   * Region new sandboxes go to by default. Daytona sets it once, so changing
+   * it replaces the organization.
+   */
   defaultRegionId: string;
 }
 
@@ -59,6 +63,22 @@ export const OrganizationProvider = () =>
       stables: ["organizationId"],
       nuke: { skip: true },
       list: () => Effect.succeed([]),
+      diff: Effect.fn(function* ({ id, news, output }) {
+        if (!isResolved(news) || output === undefined) return undefined;
+        const name = yield* resolveName(
+          id,
+          news.name,
+          news.name === undefined ? output.name : undefined,
+        );
+        // Reconcile finds an organization by name, so the old one must go
+        // first or the replacement would adopt it.
+        if (
+          name !== output.name ||
+          (output.defaultRegionId !== undefined && news.defaultRegionId !== output.defaultRegionId)
+        ) {
+          return { action: "replace", deleteFirst: true } as const;
+        }
+      }),
       read: Effect.fn(function* ({ output }) {
         if (output === undefined) return undefined;
         return yield* organizations.getOrganization({ organizationId: output.organizationId }).pipe(
@@ -81,8 +101,9 @@ export const OrganizationProvider = () =>
             defaultRegionId: news.defaultRegionId,
           });
         }
-        // Sync
-        if (current.defaultRegionId !== news.defaultRegionId) {
+        // Sync: Daytona only accepts a default region while none is set
+        // (an adopted organization); changing one replaces (see diff).
+        if (current.defaultRegionId === undefined) {
           yield* organizations.setOrganizationDefaultRegion({
             organizationId: current.id,
             defaultRegionId: news.defaultRegionId,

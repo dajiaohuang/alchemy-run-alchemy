@@ -12,13 +12,18 @@ test.provider(
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
+      // Daytona refuses SSO on a personal organization.
       const props = (emailDomains: string[]) =>
-        Daytona.IdentityProvider("Sso", {
-          issuerUrl: "https://accounts.google.com",
-          clientId: "alchemy-test",
-          clientSecret: Redacted.make("not-a-secret"),
-          emailDomains,
-          enabled: false,
+        Effect.gen(function* () {
+          const organization = yield* Daytona.Organization("Team", { defaultRegionId: "us" });
+          return yield* Daytona.IdentityProvider("Sso", {
+            organization,
+            issuerUrl: "https://accounts.google.com",
+            clientId: "alchemy-test",
+            clientSecret: Redacted.make("not-a-secret"),
+            emailDomains,
+            enabled: false,
+          });
         });
       const created = yield* stack.deploy(props([`${stack.stage}.example.com`]));
       const updated = yield* stack.deploy(
@@ -30,9 +35,9 @@ test.provider(
         `${stack.stage}.example.org`,
       ]);
       yield* stack.destroy();
-      const all = yield* organizations.listOrganizationIdentityProviders({
-        organizationId: created.organizationId,
-      });
+      const all = yield* organizations
+        .listOrganizationIdentityProviders({ organizationId: created.organizationId })
+        .pipe(Effect.catchTag("OrganizationNotFound", () => Effect.succeed([])));
       expect(all.some((p) => p.id === created.identityProviderId)).toBe(false);
     }),
   { tags: ["provider:daytona", "live"], timeout: 120_000 },
