@@ -136,6 +136,18 @@ export const WebhookTokenProvider = () =>
           if (found && output) {
             current = { ...output, name: found.name ?? output.name };
           } else {
+            // A token under our generated name that state doesn't hold is
+            // left from a create that failed before state was saved; its
+            // secret is lost, so replace it.
+            if (news.name === undefined) {
+              const { tokens } = yield* webhook.listWebhookToken({});
+              for (const stale of (tokens ?? []).filter((t) => t.name === name)) {
+                if (!stale.tokenId) continue;
+                yield* webhook
+                  .deleteWebhookToken({ tokenId: stale.tokenId })
+                  .pipe(Effect.catchTag("WebhookTokenNotFound", () => Effect.void));
+              }
+            }
             // Ensure
             yield* session.note(`Creating webhook token ${name}...`);
             const created = yield* webhook.createWebhookToken({ name, scoped });
