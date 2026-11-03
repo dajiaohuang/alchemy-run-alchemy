@@ -3,7 +3,6 @@ import { Unowned } from "alchemy/AdoptPolicy";
 import { deepEqual, isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
-import { createInternalTags, hasAlchemyTags } from "alchemy/Tags";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import {
@@ -14,6 +13,7 @@ import {
   objectName,
   stringMap,
 } from "./internal.ts";
+import { createModalInternalTags, hasModalAlchemyTags, isAlchemyTagged } from "./internal/Tags.ts";
 import type { Providers } from "./Providers.ts";
 
 export class AppUnexpectedResponse extends Data.TaggedError("Modal.AppUnexpectedResponse")<{
@@ -33,7 +33,8 @@ export interface AppProps {
   environment?: EnvironmentInput;
   /**
    * Key-value metadata on the app, shown in the Modal dashboard and usable
-   * for filtering. Alchemy adds its own `alchemy::*` ownership tags.
+   * for filtering. Alchemy adds its own `alchemy.*` ownership tags. Keys and values may
+   * contain only letters, digits, `.`, `_` and `-`, up to 63 characters.
    */
   tags?: Record<string, string>;
 }
@@ -124,8 +125,10 @@ export const AppProvider = () =>
     App,
     Effect.gen(function* () {
       const observe = Effect.fn(function* (name: string, env: string | undefined) {
+        // Without a creation type, get-or-create only looks the app up
+        // (Modal no longer serves `AppLookup`).
         const found = yield* app
-          .lookupApp({ appName: name, environmentName: environmentOf(env) })
+          .appGetOrCreate({ appName: name, environmentName: environmentOf(env) })
           .pipe(Effect.catchTag("AppNotFound", () => Effect.undefined));
         if (!found?.appId) return undefined;
         const { tags } = yield* app
@@ -156,7 +159,7 @@ export const AppProvider = () =>
             output?.environment ?? envNameOf(olds?.environment),
           );
           if (!observed) return undefined;
-          const ours = yield* hasAlchemyTags(id, observed.tags);
+          const ours = yield* hasModalAlchemyTags(id, observed.tags);
           return ours ? observed : Unowned(observed);
         }),
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
@@ -184,7 +187,7 @@ export const AppProvider = () =>
           }
           // Sync tags against the observed tags. Modal stores the map it is
           // given; it has no per-key delete.
-          const desired = { ...news.tags, ...(yield* createInternalTags(id)) };
+          const desired = { ...news.tags, ...(yield* createModalInternalTags(id)) };
           if (!deepEqual(current.tags, desired)) {
             yield* app.appSetTags({ appId: current.appId, tags: desired });
             current = { ...current, tags: desired };
@@ -206,7 +209,7 @@ export const AppProvider = () =>
               const { tags } = yield* app
                 .appGetTags({ appId: item.appId })
                 .pipe(Effect.catchTag("AppNotFound", () => Effect.succeed({ tags: undefined })));
-              if (!Object.keys(tags ?? {}).some((key) => key.startsWith("alchemy::"))) continue;
+              if (!isAlchemyTagged(tags)) continue;
               all.push({
                 appId: item.appId,
                 name: item.name ?? item.description ?? "",

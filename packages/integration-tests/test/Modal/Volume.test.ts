@@ -26,7 +26,7 @@ test.provider(
       expect(created.version).toBe(2);
       expect(yield* named(created.volumeId)).toBe(created.name);
 
-      const to = `${created.name}-b`.slice(0, 63);
+      const to = `${created.name.slice(0, 61)}-b`;
       const renamed = yield* stack.deploy(
         Effect.gen(function* () {
           return yield* Modal.Volume("Volume", { name: to });

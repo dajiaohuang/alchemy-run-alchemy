@@ -49,7 +49,8 @@ export interface EnvironmentProps {
   maxConcurrentGpus?: number;
   /**
    * Monthly spend limit in US dollars for this environment. Removing it
-   * clears the limit.
+   * clears the limit. Budgets need a Modal plan that includes them;
+   * elsewhere the deploy fails with `EnvironmentBudgetsNotEnabled`.
    */
   budget?: number;
   /**
@@ -256,8 +257,16 @@ export const EnvironmentProvider = () =>
           }
           const environmentId = current.environmentId ?? "";
 
-          // Sync budget against the observed limit.
-          const budget = yield* environment.environmentGetBudget({ environmentId });
+          // Sync budget against the observed limit. A workspace without
+          // budgets has none to clear; asking for one there fails with
+          // `EnvironmentBudgetsNotEnabled`.
+          const budget = yield* environment
+            .environmentGetBudget({ environmentId })
+            .pipe(
+              Effect.catchTag("EnvironmentBudgetsNotEnabled", () =>
+                Effect.succeed<environment.EnvironmentGetBudgetResponse>({}),
+              ),
+            );
           if (news.budget !== undefined && budget.cycleBudgetDollars !== news.budget) {
             yield* environment.environmentSetBudget({
               environmentId,

@@ -1,13 +1,11 @@
 ---
 title: Setup
-description: Give Alchemy a Modal token.
+description: Log in to Modal, or give Alchemy a Modal token.
 ---
 
 import PackageManagers from "../../../components/PackageManagers.astro";
 
-Sign up at [modal.com](https://modal.com), then create a token in [Settings → API Tokens](https://modal.com/settings/tokens). You get a token id (`ak-…`) and a secret (`as-…`).
-
-If you already use the `modal` CLI, the pair is in `~/.modal.toml`.
+Sign up at [modal.com](https://modal.com). Alchemy talks to Modal with a workspace token: a token id (`ak-…`) and a secret (`as-…`).
 
 ## Add the provider
 
@@ -34,13 +32,23 @@ export default Alchemy.Stack(
 );
 ```
 
-## Store the token in a profile
+## Log in
 
 ```sh
 alchemy profile edit --add Modal
 ```
 
-Paste the token id and secret when asked. See [Profiles](/environments/profiles) to learn how profiles work.
+Pick **Browser login**. Alchemy opens modal.com, you approve the login, and Modal creates a token that Alchemy saves in the profile. It is the same flow as `modal token new`. See [Profiles](/environments/profiles) to learn how profiles work.
+
+Modal tokens don't expire, so there is nothing to refresh. If you revoke the token, run `alchemy profile edit --reconfigure Modal` to log in again.
+
+## Use an existing token
+
+Pick **Token** instead to paste a token you created in [Settings → API Tokens](https://modal.com/settings/tokens), or the `token_id` and `token_secret` from `~/.modal.toml` if you use the `modal` CLI. Scripts can pass it with flags:
+
+```sh
+alchemy profile edit --add Modal --method stored --set tokenId=ak-... --set tokenSecret=env:MODAL_TOKEN_SECRET
+```
 
 ## Use environment variables in CI
 

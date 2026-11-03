@@ -34,7 +34,7 @@ test.provider(
 
       const renamed = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Modal.Queue("Queue", { name: `${first.name}-b`.slice(0, 63) });
+          return yield* Modal.Queue("Queue", { name: `${first.name.slice(0, 61)}-b` });
         }),
       );
       expect(renamed.queueId).not.toBe(first.queueId);

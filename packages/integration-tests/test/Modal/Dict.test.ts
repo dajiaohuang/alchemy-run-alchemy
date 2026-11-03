@@ -34,7 +34,7 @@ test.provider(
 
       const renamed = yield* stack.deploy(
         Effect.gen(function* () {
-          return yield* Modal.Dict("Dict", { name: `${first.name}-b`.slice(0, 63) });
+          return yield* Modal.Dict("Dict", { name: `${first.name.slice(0, 61)}-b` });
         }),
       );
       expect(renamed.dictId).not.toBe(first.dictId);

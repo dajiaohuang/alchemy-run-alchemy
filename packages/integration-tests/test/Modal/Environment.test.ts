@@ -28,7 +28,7 @@ test.provider(
       expect(observed?.environmentId).toBe(env.environmentId);
       expect(observed?.maxConcurrentTasks).toBe(10);
 
-      const renamedTo = `${env.name}-renamed`.slice(0, 63);
+      const renamedTo = `${env.name.slice(0, 55)}-renamed`;
       const renamed = yield* stack.deploy(
         Effect.gen(function* () {
           return yield* Modal.Environment("Env", { name: renamedTo, maxConcurrentTasks: 5 });

@@ -20,7 +20,7 @@ test.provider(
       expect(created.appId).toMatch(/^ap-/);
       const { tags } = yield* app.appGetTags({ appId: created.appId });
       expect(tags?.team).toBe("platform");
-      expect(tags?.["alchemy::id"]).toBe("App");
+      expect(tags?.["alchemy.id"]).toBe("App");
 
       const retagged = yield* stack.deploy(
         Effect.gen(function* () {
