@@ -39,5 +39,6 @@ export const hasModalAlchemyTags = Effect.fn(function* (id: string, tags: Tags |
 });
 
 /** Whether observed Modal tags carry any Alchemy ownership tag. */
-export const isAlchemyTagged = (tags: Record<string, string> | undefined): boolean =>
-  Object.keys(tags ?? {}).some((key) => key.startsWith(ALCHEMY_TAG_PREFIX));
+export const isAlchemyTagged = (
+  tags: Readonly<Record<string, string | undefined>> | undefined,
+): boolean => Object.keys(tags ?? {}).some((key) => key.startsWith(ALCHEMY_TAG_PREFIX));
