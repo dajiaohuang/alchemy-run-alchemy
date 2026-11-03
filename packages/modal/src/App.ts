@@ -5,6 +5,7 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import {
   type EnvironmentInput,
   envNameOf,
@@ -72,6 +73,7 @@ export interface AppAttributes {
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
  * import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
  *
  * export const Agents = Modal.Environment("Agents", {});
  * export const Coder = Effect.gen(function* () {
@@ -90,6 +92,7 @@ export interface AppAttributes {
  * import * as Cloudflare from "@alchemy.run/cloudflare";
  * import * as Modal from "@alchemy.run/modal";
  * import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
  * import * as HttpServerResponse from "effect/http/HttpServerResponse";
  * import { Coder } from "./Coder.ts";
  *
@@ -168,11 +171,20 @@ export const AppProvider = () =>
           let current = yield* observe(name, envNameOf(news.environment));
           if (!current) {
             yield* session.note(`Creating app ${name}...`);
-            const created = yield* app.appGetOrCreate({
-              appName: name,
-              environmentName: environmentOf(envNameOf(news.environment)),
-              objectCreationType: "OBJECT_CREATION_TYPE_CREATE_IF_MISSING",
-            });
+            // Modal rate-limits App creation per workspace; wait it out.
+            const created = yield* app
+              .appGetOrCreate({
+                appName: name,
+                environmentName: environmentOf(envNameOf(news.environment)),
+                objectCreationType: "OBJECT_CREATION_TYPE_CREATE_IF_MISSING",
+              })
+              .pipe(
+                Effect.retry({
+                  while: (e) => e._tag === "TooManyRequests",
+                  schedule: Schedule.spaced("5 seconds"),
+                  times: 12,
+                }),
+              );
             if (!created.appId) {
               return yield* new AppUnexpectedResponse({
                 message: `Modal returned no id for app ${name}`,
