@@ -16,6 +16,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import { withAuthTokens } from "./Credentials.ts";
 import { ServiceUser } from "./ServiceUser.ts";
 
 /**
@@ -143,13 +144,15 @@ const operationContext = Effect.gen(function* () {
       const serverUrl = yield* runtime.get<string>(TOKEN_ENV.serverUrl);
       return yield* Layer.build(
         Layer.mergeAll(
-          credentials({
-            tokenId: Redacted.make(tokenId),
-            tokenSecret: Redacted.isRedacted(tokenSecret)
-              ? tokenSecret
-              : Redacted.make(tokenSecret),
-            apiBaseUrl: serverUrl,
-          }),
+          withAuthTokens(
+            credentials({
+              tokenId: Redacted.make(tokenId),
+              tokenSecret: Redacted.isRedacted(tokenSecret)
+                ? tokenSecret
+                : Redacted.make(tokenSecret),
+              apiBaseUrl: serverUrl,
+            }),
+          ),
           FetchHttpClient.layer,
         ),
       ).pipe(Effect.scoped);
@@ -163,7 +166,7 @@ const operationContext = Effect.gen(function* () {
     Credentials,
     Option.isSome(ambientCredentials)
       ? ambientCredentials.value
-      : yield* Credentials.pipe(Effect.provide(CredentialsFromEnv)),
+      : yield* Credentials.pipe(Effect.provide(withAuthTokens(CredentialsFromEnv))),
   ).pipe(
     Context.add(
       HttpClient.HttpClient,
@@ -182,7 +185,7 @@ const operationContext = Effect.gen(function* () {
  * @example
  * ```ts
  * const ops = yield* ModalBindings.withCredentials(
- *   Effect.all({ getFile: volume.volumeGetFile2, putFiles: volume.volumePutFiles2 }),
+ *   operations({ getFile: volume.volumeGetFile2, putFiles: volume.volumePutFiles2 }),
  * );
  * ```
  */
@@ -194,13 +197,18 @@ export const withCredentials: <Op>(operation: Effect.Effect<Op, never, any>) => 
 
 /**
  * Resolve a task command router operation for one sandbox: the router runs
- * per task, at a URL with its own JWT (from `sandboxGetCommandRouterAccess`),
- * so its operations are resolved per call.
+ * per task, at a URL with its own JWT (from `sandboxGetCommandRouterAccess`).
+ * The router credentials are applied on every call, because a resolved
+ * operation runs with its caller's `Credentials` (the control plane's) over
+ * the ones it captured. `withTaskCommandRouter` also supplies the HTTP/2
+ * client the router requires.
  */
 export const withRouter =
-  <Op>(operation: Effect.Effect<Op, never, any>) =>
-  (access: { readonly url: string; readonly jwt: string }): Effect.Effect<Op> =>
-    (operation as Effect.Effect<Op>).pipe(
-      withTaskCommandRouter(access),
-      Effect.provide(FetchHttpClient.layer),
+  <I, O, E>(operation: (input: I) => Effect.Effect<O, E, any>) =>
+  (access: {
+    readonly url: string;
+    readonly jwt: string;
+  }): Effect.Effect<(input: I) => Effect.Effect<O, E>> =>
+    Effect.succeed((input: I) =>
+      (operation(input) as Effect.Effect<O, E>).pipe(withTaskCommandRouter(access)),
     );

@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { App } from "./App.ts";
 import { makeModalBinding } from "./BindingHttp.ts";
-import { stringMap, timestampOf } from "./internal.ts";
+import { operations, stringMap, timestampOf } from "./internal.ts";
 import { ReadApp, type AppLogFilter, type AppLogLine, type AppReader } from "./ReadApp.ts";
 
 const STREAM = {
@@ -31,7 +31,7 @@ const filterOf = (filter: AppLogFilter) => ({
 });
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const ReadAppOps = Effect.all({
+const ReadAppOps = operations({
   fetchLogs: app.appFetchLogs,
   getLogs: app.appGetLogs,
   countLogs: app.appCountLogs,

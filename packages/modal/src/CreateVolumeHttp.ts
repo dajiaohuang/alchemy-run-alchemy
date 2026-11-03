@@ -4,13 +4,13 @@ import * as Layer from "effect/Layer";
 import { makeOpenModalBinding } from "./BindingHttp.ts";
 import { CreateVolume, type VolumeHandle, type VolumesClient } from "./CreateVolume.ts";
 import type { Environment } from "./Environment.ts";
-import { environmentOf, listAll } from "./internal.ts";
+import { environmentOf, listAll, operations } from "./internal.ts";
 import { ensureVolume, lookupVolume, type VolumeAttributes } from "./Volume.ts";
 import { makeReadWriteVolumeClient } from "./VolumeClient.ts";
 import { VolumeFileOps } from "./VolumeFiles.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const VolumesOps = Effect.all({
+const VolumesOps = operations({
   getOrCreate: volume.volumeGetOrCreate,
   delete: volume.deleteVolume,
   list: volume.listVolume,

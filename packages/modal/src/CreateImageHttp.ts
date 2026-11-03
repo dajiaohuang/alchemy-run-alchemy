@@ -6,9 +6,10 @@ import type { App } from "./App.ts";
 import { makeModalBinding } from "./BindingHttp.ts";
 import { CreateImage, type ImageBuildOptions, type ImagesClient } from "./CreateImage.ts";
 import { buildImage, ImageBuildOps } from "./ImageBuild.ts";
+import { operations } from "./internal.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const ImagesOps = Effect.all({
+const ImagesOps = operations({
   build: ImageBuildOps,
   getByTag: image.imageGetByTag,
   publish: image.publishImage,

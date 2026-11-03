@@ -2,9 +2,10 @@ import * as dict from "@distilled.cloud/modal/dict";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import { decodeJson, encodeJson } from "./BindingHttp.ts";
+import { operations } from "./internal.ts";
 
 /** The dict operations the clients call, resolved by `ModalBindings.withCredentials`. */
-export const DictOps = Effect.all({
+export const DictOps = operations({
   clearDict: dict.clearDict,
   dictContains: dict.dictContains,
   dictContents: dict.dictContents,

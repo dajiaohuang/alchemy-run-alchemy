@@ -4,6 +4,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operations } from "./internal.ts";
 
 /** Inputs and results above this size travel through Modal's blob store. */
 export const MAX_INLINE_BYTES = 2 * 1024 * 1024;
@@ -14,7 +15,7 @@ export class BlobTransferFailed extends Data.TaggedError("Modal.BlobTransferFail
 }> {}
 
 /** The blob operations, resolved by `ModalBindings.withCredentials`. */
-export const BlobOps = Effect.all({
+export const BlobOps = operations({
   create: blob.createBlob,
   get: blob.getBlob,
   http: HttpClient.HttpClient,

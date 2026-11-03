@@ -40,7 +40,7 @@ export const makeModalBinding = <
 >(options: {
   /** Fully qualified binding tag, e.g. `Modal.WriteQueue`. */
   readonly tag: string;
-  /** The distilled operations the client calls, e.g. `Effect.all({ put: queue.putQueue })`. */
+  /** The distilled operations the client calls, e.g. `operations({ put: queue.putQueue })`. */
   readonly operations: Effect.Effect<Ops, never, any>;
   /** The role the host needs on the resource's environment. */
   readonly role: Role;

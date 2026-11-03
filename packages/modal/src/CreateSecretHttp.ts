@@ -4,11 +4,11 @@ import * as Layer from "effect/Layer";
 import { makeOpenModalBinding } from "./BindingHttp.ts";
 import { CreateSecret, type SecretsClient } from "./CreateSecret.ts";
 import type { Environment } from "./Environment.ts";
-import { environmentOf, listAll } from "./internal.ts";
+import { environmentOf, listAll, operations } from "./internal.ts";
 import { lookupSecret, putSecret } from "./Secret.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const SecretsOps = Effect.all({
+const SecretsOps = operations({
   getOrCreate: secret.secretGetOrCreate,
   delete: secret.deleteSecret,
   list: secret.listSecret,

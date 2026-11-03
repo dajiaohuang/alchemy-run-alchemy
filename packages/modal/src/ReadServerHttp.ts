@@ -3,12 +3,12 @@ import * as server from "@distilled.cloud/modal/server";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { makeFunctionBinding } from "./FunctionTarget.ts";
-import { timestampOf } from "./internal.ts";
+import { operations, timestampOf } from "./internal.ts";
 import { ReadServer, type ServerReader } from "./ReadServer.ts";
 import type { Server } from "./Server.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const ReadServerOps = Effect.all({
+const ReadServerOps = operations({
   stats: server.serverGetTimeRangeStats,
   requests: server.fetchServerRequest,
   requestCount: server.serverCountRequests,

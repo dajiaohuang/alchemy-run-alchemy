@@ -2,12 +2,13 @@ import * as functions from "@distilled.cloud/modal/functions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { makeFunctionBinding } from "./FunctionTarget.ts";
+import { operations } from "./internal.ts";
 import type { FunctionTarget } from "./InvokeFunction.ts";
 import { ScaleFunction, type FunctionScaler } from "./ScaleFunction.ts";
 import type { Server } from "./Server.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const ScaleFunctionOps = Effect.all({
+const ScaleFunctionOps = operations({
   schedulingParams: functions.functionGetSchedulingParams,
   updateSchedulingParams: functions.functionUpdateSchedulingParams,
 });

@@ -1,3 +1,4 @@
+import * as environment from "@distilled.cloud/modal/environment";
 import * as webhook from "@distilled.cloud/modal/webhook";
 import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
@@ -162,10 +163,19 @@ export const WebhookTokenProvider = () =>
 
           // Sync environments against the observed set.
           if (scoped) {
-            const { environmentIds } = yield* webhook.listWebhookTokenEnvironment({
-              tokenId: current.tokenId,
-            });
-            const observed = new Set(environmentIds ?? []);
+            // Modal doesn't serve `WebhookTokenEnvironmentList`, so read the
+            // token's environments from each environment's token list.
+            const { items } = yield* environment.listEnvironment({});
+            const observed = new Set<string>();
+            for (const env of items ?? []) {
+              if (!env.environmentId || !env.name) continue;
+              const { tokens } = yield* webhook.webhookTokenListForEnvironment({
+                environmentName: env.name,
+              });
+              if ((tokens ?? []).some((token) => token.tokenId === current.tokenId)) {
+                observed.add(env.environmentId);
+              }
+            }
             const desired = new Set(
               (news.environments ?? []).flatMap((env) =>
                 typeof env === "string"

@@ -1,4 +1,3 @@
-import * as container from "@distilled.cloud/modal/container";
 import * as persistent from "@distilled.cloud/modal/persistent";
 import * as sandbox from "@distilled.cloud/modal/sandbox";
 import * as router from "@distilled.cloud/modal/task_command_router";
@@ -10,7 +9,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schedule from "effect/Schedule";
 import { buildImage, gpuConfig, ImageBuildOps, type ImageBuildSpec } from "./ImageBuild.ts";
-import { environmentOf, seconds } from "./internal.ts";
+import { environmentOf, operations, seconds } from "./internal.ts";
 import { withRouter } from "./ModalBindings.ts";
 
 /** A sandbox ended (or never became ready) before the call could finish. */
@@ -329,21 +328,9 @@ export interface SandboxTarget {
   };
 }
 
-const outputText = (batches: ReadonlyArray<container.RuntimeOutputBatch>, fd: string) => {
-  const chunks: string[] = [];
-  for (const batch of batches) {
-    for (const message of [
-      ...(batch.items ?? []),
-      ...(fd === "FILE_DESCRIPTOR_STDOUT" ? (batch.stdout ?? []) : (batch.stderr ?? [])),
-    ]) {
-      if (message.fileDescriptor !== undefined && message.fileDescriptor !== fd) continue;
-      if (message.messageBytes)
-        chunks.push(Buffer.from(message.messageBytes, "base64").toString("utf8"));
-      else if (message.message) chunks.push(message.message);
-    }
-  }
-  return chunks.join("");
-};
+/** The text of a command's output stream, from its router read chunks. */
+const streamText = (chunks: ReadonlyArray<{ readonly data?: string }>) =>
+  Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.data ?? "", "base64"))).toString("utf8");
 
 const decodeBase64 = (data: string) =>
   Effect.sync(() => new Uint8Array(Buffer.from(data, "base64")));
@@ -505,7 +492,7 @@ const outboundPolicyOf = (policy: OutboundPolicy): sandbox.OutboundPolicy => ({
  * The operations sandbox clients call, resolved once by
  * `ModalBindings.withCredentials` (or at deploy, with the deployer's).
  */
-export const SandboxOps = Effect.all({
+export const SandboxOps = operations({
   create: sandbox.sandboxCreateV2,
   getFromName: sandbox.sandboxGetFromNameV2,
   list: sandbox.sandboxListV2,
@@ -514,9 +501,6 @@ export const SandboxOps = Effect.all({
   getCommandRouterAccess: sandbox.sandboxGetCommandRouterAccess,
   getTunnels: sandbox.sandboxGetTunnelsV2,
   createConnectToken: sandbox.sandboxCreateConnectTokenV2,
-  snapshotFs: sandbox.sandboxSnapshotFs,
-  snapshot: sandbox.sandboxSnapshot,
-  waitSnapshot: sandbox.waitSandboxSnapshot,
   setOutboundPolicy: sandbox.sandboxSetOutboundPolicyV2,
   setTags: sandbox.sandboxTagsSetV2,
   getTags: sandbox.sandboxTagsGetV2,
@@ -526,10 +510,6 @@ export const SandboxOps = Effect.all({
   wait: sandbox.sandboxWaitV2,
   terminate: sandbox.sandboxTerminateV2,
   usage: sandbox.sandboxGetTimeRangeStats,
-  exec: container.execContainer,
-  execPutInput: container.containerExecPutInput,
-  execGetOutput: container.containerExecGetOutput,
-  execWait: container.containerExecWait,
   createPersistent: persistent.createPersistentSandbox,
   getPersistent: persistent.getPersistentSandbox,
   resumePersistent: persistent.resumePersistentSandbox,
@@ -542,6 +522,12 @@ export type SandboxOps = Effect.Success<typeof SandboxOps>;
 
 /** Task command router operations, resolved per sandbox with its router access. */
 const routerOps = {
+  execStart: withRouter(router.taskExecStart),
+  execStdinWrite: withRouter(router.taskExecStdinWrite),
+  execStdioRead: withRouter(router.taskExecStdioRead),
+  execWait: withRouter(router.taskExecWait),
+  snapshotFilesystem: withRouter(router.taskSnapshotFilesystem),
+  snapshotMemory: withRouter(router.taskSnapshotMemory),
   snapshotDirectory: withRouter(router.taskSnapshotDirectory),
   mountDirectory: withRouter(router.taskMountDirectory),
   setNetworkAccess: withRouter(router.taskSetNetworkAccess),
@@ -634,48 +620,58 @@ export const sandboxHandle = (
   const handle: RawSandboxHandle = {
     sandboxId,
     exec: Effect.fn(function* (command, options = {}) {
+      // V2 sandboxes run commands through the task command router: start
+      // the command under an id we choose, then read its output streams
+      // while waiting for it to exit.
       const id = yield* taskId;
-      const env = Object.entries(options.env ?? {}).map(([key, value]) => `${key}=${value}`);
-      const { execId } = yield* ops.exec({
+      const access = yield* ops.getCommandRouterAccess({ sandboxId, taskId: id });
+      if (!access.url || !access.jwt) {
+        return yield* new SandboxUnexpectedResponse({
+          message: `Modal returned no command router for sandbox ${sandboxId}`,
+        });
+      }
+      const at = { url: access.url, jwt: access.jwt };
+      const start = yield* routerOps.execStart(at);
+      const stdinWrite = yield* routerOps.execStdinWrite(at);
+      const stdioRead = yield* routerOps.execStdioRead(at);
+      const wait = yield* routerOps.execWait(at);
+      const execId = yield* Effect.sync(() => crypto.randomUUID());
+      yield* start({
         taskId: id,
-        command: env.length > 0 ? ["env", ...env, ...command] : [...command],
+        execId,
+        commandArgs: [...command],
         workdir: options.workdir,
         timeoutSecs: seconds(options.timeout),
         secretIds: options.secrets?.map((s) => s.secretId),
-        stdoutOutput: "EXEC_OUTPUT_OPTION_PIPE",
-        stderrOutput: "EXEC_OUTPUT_OPTION_PIPE",
+        env: options.env,
+        stdoutConfig: "TASK_EXEC_STDOUT_CONFIG_PIPE",
+        stderrConfig: "TASK_EXEC_STDERR_CONFIG_PIPE",
       });
-      if (!execId)
-        return yield* new SandboxUnexpectedResponse({ message: "Modal returned no exec id" });
       if (options.stdin !== undefined) {
-        const message = yield* encodeBase64(options.stdin);
-        yield* ops.execPutInput({ execId, input: { message, messageIndex: "1" } });
-        yield* ops.execPutInput({ execId, input: { messageIndex: "2", eof: true } });
-      }
-      const batches: container.RuntimeOutputBatch[] = [];
-      let lastBatchIndex: string | undefined;
-      let exitCode: number | undefined;
-      for (let attempt = 0; exitCode === undefined && attempt < 1_440; attempt++) {
-        const { items } = yield* ops.execGetOutput({
+        yield* stdinWrite({
+          taskId: id,
           execId,
-          timeout: 55,
-          lastBatchIndex,
-          getRawBytes: true,
+          offset: "0",
+          data: yield* encodeBase64(options.stdin),
+          eof: true,
         });
-        for (const batch of items) {
-          batches.push(batch);
-          if (batch.batchIndex) lastBatchIndex = batch.batchIndex;
-          if (batch.exitCode !== undefined) exitCode = batch.exitCode;
-        }
-        if (exitCode === undefined && items.length === 0) {
-          const waited = yield* ops.execWait({ execId, timeout: 0 });
-          if (waited.completed) exitCode = waited.exitCode ?? 0;
-        }
       }
+      const read = (fileDescriptor: router.TaskExecStdioFileDescriptor) =>
+        stdioRead({ taskId: id, execId, offset: "0", fileDescriptor }).pipe(
+          Effect.map(({ items }) => streamText(items)),
+        );
+      const [stdout, stderr, exit] = yield* Effect.all(
+        [
+          read("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDOUT"),
+          read("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDERR"),
+          wait({ taskId: id, execId }),
+        ],
+        { concurrency: "unbounded" },
+      );
       return {
-        exitCode: exitCode ?? -1,
-        stdout: outputText(batches, "FILE_DESCRIPTOR_STDOUT"),
-        stderr: outputText(batches, "FILE_DESCRIPTOR_STDERR"),
+        exitCode: exit.code ?? (exit.signal !== undefined ? 128 + exit.signal : -1),
+        stdout,
+        stderr,
       };
     }),
     readFile: Effect.fn(function* (path) {
@@ -740,34 +736,37 @@ export const sandboxHandle = (
       }
       return { url: response.url, token: response.token };
     }),
-    snapshotFilesystem: Effect.fn(function* (timeout) {
-      const response = yield* ops.snapshotFs({
-        sandboxId,
-        timeout: seconds(timeout) ?? 55,
-      });
-      if (!response.imageId || response.result?.status !== "GENERIC_STATUS_SUCCESS") {
-        return yield* new SandboxUnexpectedResponse({
-          message: `Filesystem snapshot of ${sandboxId} failed: ${response.result?.exception ?? response.result?.status}`,
-        });
-      }
-      return { imageId: response.imageId };
-    }),
-    snapshotMemory: Effect.fn(function* () {
-      const { snapshotId } = yield* ops.snapshot({ sandboxId });
-      if (!snapshotId) return yield* new SandboxUnexpectedResponse({ message: "No snapshot id" });
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const { result } = yield* ops.waitSnapshot({ snapshotId, timeout: 55 });
-        if (result?.status === "GENERIC_STATUS_SUCCESS") return { snapshotId };
-        if (result?.status && result.status !== "GENERIC_STATUS_UNSPECIFIED") {
-          return yield* new SandboxUnexpectedResponse({
-            message: `Memory snapshot of ${sandboxId} failed: ${result.exception ?? result.status}`,
-          });
-        }
-      }
-      return yield* new SandboxUnexpectedResponse({
-        message: `Memory snapshot ${snapshotId} timed out`,
-      });
-    }),
+    snapshotFilesystem: (_timeout) =>
+      viaRouter(routerOps.snapshotFilesystem, (op, task) =>
+        Effect.flatMap(
+          Effect.sync(() => crypto.randomUUID()),
+          // -1: the snapshot image never expires.
+          (snapshotId) => op({ taskId: task, snapshotId, ttlSeconds: "-1" }),
+        ),
+      ).pipe(
+        Effect.flatMap((response) =>
+          response.imageId
+            ? Effect.succeed({ imageId: response.imageId })
+            : Effect.fail(
+                new SandboxUnexpectedResponse({
+                  message: `Filesystem snapshot of ${sandboxId} returned no image`,
+                }),
+              ),
+        ),
+      ),
+    snapshotMemory: () =>
+      viaRouter(routerOps.snapshotMemory, (op, task) =>
+        Effect.flatMap(
+          Effect.sync(() => crypto.randomUUID()),
+          (idempotencyKey) => op({ taskId: task, idempotencyKey }),
+        ),
+      ).pipe(
+        Effect.flatMap((response) =>
+          response.snapshotId
+            ? Effect.succeed({ snapshotId: response.snapshotId })
+            : Effect.fail(new SandboxUnexpectedResponse({ message: "No snapshot id" })),
+        ),
+      ),
     snapshotDirectory: (path) =>
       viaRouter(routerOps.snapshotDirectory, (op, task) => op({ taskId: task, path })).pipe(
         Effect.flatMap((response) =>

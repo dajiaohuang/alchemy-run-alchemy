@@ -4,6 +4,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import { operations } from "./internal.ts";
 
 /** A block upload or download to a URL Modal handed out failed. */
 export class VolumeTransferError extends Data.TaggedError("Modal.VolumeTransferError")<{
@@ -25,7 +26,7 @@ export interface VolumeFileEntry {
 const BLOCK_SIZE = 8 * 1024 * 1024;
 
 /** The operations a volume's files need, resolved by `ModalBindings.withCredentials`. */
-export const VolumeFileOps = Effect.all({
+export const VolumeFileOps = operations({
   getFile: volume.volumeGetFile2,
   listFiles: volume.volumeListFiles2,
   putFiles: volume.volumePutFiles2,

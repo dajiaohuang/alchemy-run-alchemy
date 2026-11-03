@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import { BlobOps, downloadBlob, MAX_INLINE_BYTES, uploadBlob } from "./Blob.ts";
 import { decodeCbor, encodeCbor } from "./Cbor.ts";
 import { makeFunctionBinding, type ResolvedFunction } from "./FunctionTarget.ts";
-import { seconds } from "./internal.ts";
+import { operations, seconds } from "./internal.ts";
 import {
   FunctionCallFailed,
   FunctionCallTimeout,
@@ -15,7 +15,7 @@ import {
 } from "./InvokeFunction.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const InvokeOps = Effect.all({
+const InvokeOps = operations({
   map: functions.functionMap,
   putInputs: functions.functionPutInputs,
   getOutputs: functions.getFunctionOutputs,

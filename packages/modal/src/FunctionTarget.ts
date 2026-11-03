@@ -6,7 +6,7 @@ import * as functions from "@distilled.cloud/modal/functions";
 import type { Input } from "alchemy/Input";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { environmentOf } from "./internal.ts";
+import { environmentOf, operations } from "./internal.ts";
 import type { FunctionRef, FunctionTarget } from "./InvokeFunction.ts";
 import * as ModalBindings from "./ModalBindings.ts";
 
@@ -90,7 +90,7 @@ const serializeParameters = Effect.fn(function* (
  * changes when the App is redeployed).
  */
 /** The operations that look a function up by name, resolved by `ModalBindings.withCredentials`. */
-export const FunctionLookupOps = Effect.all({
+export const FunctionLookupOps = operations({
   get: functions.getFunction,
   bindParams: functions.functionBindParams,
 });

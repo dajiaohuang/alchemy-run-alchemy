@@ -2,13 +2,13 @@ import * as functions from "@distilled.cloud/modal/functions";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { makeFunctionBinding } from "./FunctionTarget.ts";
-import { timestampOf } from "./internal.ts";
+import { operations, timestampOf } from "./internal.ts";
 import type { FunctionTarget } from "./InvokeFunction.ts";
 import { ReadFunction, type FunctionReader } from "./ReadFunction.ts";
 import type { Server } from "./Server.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const ReadFunctionOps = Effect.all({
+const ReadFunctionOps = operations({
   currentStats: functions.functionGetCurrentStats,
   timeRangeStats: functions.functionGetTimeRangeStats,
   metrics: functions.functionGetMetrics,

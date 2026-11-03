@@ -3,10 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { App } from "./App.ts";
 import { makeModalBinding } from "./BindingHttp.ts";
+import { operations } from "./internal.ts";
 import { WriteApp, type AppWriter } from "./WriteApp.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const WriteAppOps = Effect.all({
+const WriteAppOps = operations({
   rollback: app.appRollback,
   rollover: app.appRollover,
   promote: app.promoteApp,

@@ -2,10 +2,10 @@ import * as queue from "@distilled.cloud/modal/queue";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import { decodeJson, encodeJson } from "./BindingHttp.ts";
-import { seconds } from "./internal.ts";
+import { operations, seconds } from "./internal.ts";
 
 /** The queue operations the clients call, resolved by `ModalBindings.withCredentials`. */
-export const QueueOps = Effect.all({
+export const QueueOps = operations({
   clearQueue: queue.clearQueue,
   getQueue: queue.getQueue,
   putQueue: queue.putQueue,

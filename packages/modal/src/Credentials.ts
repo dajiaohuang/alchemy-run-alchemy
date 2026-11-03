@@ -1,11 +1,14 @@
 import { ConfigError } from "@distilled.cloud/core/errors";
+import { withAuthToken } from "@distilled.cloud/modal/AuthToken";
 import { Credentials, DEFAULT_API_BASE_URL } from "@distilled.cloud/modal/Credentials";
 import { lazyCredentials } from "alchemy/Auth/Resolve";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { MODAL_AUTH_PROVIDER_NAME, type ModalResolvedCredentials } from "./AuthProvider.ts";
 
+export { withAuthToken } from "@distilled.cloud/modal/AuthToken";
 export {
   Credentials,
   CredentialsFromEnv,
@@ -19,14 +22,28 @@ export {
  * provider layers never needs a profile.
  */
 export const fromAuthProvider = () =>
-  Layer.effect(
-    Credentials,
-    lazyCredentials<ModalResolvedCredentials, ConfigError>()(MODAL_AUTH_PROVIDER_NAME, (creds) => ({
-      tokenId: creds.tokenId,
-      tokenSecret: creds.tokenSecret,
-      apiBaseUrl: creds.apiBaseUrl,
-    })),
+  withAuthTokens(
+    Layer.effect(
+      Credentials,
+      lazyCredentials<ModalResolvedCredentials, ConfigError>()(
+        MODAL_AUTH_PROVIDER_NAME,
+        (creds) => ({
+          tokenId: creds.tokenId,
+          tokenSecret: creds.tokenSecret,
+          apiBaseUrl: creds.apiBaseUrl,
+        }),
+      ),
+    ),
   );
+
+/**
+ * Add Modal's short-lived auth token (the `x-modal-auth-token` JWT its V2
+ * sandbox RPCs and input plane need) to a token pair's `Credentials`.
+ */
+export const withAuthTokens = <E, R>(
+  credentials: Layer.Layer<Credentials, E, R>,
+): Layer.Layer<Credentials, E, R> =>
+  withAuthToken.pipe(Layer.provide(Layer.mergeAll(credentials, FetchHttpClient.layer)));
 
 /**
  * Build Modal `Credentials` from an explicit token pair, e.g. in a test or a
@@ -42,14 +59,16 @@ export const fromToken = (input: {
   tokenSecret: string | Redacted.Redacted<string>;
   apiBaseUrl?: string;
 }): Layer.Layer<Credentials> =>
-  Layer.succeed(
-    Credentials,
-    Effect.succeed({
-      tokenId: typeof input.tokenId === "string" ? Redacted.make(input.tokenId) : input.tokenId,
-      tokenSecret:
-        typeof input.tokenSecret === "string"
-          ? Redacted.make(input.tokenSecret)
-          : input.tokenSecret,
-      apiBaseUrl: input.apiBaseUrl ?? DEFAULT_API_BASE_URL,
-    }),
+  withAuthTokens(
+    Layer.succeed(
+      Credentials,
+      Effect.succeed({
+        tokenId: typeof input.tokenId === "string" ? Redacted.make(input.tokenId) : input.tokenId,
+        tokenSecret:
+          typeof input.tokenSecret === "string"
+            ? Redacted.make(input.tokenSecret)
+            : input.tokenSecret,
+        apiBaseUrl: input.apiBaseUrl ?? DEFAULT_API_BASE_URL,
+      }),
+    ),
   );

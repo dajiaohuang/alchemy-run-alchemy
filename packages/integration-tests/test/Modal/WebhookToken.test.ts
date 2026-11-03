@@ -27,10 +27,14 @@ test.provider(
       );
       expect(Redacted.value(token.tokenSecret)).toMatch(/^ws-/);
       expect((yield* listed(token.tokenId))?.scoped).toBe(true);
-      const { environmentIds } = yield* webhook.listWebhookTokenEnvironment({
-        tokenId: token.tokenId,
+      const { tokens } = yield* webhook.webhookTokenListForEnvironment({
+        environmentName: env.name,
       });
-      expect(environmentIds).toEqual([env.environmentId]);
+      expect((tokens ?? []).map((t) => t.tokenId)).toContain(token.tokenId);
+      const { tokens: inMain } = yield* webhook.webhookTokenListForEnvironment({
+        environmentName: "main",
+      });
+      expect((inMain ?? []).map((t) => t.tokenId)).not.toContain(token.tokenId);
 
       const renamed = yield* stack.deploy(
         Effect.gen(function* () {

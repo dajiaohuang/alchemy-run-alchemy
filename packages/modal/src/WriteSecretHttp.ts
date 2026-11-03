@@ -3,11 +3,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { makeModalBinding } from "./BindingHttp.ts";
+import { operations } from "./internal.ts";
 import type { Secret } from "./Secret.ts";
 import { WriteSecret, type WriteSecretClient } from "./WriteSecret.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const WriteSecretOps = Effect.all({ getInfo: secret.secretGetInfo, update: secret.updateSecret });
+const WriteSecretOps = operations({ getInfo: secret.secretGetInfo, update: secret.updateSecret });
 
 type WriteSecretOps = Effect.Success<typeof WriteSecretOps>;
 

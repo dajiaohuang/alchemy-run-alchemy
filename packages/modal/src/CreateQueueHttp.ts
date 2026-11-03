@@ -4,12 +4,12 @@ import * as Layer from "effect/Layer";
 import { makeOpenModalBinding } from "./BindingHttp.ts";
 import { CreateQueue, type QueueHandle, type QueuesClient } from "./CreateQueue.ts";
 import type { Environment } from "./Environment.ts";
-import { environmentOf, listAll } from "./internal.ts";
+import { environmentOf, listAll, operations } from "./internal.ts";
 import { ensureQueue, lookupQueue, type QueueAttributes } from "./Queue.ts";
 import { QueueOps, makeReadWriteQueueClient } from "./QueueClient.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const QueuesOps = Effect.all({
+const QueuesOps = operations({
   getOrCreate: queue.queueGetOrCreate,
   delete: queue.deleteQueue,
   list: queue.listQueue,

@@ -1,6 +1,7 @@
 import * as image from "@distilled.cloud/modal/image";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import { operations } from "./internal.ts";
 
 /** Modal's builder finished the image build with a failure. */
 export class ImageBuildFailed extends Data.TaggedError("Modal.ImageBuildFailed")<{
@@ -60,7 +61,7 @@ export const gpuConfig = (gpu: string | undefined): image.GPUConfig | undefined 
 };
 
 /** The operations a build needs, resolved by `ModalBindings.withCredentials` (or at deploy). */
-export const ImageBuildOps = Effect.all({
+export const ImageBuildOps = operations({
   getOrCreate: image.imageGetOrCreate,
   joinStreaming: image.imageJoinStreaming,
 });

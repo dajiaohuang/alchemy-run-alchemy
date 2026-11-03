@@ -6,10 +6,10 @@ import { CreateDict, type DictHandle, type DictsClient } from "./CreateDict.ts";
 import { ensureDict, lookupDict, type DictAttributes } from "./Dict.ts";
 import { DictOps, makeReadWriteDictClient } from "./DictClient.ts";
 import type { Environment } from "./Environment.ts";
-import { environmentOf, listAll } from "./internal.ts";
+import { environmentOf, listAll, operations } from "./internal.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const DictsOps = Effect.all({
+const DictsOps = operations({
   getOrCreate: dict.dictGetOrCreate,
   delete: dict.deleteDict,
   list: dict.listDict,

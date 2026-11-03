@@ -110,3 +110,28 @@ export const envNameOf = (value: unknown): string | undefined =>
 /** A protobuf `Timestamp` (RFC 3339) for a `Date`, ISO string or epoch milliseconds. */
 export const timestampOf = (value: Date | string | number): string =>
   typeof value === "string" ? value : new Date(value).toISOString();
+
+/**
+ * Resolve a record of distilled operations into their call functions, like
+ * `Effect.all` over Effects. An operation is yieldable (`yield* op` captures
+ * the current context and returns a requirement-free call) but isn't an
+ * Effect value at runtime, so `Effect.all({ put: queue.putQueue })` fails.
+ *
+ * @example
+ * ```ts
+ * const QueueOps = operations({ put: queue.putQueue, get: queue.getQueue });
+ * const { put } = yield* ModalBindings.withCredentials(QueueOps);
+ * ```
+ */
+export const operations = <const Ops extends Record<string, Effect.Effect<unknown, never, any>>>(
+  ops: Ops,
+): Effect.Effect<
+  { readonly [K in keyof Ops]: Effect.Success<Ops[K]> },
+  never,
+  Effect.Services<Ops[keyof Ops]>
+> =>
+  Effect.gen(function* () {
+    const resolved: Record<string, unknown> = {};
+    for (const [key, op] of Object.entries(ops)) resolved[key] = yield* op;
+    return resolved as { readonly [K in keyof Ops]: Effect.Success<Ops[K]> };
+  });
