@@ -62,7 +62,12 @@ export const CreateTemplateHttp = Layer.succeed(
     const build = Effect.fn("E2B.CreateTemplate.build")(function* (spec: RuntimeTemplateSpec) {
       const plan = yield* planTemplateBuild(spec);
       const built = yield* auth.authorize(
-        runTemplateBuild({ ...spec, tags: [...(spec.tags ?? []), hashTag(plan.hash)] }, plan),
+        // E2B builds the `default` tag only when no tags are given, so keep it
+        // next to the hash tag unless the caller chose its own.
+        runTemplateBuild(
+          { ...spec, tags: [...(spec.tags ?? ["default"]), hashTag(plan.hash)] },
+          plan,
+        ),
       );
       return {
         templateId: built.templateId,

@@ -8,9 +8,9 @@
  * class form) is wrapped in the generated bootstrap entry; an async program
  * (`main` with no Effect impl) is bundled and run as-is.
  */
-import { packEnvValue } from "alchemy/RuntimeContext";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 
 /** The port a template's program serves on unless `port` says otherwise. */
 export const DEFAULT_PORT = 3000;
@@ -33,11 +33,19 @@ await bootstrap(entrypoint);
 `;
 
 /**
- * A value as the env var the program reads back through its runtime context:
- * plain strings verbatim, `Redacted` values as the runtime's redacted marker.
+ * A value as the env var the program reads, verbatim. Bound values arrive
+ * already packed by the host (`packEnvValue`, so a `Redacted` keeps its
+ * marker); packing again would double-encode them, and a user's `env` is read
+ * raw (`Config`, `process.env`).
  */
 const envValue = (value: unknown): string | undefined =>
-  value === undefined || value === null ? undefined : packEnvValue(value);
+  value === undefined || value === null
+    ? undefined
+    : Redacted.isRedacted(value)
+      ? String(Redacted.value(value))
+      : typeof value === "string"
+        ? value
+        : JSON.stringify(value);
 
 /** The program's environment: Alchemy's runtime vars, bound env, then the user's `env`. */
 export const programEnv = Effect.fn(function* (
@@ -46,21 +54,20 @@ export const programEnv = Effect.fn(function* (
   env: Readonly<Record<string, unknown>> | undefined,
 ) {
   const stack = yield* Stack;
-  const merged: Record<string, unknown> = {
+  const values = Object.fromEntries(
+    Object.entries({ ...bound, ...env }).flatMap(([key, value]) => {
+      const text = envValue(value);
+      return text === undefined ? [] : [[key, text]];
+    }),
+  ) as Record<string, string>;
+  return {
     ALCHEMY_STACK_NAME: stack.name,
     ALCHEMY_STAGE: stack.stage,
     ALCHEMY_PHASE: "runtime",
     HOST: "0.0.0.0",
     PORT: String(port),
-    ...bound,
-    ...env,
+    ...values,
   };
-  return Object.fromEntries(
-    Object.entries(merged).flatMap(([key, value]) => {
-      const text = envValue(value);
-      return text === undefined ? [] : [[key, text]];
-    }),
-  ) as Record<string, string>;
 });
 
 /** The template's snapshot is taken once the program answers HTTP. */

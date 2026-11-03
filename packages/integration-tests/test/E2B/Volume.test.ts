@@ -8,6 +8,10 @@ import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: E2B.providers() });
 
+// E2B enables volumes per team. E2B_TEST_VOLUMES=1 runs the lifecycle on an
+// enabled team; elsewhere the probe pins the typed rejection.
+const volumesEnabled = !!process.env.E2B_TEST_VOLUMES;
+
 const expectVolumeGone = (volumeId: string) =>
   volumes.getVolume({ volumeID: volumeId }).pipe(
     Effect.map(() => true),
@@ -16,7 +20,25 @@ const expectVolumeGone = (volumeId: string) =>
     Effect.map((exists) => expect(exists).toBe(false)),
   );
 
-test.provider(
+test.provider.skipIf(volumesEnabled)(
+  "a team without volumes fails the deploy with VolumesNotEnabled",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const error = yield* stack
+        .deploy(
+          Effect.gen(function* () {
+            return yield* E2B.Volume("Probe", {});
+          }),
+        )
+        .pipe(Effect.flip);
+      expect(String(error)).toContain("VolumesNotEnabled");
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:e2b", "provider:e2b:volume", "live"], timeout: 120_000 },
+);
+
+test.provider.skipIf(!volumesEnabled)(
   "create, redeploy unchanged, and delete a volume",
   (stack) =>
     Effect.gen(function* () {
@@ -44,7 +66,7 @@ test.provider(
   { tags: ["provider:e2b", "provider:e2b:volume", "live"], timeout: 120_000 },
 );
 
-test.provider(
+test.provider.skipIf(!volumesEnabled)(
   "renaming a volume replaces it",
   (stack) =>
     Effect.gen(function* () {

@@ -47,6 +47,8 @@ export interface E2BAuth {
   ) => Effect.Effect<A, E, RuntimeContext>;
   /** The ownership stamp for objects this host creates. */
   readonly stamp: Effect.Effect<RuntimeStamp>;
+  /** The same stamp as plain data, for the host's sweep; empty at runtime. */
+  readonly deployStamp: RuntimeStamp;
   /** The E2B domain sandboxes are addressed under. */
   readonly domain: Effect.Effect<string>;
 }
@@ -112,5 +114,6 @@ export const bindE2B = Effect.gen(function* () {
       }
     }),
     domain: domainOf,
+    deployStamp: stamp,
   } satisfies E2BAuth;
 });

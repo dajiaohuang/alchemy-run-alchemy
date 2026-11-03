@@ -21,7 +21,7 @@ test.provider(
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      const secret = Redacted.make("alchemy-webhook-test-secret");
+      const secret = Redacted.make("alchemy-webhook-test-signature-secret");
 
       const hook = yield* stack.deploy(
         Effect.gen(function* () {

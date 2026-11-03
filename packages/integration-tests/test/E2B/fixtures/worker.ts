@@ -6,17 +6,13 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { BindingAgent, ProbeWebhook, RotatedSecret, SharedVolume } from "./resources.ts";
+import { BindingAgent, ProbeWebhook, RotatedSecret } from "./resources.ts";
 
 const BindingsLive = Layer.mergeAll(
   E2B.CreateSandboxHttp,
-  E2B.CreateVolumeHttp,
   E2B.CreateSecretHttp,
   E2B.CreateTemplateHttp,
   E2B.CreateSnapshotHttp,
-  E2B.ReadVolumeHttp,
-  E2B.WriteVolumeHttp,
-  E2B.ReadWriteVolumeHttp,
   E2B.WriteSecretHttp,
   E2B.ReadTeamHttp,
   E2B.ReadWebhookHttp,
@@ -28,13 +24,9 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
   Effect.gen(function* () {
     const sandboxes = yield* E2B.CreateSandbox(BindingAgent);
     const anySandboxes = yield* E2B.CreateSandbox();
-    const volumes = yield* E2B.CreateVolume();
     const secrets = yield* E2B.CreateSecret();
     const templates = yield* E2B.CreateTemplate();
     const snapshots = yield* E2B.CreateSnapshot();
-    const readShared = yield* E2B.ReadVolume(SharedVolume);
-    const writeShared = yield* E2B.WriteVolume(SharedVolume);
-    const shared = yield* E2B.ReadWriteVolume(SharedVolume);
     const rotate = yield* E2B.WriteSecret(RotatedSecret);
     const team = yield* E2B.ReadTeam();
     const probe = yield* E2B.ReadWebhook(ProbeWebhook);
@@ -128,6 +120,8 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               (s) => Effect.ignore(s.kill()),
             );
             const content = yield* restored.files.readText("/home/user/snap.txt");
+            // E2B keeps a snapshot while a sandbox runs on it.
+            yield* restored.kill();
             yield* snapshots.delete(name);
             return { snapshotId: snapshot.snapshotID, listed: listed.length, content };
           }),
@@ -144,43 +138,9 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               (s) => Effect.ignore(s.kill()),
             );
             const content = yield* sandbox.files.readText("/home/user/warm.txt");
+            yield* sandbox.kill();
             yield* snapshots.delete(name);
             return { content };
-          }),
-        // Read/Write/ReadWriteVolume on a declared volume.
-        "/volume": () =>
-          Effect.gen(function* () {
-            yield* writeShared.makeDir("/data");
-            yield* writeShared.write("/data/a.txt", "written");
-            const read = yield* readShared.readText("/data/a.txt");
-            const listed = yield* readShared.list("/data");
-            const stat = yield* shared.stat("/data/a.txt");
-            yield* shared.remove("/data/a.txt");
-            const exists = yield* shared.exists("/data/a.txt");
-            return { read, listed: listed.map((e) => e.name), size: stat.size, exists };
-          }),
-        // CreateVolume: a runtime volume, mounted into a sandbox.
-        "/volumes": (query) =>
-          Effect.gen(function* () {
-            const name = query.get("name") ?? "alchemy-binding-volume";
-            const volume = yield* volumes.getOrCreate(name);
-            const again = yield* volumes.getOrCreate(name);
-            yield* volume.files.write("/hello.txt", "from the volume api");
-            const sandbox = yield* scopedSandbox({
-              volumeMounts: [{ name: volume.name, path: "/home/user/vol" }],
-            });
-            const seen = yield* sandbox.files.readText("/home/user/vol/hello.txt");
-            yield* sandbox.files.write("/home/user/vol/back.txt", "from the sandbox");
-            const back = yield* volume.files.readText("/back.txt");
-            yield* sandbox.kill();
-            yield* volumes.delete(volume.volumeId);
-            const gone = yield* volumes.get(name);
-            return {
-              same: again.volumeId === volume.volumeId,
-              seen,
-              back,
-              gone: gone === undefined,
-            };
           }),
         // CreateSecret: a runtime secret injected at egress, never visible in the sandbox.
         "/secrets": (query) =>

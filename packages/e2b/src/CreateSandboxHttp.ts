@@ -13,7 +13,7 @@ import {
 } from "./CreateSandbox.ts";
 import { SandboxBaseMissing } from "./Errors.ts";
 import { bindE2B } from "./internal/Bindings.ts";
-import { makeSandboxHandle } from "./internal/SandboxHandle.ts";
+import { denyUnlisted, makeSandboxHandle } from "./internal/SandboxHandle.ts";
 import { metadataQuery, Sweep } from "./Sweep.ts";
 
 /** The `E2B.Sweep` constructor, as a binding layer's construction yields it. */
@@ -28,7 +28,7 @@ type SweepConstructor = Effect.Success<typeof Sweep>;
 export const declareSweep = Effect.fn(function* (
   sweep: SweepConstructor,
   kind: "sandboxes" | "secrets",
-  stamp: Effect.Effect<Record<string, string>>,
+  stamp: Readonly<Record<string, string>>,
   onDestroy: "delete" | "retain" | undefined,
 ) {
   if (globalThis.__ALCHEMY_RUNTIME__) return;
@@ -38,7 +38,7 @@ export const declareSweep = Effect.fn(function* (
     host.LogicalId,
     Effect.asVoid(
       sweep(`E2B${kind === "sandboxes" ? "Sandbox" : "Secret"}Sweep`, {
-        stamp: yield* stamp,
+        stamp: { ...stamp },
         kinds: [kind],
         ...(onDestroy === undefined ? {} : { onDestroy }),
       }),
@@ -75,7 +75,7 @@ export const CreateSandboxHttp = Layer.effect(
       options?: CreateSandboxBindingOptions,
     ) {
       const auth = yield* bindE2B;
-      yield* declareSweep(sweep, "sandboxes", auth.stamp, options?.onDestroy);
+      yield* declareSweep(sweep, "sandboxes", auth.deployStamp, options?.onDestroy);
       // Both a Template and a Snapshot expose the template id sandboxes boot from.
       const baseId: Effect.Effect<string> | undefined =
         base === undefined
@@ -101,6 +101,9 @@ export const CreateSandboxHttp = Layer.effect(
           const created = yield* auth.authorize(
             sandboxes.createSandbox({
               ...createOptions,
+              ...(createOptions?.network === undefined
+                ? {}
+                : { network: denyUnlisted(createOptions.network) }),
               templateID,
               metadata: yield* withStamp(createOptions?.metadata),
             }),

@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import { BindingAgent, ProbeWebhook, RotatedSecret, SharedVolume } from "./fixtures/resources.ts";
+import { BindingAgent, ProbeWebhook, RotatedSecret } from "./fixtures/resources.ts";
 import E2BWorker from "./fixtures/worker.ts";
 
 const providers = Layer.mergeAll(E2B.providers(), Cloudflare.providers());
@@ -22,7 +22,6 @@ test.provider(
       const { url } = yield* stack.deploy(
         Effect.gen(function* () {
           yield* BindingAgent;
-          yield* SharedVolume;
           yield* RotatedSecret;
           yield* ProbeWebhook;
           const worker = yield* E2BWorker;
@@ -32,7 +31,11 @@ test.provider(
       const name = `alchemy-${Test.defaultStage()}-leftover`
         .toLowerCase()
         .replace(/[^a-z0-9-]/g, "-");
-      const client = yield* HttpClient.HttpClient;
+      // A fresh workers.dev URL answers 404 until it propagates.
+      const client = HttpClient.filterStatus(
+        yield* HttpClient.HttpClient,
+        (status) => status !== 404,
+      );
       const res = yield* client
         .get(`${url}/leftover?name=${name}`)
         .pipe(Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }));
@@ -66,20 +69,21 @@ test.provider(
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      const output = yield* stack.deploy(
+      yield* stack.deploy(
         Effect.gen(function* () {
-          const agent = yield* BindingAgent;
           // A sweep declared directly, as CreateSandbox({ onDestroy: "retain" }) declares it.
           const sweep = yield* E2B.Sweep("RetainSweep", {
             stamp: { "alchemy::host": "RetainProbe" },
             kinds: ["sandboxes"],
             onDestroy: "retain",
           });
-          return { templateId: agent.templateId, sweep };
+          return { sweep };
         }),
       );
+      // On a public template: E2B refuses to delete a template while a
+      // sandbox runs on it, and this one is kept.
       const kept = yield* sandboxes.createSandbox({
-        templateID: output.templateId,
+        templateID: "base",
         timeout: 120,
         metadata: { "alchemy::host": "RetainProbe" },
       });

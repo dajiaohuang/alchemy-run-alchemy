@@ -2,6 +2,8 @@ import type * as E2B from "@distilled.cloud/e2b";
 import type * as filesystem from "@distilled.cloud/e2b/filesystem";
 import type * as process from "@distilled.cloud/e2b/process";
 import type * as sandboxes from "@distilled.cloud/e2b/sandboxes";
+import type * as templates from "@distilled.cloud/e2b/templates";
+import type * as volumes from "@distilled.cloud/e2b/volumes";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
@@ -15,6 +17,8 @@ import type { E2BUnexpectedResponse, SandboxBaseMissing } from "./Errors.ts";
 /** Errors an E2B call can fail with. */
 export type E2BError =
   | E2B.E2BOpError
+  | templates.TemplateInUse
+  | volumes.VolumesNotEnabled
   | process.ConnectStreamError
   | SandboxBaseMissing
   | E2BUnexpectedResponse;

@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import { BindingAgent, ProbeWebhook, RotatedSecret, SharedVolume } from "./fixtures/resources.ts";
+import { BindingAgent, ProbeWebhook, RotatedSecret } from "./fixtures/resources.ts";
 import E2BWorker from "./fixtures/worker.ts";
 
 const providers = Layer.mergeAll(E2B.providers(), Cloudflare.providers());
@@ -21,7 +21,6 @@ const Stack = Alchemy.Stack(
   { providers, state: Cloudflare.state() },
   Effect.gen(function* () {
     const agent = yield* BindingAgent;
-    yield* SharedVolume;
     yield* RotatedSecret;
     yield* ProbeWebhook;
     const worker = yield* E2BWorker;
@@ -63,7 +62,11 @@ const distilled = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const get = <A>(path: string) =>
   Effect.gen(function* () {
     const { url } = yield* stack;
-    const client = yield* HttpClient.HttpClient;
+    // A fresh workers.dev URL answers 404 until it propagates.
+    const client = HttpClient.filterStatus(
+      yield* HttpClient.HttpClient,
+      (status) => status !== 404,
+    );
     const res = yield* client
       .get(`${url}${path}`)
       .pipe(Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }));
@@ -170,39 +173,6 @@ describe("CreateSnapshot", () => {
       expect(body.content.trim()).toBe("warm");
     }),
     { tags, timeout: 300_000 },
-  );
-});
-
-describe("ReadVolume / WriteVolume / ReadWriteVolume", () => {
-  test(
-    "reads and writes a declared volume's files without a sandbox",
-    Effect.gen(function* () {
-      const body = yield* get<{ read: string; listed: string[]; size: number; exists: boolean }>(
-        "/volume",
-      );
-      expect(body.read).toBe("written");
-      expect(body.listed).toContain("a.txt");
-      expect(body.size).toBe(7);
-      expect(body.exists).toBe(false);
-    }),
-    { tags, timeout: 120_000 },
-  );
-});
-
-describe("CreateVolume", () => {
-  test(
-    "creates a volume by name, mounts it into a sandbox, and deletes it",
-    Effect.gen(function* () {
-      const name = yield* unique("vol");
-      const body = yield* get<{ same: boolean; seen: string; back: string; gone: boolean }>(
-        `/volumes?name=${name}`,
-      );
-      expect(body.same).toBe(true);
-      expect(body.seen).toBe("from the volume api");
-      expect(body.back).toBe("from the sandbox");
-      expect(body.gone).toBe(true);
-    }),
-    { tags, timeout: 240_000 },
   );
 });
 

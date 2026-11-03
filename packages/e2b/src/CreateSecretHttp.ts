@@ -37,7 +37,7 @@ export const CreateSecretHttp = Layer.effect(
     const sweep = yield* Sweep;
     return Effect.fn("E2B.CreateSecret")(function* (options?: CreateSecretBindingOptions) {
       const auth = yield* bindE2B;
-      yield* declareSweep(sweep, "secrets", auth.stamp, options?.onDestroy);
+      yield* declareSweep(sweep, "secrets", auth.deployStamp, options?.onDestroy);
 
       const get = (nameOrId: string) =>
         auth.authorize(secrets.getSecret({ secretID: nameOrId.toLowerCase() })).pipe(

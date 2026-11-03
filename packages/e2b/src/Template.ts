@@ -14,6 +14,7 @@ import {
 } from "alchemy/Runtime/Process";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import { E2BUnexpectedResponse } from "./Errors.ts";
 import { e2bName, isGeneratedName } from "./internal/Ownership.ts";
@@ -498,9 +499,17 @@ export const TemplateProvider = () =>
           return attrs;
         }),
         delete: Effect.fn(function* ({ output }) {
-          yield* templates
-            .deleteTemplate({ templateID: output.templateId })
-            .pipe(Effect.catchTag("NotFound", () => Effect.void));
+          // E2B refuses while sandboxes run on the template. The stack's own
+          // are killed by its sweeps as it is destroyed, so retry a while; a
+          // sandbox kept with `onDestroy: "retain"` keeps failing it.
+          yield* templates.deleteTemplate({ templateID: output.templateId }).pipe(
+            Effect.retry({
+              while: (error) => error._tag === "TemplateInUse",
+              schedule: Schedule.spaced("3 seconds"),
+              times: 10,
+            }),
+            Effect.catchTag("NotFound", () => Effect.void),
+          );
         }),
         list: Effect.fn(function* () {
           const all = Array.from(

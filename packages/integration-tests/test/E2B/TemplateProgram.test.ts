@@ -4,9 +4,10 @@ import * as Test from "@alchemy.run/test/Alchemy";
 import * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import ProgramTemplate from "./fixtures/program.ts";
-import { SharedVolume } from "./fixtures/resources.ts";
+import { ProbeWebhook } from "./fixtures/resources.ts";
 
 const { test } = Test.make({ providers: E2B.providers() });
 
@@ -17,8 +18,12 @@ const fetchFromSandbox = (templateId: string, path: string) =>
     (sandbox) =>
       Effect.gen(function* () {
         const client = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+        // Sandbox traffic is private: E2B wants the sandbox's traffic token.
+        const token = sandbox.trafficAccessToken;
         const res = yield* client
-          .get(`https://3000-${sandbox.sandboxID}.${sandbox.domain ?? "e2b.app"}${path}`)
+          .get(`https://3000-${sandbox.sandboxID}.${sandbox.domain ?? "e2b.app"}${path}`, {
+            headers: token ? { "e2b-traffic-access-token": Redacted.value(token) } : {},
+          })
           .pipe(Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }));
         return yield* res.text;
       }),
@@ -32,19 +37,19 @@ test.provider(
       yield* stack.destroy();
       const template = yield* stack.deploy(
         Effect.gen(function* () {
-          yield* SharedVolume;
+          yield* ProbeWebhook;
           return yield* ProgramTemplate;
         }),
       );
       expect(yield* fetchFromSandbox(template.templateId, "/")).toBe("hello from an E2B sandbox");
-      expect(JSON.parse(yield* fetchFromSandbox(template.templateId, "/volume"))).toEqual({
-        exists: false,
+      expect(JSON.parse(yield* fetchFromSandbox(template.templateId, "/webhook"))).toEqual({
+        stats: true,
       });
 
       // Unchanged program: no rebuild.
       const again = yield* stack.deploy(
         Effect.gen(function* () {
-          yield* SharedVolume;
+          yield* ProbeWebhook;
           return yield* ProgramTemplate;
         }),
       );

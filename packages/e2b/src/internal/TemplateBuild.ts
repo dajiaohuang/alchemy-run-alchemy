@@ -79,7 +79,11 @@ export interface TemplateSteps {
 export interface TemplateOptions {
   /** Template name (and alias). */
   readonly name: string;
-  /** Tags assigned to this build (e.g. `"v1"`). */
+  /**
+   * Tags assigned to this build (e.g. `"v1"`). Sandboxes created from the
+   * template id or name boot its `default` tag.
+   * @default ["default"]
+   */
   readonly tags?: ReadonlyArray<string>;
   readonly cpuCount?: number;
   readonly memoryMB?: number;
@@ -283,18 +287,22 @@ const uploadContext = Effect.fn(function* (
     ),
   );
   // Raw HTTP: a presigned upload URL the API handed back, used as-is. The
-  // body is sized (presigned PUTs reject chunked transfer encoding).
+  // body is sized (presigned PUTs reject chunked transfer encoding), and
+  // carries only the headers E2B returned: the URL is signed without a
+  // Content-Type, so sending one fails with SignatureDoesNotMatch.
   const response = yield* client
     .execute(
       HttpClientRequest.put(link.url).pipe(
+        HttpClientRequest.bodyUint8Array(archive),
+        HttpClientRequest.removeHeader("content-type"),
         HttpClientRequest.setHeaders(headers),
-        HttpClientRequest.bodyUint8Array(archive, "application/gzip"),
       ),
     )
     .pipe(Effect.retry({ times: 4, schedule: Schedule.exponential("500 millis") }));
   if (response.status < 200 || response.status >= 300) {
+    const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     return yield* new E2BUnexpectedResponse({
-      message: `uploading build context ${hash} for template ${templateId} failed with HTTP ${response.status}`,
+      message: `uploading build context ${hash} for template ${templateId} failed with HTTP ${response.status}: ${body.slice(0, 500)}`,
     });
   }
 });
@@ -312,12 +320,19 @@ export const waitForBuild = Effect.fn(function* (templateId: string, buildId: st
       }),
     );
   if (status.status !== "ready") {
+    // `logs` is always empty on the current build path; `logEntries` has them.
+    const logs = (status.reason?.logEntries ?? status.logEntries)
+      .slice(-40)
+      .map((entry) => entry.message);
     return yield* new TemplateBuildFailed({
-      message: `E2B template build ${buildId} failed: ${status.reason?.message ?? status.status}`,
+      message: [
+        `E2B template build ${buildId} failed: ${status.reason?.message ?? status.status}`,
+        ...logs.slice(-15).map((line) => `  ${line}`),
+      ].join("\n"),
       templateId,
       buildId,
       reason: status.reason?.message,
-      logs: status.logs.slice(-40),
+      logs,
     });
   }
   return status;

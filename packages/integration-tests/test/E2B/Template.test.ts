@@ -82,7 +82,7 @@ test.provider(
         path.join(context, "Dockerfile"),
         'FROM ubuntu:24.04\nCOPY hello.txt /opt/hello.txt\nCMD ["sleep", "infinity"]\n',
       );
-      const props = { dockerfile: path.join(context, "Dockerfile") };
+      const props = { context, dockerfile: path.join(context, "Dockerfile") };
 
       const first = yield* stack.deploy(
         Effect.gen(function* () {
@@ -122,7 +122,7 @@ test.provider(
           }),
         )
         .pipe(Effect.flip);
-      expect(String(error)).toContain("single-stage");
+      expect(String(error)).toContain("multi-stage builds are not supported");
       yield* stack.destroy();
     }),
   { tags: ["provider:e2b", "provider:e2b:template", "live"], timeout: 120_000 },

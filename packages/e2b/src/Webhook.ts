@@ -48,6 +48,7 @@ export interface WebhookProps {
   /**
    * The secret E2B signs each delivery with. The `e2b-signature` header is
    * the unpadded base64 SHA-256 of this secret followed by the raw body.
+   * At least 32 characters.
    */
   signatureSecret: Redacted.Redacted<string>;
 }

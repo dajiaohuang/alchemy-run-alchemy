@@ -7,7 +7,7 @@ export const BindingAgent = E2B.Template("BindingAgent", {
   run: ["echo bound > /home/user/marker.txt"],
 });
 
-/** A volume the fixture reads and writes through the volume bindings. */
+/** A volume the volume fixture reads and writes through the volume bindings. */
 export const SharedVolume = E2B.Volume("SharedVolume", {});
 
 /** A secret the fixture rotates with WriteSecret. */
@@ -17,5 +17,6 @@ export const RotatedSecret = E2B.Secret("RotatedSecret", { value: Redacted.make(
 export const ProbeWebhook = E2B.Webhook("ProbeWebhook", {
   url: "https://example.com/alchemy-e2b-probe",
   events: ["sandbox.lifecycle.killed"],
-  signatureSecret: Redacted.make("alchemy-e2b-probe"),
+  // E2B requires at least 32 characters.
+  signatureSecret: Redacted.make("alchemy-e2b-probe-signature-secret"),
 });

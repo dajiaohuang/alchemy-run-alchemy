@@ -84,6 +84,20 @@ const shell = (command: string, options: RunOptions | undefined) => ({
 const signalOf = (signal: "SIGTERM" | "SIGKILL" | undefined) =>
   signal === "SIGTERM" ? ("SIGNAL_SIGTERM" as const) : ("SIGNAL_SIGKILL" as const);
 
+/**
+ * `allowOut` lists the only destinations a sandbox may reach: E2B allows
+ * everything else unless `denyOut` blocks it, so an `allowOut` without a
+ * `denyOut` denies all other traffic.
+ */
+export const denyUnlisted = <
+  N extends { allowOut?: ReadonlyArray<string>; denyOut?: ReadonlyArray<string> },
+>(
+  network: N,
+): N =>
+  network.allowOut !== undefined && network.denyOut === undefined
+    ? { ...network, denyOut: ["0.0.0.0/0"] }
+    : network;
+
 export const makeSandboxHandle = (
   auth: E2BAuth,
   info: sandboxes.Sandbox,
@@ -171,7 +185,12 @@ export const makeSandboxHandle = (
       readText: (path) =>
         inSandbox(envd.readFile({ path })).pipe(Effect.map((bytes) => decoder.decode(bytes))),
       write: (path, data) =>
-        inSandbox(envd.writeFiles({ path, body: data })).pipe(
+        inSandbox(
+          envd.writeFiles({
+            path,
+            file: new Blob([typeof data === "string" ? data : new Uint8Array(data)]),
+          }),
+        ).pipe(
           Effect.map((entries) => {
             const entry = entries[0];
             return { name: entry?.name, path: entry?.path ?? path } as filesystem.EntryInfo;
@@ -250,7 +269,9 @@ export const makeSandboxHandle = (
         .pipe(Effect.asVoid),
     updateNetwork: (network) =>
       auth
-        .authorize(sandboxes.updateSandboxNetwork({ ...network, sandboxID: sandboxId }))
+        .authorize(
+          sandboxes.updateSandboxNetwork({ ...denyUnlisted(network), sandboxID: sandboxId }),
+        )
         .pipe(Effect.asVoid),
     snapshot: (options) =>
       auth.authorize(sandboxes.createSandboxSnapshot({ sandboxID: sandboxId, ...options })),

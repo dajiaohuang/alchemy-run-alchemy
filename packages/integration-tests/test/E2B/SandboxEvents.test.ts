@@ -34,7 +34,12 @@ test.provider(
         "sandbox.lifecycle.killed",
       ]);
 
-      const client = yield* HttpClient.HttpClient;
+      // A fresh workers.dev URL answers 404, then briefly 5xx, until it
+      // propagates.
+      const client = HttpClient.filterStatus(
+        yield* HttpClient.HttpClient,
+        (status) => status !== 404 && status < 500,
+      );
       // An unsigned delivery is rejected before the handler runs.
       const forged = yield* client
         .execute(
