@@ -19,7 +19,7 @@ import { toBranchAttributes } from "./Branch.ts";
 import type { DiskAttributes } from "./Disk.ts";
 import type { DiskUserAttributes } from "./DiskUser.ts";
 import { addDiskUser, removeDiskUser, type DiskUserUnexpectedResponse } from "./DiskUser.ts";
-import { observeSandbox, type SandboxAttributes } from "./Sandbox.ts";
+import { deleteSandbox, observeSandbox, type SandboxAttributes } from "./Sandbox.ts";
 import { toEgressPolicy, type SandboxEgress } from "./SandboxOptions.ts";
 import type { SandboxPortTokenAttributes } from "./SandboxPortToken.ts";
 import { createPortToken, revokePortToken } from "./SandboxPortToken.ts";
@@ -173,6 +173,16 @@ export interface DiskHandle extends ExecDiskClient, ReadWriteDiskClient, BranchD
 export type RunOptions = Process.RunOptions;
 
 /** One sandbox, with everything a run-time client can do to it. */
+/**
+ * What a process call on a sandbox handle can fail with. A paused sandbox
+ * is resumed first, so resuming can fail too.
+ */
+export type ProcessCallError =
+  | Process.ProcessError
+  | archil.CreateSandboxConnectionError
+  | archil.GetSandboxError
+  | archil.ResumeSandboxError;
+
 export interface SandboxHandle {
   readonly sandboxId: string;
   readonly name: string;
@@ -182,11 +192,7 @@ export interface SandboxHandle {
   exec(
     command: string,
     options?: RunOptions,
-  ): Effect.Effect<
-    Process.ProcessResult,
-    Process.ProcessError | archil.CreateSandboxConnectionError,
-    R
-  >;
+  ): Effect.Effect<Process.ProcessResult, ProcessCallError, R>;
   /**
    * Start a command and attach to its output. Closing the scope detaches;
    * the process keeps running and can be re-attached by id.
@@ -194,34 +200,22 @@ export interface SandboxHandle {
   run(
     command: string,
     options?: RunOptions,
-  ): Effect.Effect<
-    Process.Process,
-    Process.ProcessError | archil.CreateSandboxConnectionError,
-    R | Scope.Scope
-  >;
+  ): Effect.Effect<Process.Process, ProcessCallError, R | Scope.Scope>;
   /** Re-attach to a running process, resuming its output at `offset`. */
   attach(
     processId: string,
     offset?: number,
-  ): Effect.Effect<
-    Process.Process,
-    Process.ProcessError | archil.CreateSandboxConnectionError,
-    R | Scope.Scope
-  >;
+  ): Effect.Effect<Process.Process, ProcessCallError, R | Scope.Scope>;
   /** Kill a running process. */
-  kill(
-    processId: string,
-  ): Effect.Effect<void, Process.ProcessError | archil.CreateSandboxConnectionError, R>;
+  kill(processId: string): Effect.Effect<void, ProcessCallError, R>;
   /** Write a file in the sandbox. */
   writeFile(
     path: string,
     data: string | Uint8Array,
     options?: { readonly mode?: number },
-  ): Effect.Effect<void, Process.ProcessError | archil.CreateSandboxConnectionError, R>;
+  ): Effect.Effect<void, ProcessCallError, R>;
   /** Read a file from the sandbox. */
-  readFile(
-    path: string,
-  ): Effect.Effect<Uint8Array, Process.ProcessError | archil.CreateSandboxConnectionError, R>;
+  readFile(path: string): Effect.Effect<Uint8Array, ProcessCallError, R>;
   /** Start a stopped sandbox. */
   start(): Effect.Effect<SandboxAttributes, archil.StartSandboxError, R>;
   /** Stop the sandbox (its disk survives; memory doesn't). */
@@ -264,8 +258,12 @@ export interface SandboxHandle {
   revokePortToken(tokenId: string): Effect.Effect<void, archil.DeleteSandboxPortTokenError, R>;
   /** Replace the outbound network policy. Applies at once. */
   setEgress(egress: SandboxEgress): Effect.Effect<void, archil.UpdateSandboxNetworkError, R>;
-  /** Delete the sandbox. Deleting a missing sandbox succeeds. */
-  delete(): Effect.Effect<void, archil.DeleteSandboxError, R>;
+  /**
+   * Stop (if it's live) and delete the sandbox. Delete forks first: Archil
+   * won't delete a sandbox that has forks. Deleting a missing sandbox
+   * succeeds.
+   */
+  delete(): Effect.Effect<void, Effect.Error<ReturnType<typeof deleteSandbox>>, R>;
 }
 
 const toExecResult = (data: archil.ExecDiskResult): ExecResult => ({
@@ -436,39 +434,62 @@ export const makeDiskHandle = (
   };
 };
 
-/** A full handle on a sandbox known by id and name. */
+/**
+ * A full handle on a sandbox known by id and name. `forkName` maps a fork's
+ * name (a binding stamps its prefix on it so destroy can sweep forks too).
+ */
 export const makeSandboxHandle = (
   sandbox: { readonly sandboxId: string; readonly name: string },
   authorize: Authorize,
+  forkName: (name: string | undefined) => Effect.Effect<string | undefined> = Effect.succeed,
 ): SandboxHandle => {
   const sid = sandbox.sandboxId;
+  // A paused sandbox (idle TTL) refuses process connections; resume it and
+  // try once more.
+  const awake = <A, E extends { readonly _tag: string }, R2>(effect: Effect.Effect<A, E, R2>) =>
+    authorize(
+      effect.pipe(
+        Effect.catchIf(
+          (e) => e._tag === "SandboxStateConflict",
+          (e) =>
+            archil
+              .getSandbox({ sid })
+              .pipe(
+                Effect.flatMap(({ data }) =>
+                  data.status === "paused"
+                    ? archil.resumeSandbox({ sid, wait: true }).pipe(Effect.andThen(effect))
+                    : Effect.fail(e),
+                ),
+              ),
+        ),
+      ),
+    );
   const attrs = <E>(effect: Effect.Effect<{ data: archil.Sandbox }, E, any>) =>
     authorize(effect.pipe(Effect.flatMap(({ data }) => observeSandbox(data))));
   const handle: SandboxHandle = {
     sandboxId: sid,
     name: sandbox.name,
     refresh: () => attrs(archil.getSandbox({ sid })),
-    exec: (command, options) => authorize(Process.exec(sid, command, options)),
-    run: (command, options) => authorize(Process.run(sid, command, options)),
-    attach: (processId, offset) => authorize(Process.attach(sid, processId, offset)),
-    kill: (processId) => authorize(Process.kill(sid, processId)),
-    writeFile: (path, data, options) => authorize(Process.uploadFile(sid, path, data, options)),
-    readFile: (path) => authorize(Process.downloadFile(sid, path)),
+    exec: (command, options) => awake(Process.exec(sid, command, options)),
+    run: (command, options) => awake(Process.run(sid, command, options)),
+    attach: (processId, offset) => awake(Process.attach(sid, processId, offset)),
+    kill: (processId) => awake(Process.kill(sid, processId)),
+    writeFile: (path, data, options) => awake(Process.uploadFile(sid, path, data, options)),
+    readFile: (path) => awake(Process.downloadFile(sid, path)),
     start: () => attrs(archil.startSandbox({ sid, wait: true })),
     stop: () => attrs(archil.stopSandbox({ sid })),
     pause: () => attrs(archil.pauseSandbox({ sid })),
     resume: () => attrs(archil.resumeSandbox({ sid })),
     fork: (options) =>
       authorize(
-        archil.forkSandbox({
-          sid,
-          wait: true,
-          name: options?.name,
-          checkpoint: options?.checkpoint,
-        }),
+        forkName(options?.name).pipe(
+          Effect.flatMap((name) =>
+            archil.forkSandbox({ sid, wait: true, name, checkpoint: options?.checkpoint }),
+          ),
+        ),
       ).pipe(
         Effect.map(({ data }) =>
-          makeSandboxHandle({ sandboxId: data.sandbox_id, name: data.name }, authorize),
+          makeSandboxHandle({ sandboxId: data.sandbox_id, name: data.name }, authorize, forkName),
         ),
       ),
     setTimeout: (options) =>
@@ -496,13 +517,7 @@ export const makeSandboxHandle = (
       authorize(archil.updateSandboxNetwork({ sid, egress: toEgressPolicy(egress) })).pipe(
         Effect.asVoid,
       ),
-    delete: () =>
-      authorize(
-        archil.deleteSandbox({ sid }).pipe(
-          Effect.asVoid,
-          Effect.catchTag("SandboxNotFound", () => Effect.void),
-        ),
-      ),
+    delete: () => authorize(deleteSandbox(sid)),
   };
   return handle;
 };

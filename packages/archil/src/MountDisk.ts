@@ -4,12 +4,15 @@ import type { MountBinding, MountCapability } from "alchemy/Mount";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcess } from "effect/process";
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type { Disk } from "./Disk.ts";
 import { DiskUser } from "./DiskUser.ts";
@@ -62,21 +65,32 @@ export class MountFailed extends Data.TaggedError("Archil.MountFailed")<{
   readonly path: string;
   readonly exitCode: number;
   readonly stderr: string;
-}> {}
+}> {
+  override get message() {
+    return `archil mount ${this.disk} at ${this.path} exited ${this.exitCode}: ${this.stderr.trim()}`;
+  }
+}
 
 /** The host can't run the Archil client (no process spawner, e.g. a Worker). */
 export class MountNotSupported extends Data.TaggedError("Archil.MountNotSupported")<{
   readonly message: string;
 }> {}
 
-export type MountError = MountFailed | MountNotSupported;
+/** The path is already mounted in this process with different options. */
+export class MountConflict extends Data.TaggedError("Archil.MountConflict")<{
+  readonly path: string;
+  readonly message: string;
+}> {}
+
+export type MountError = MountFailed | MountNotSupported | MountConflict;
 
 /** Mounts one deploy-time disk, with a disk user minted for this host. */
 export interface MountDiskClient {
   /**
    * Mount the disk for the life of the current scope (typically one
-   * request) and return the mount path. Closing the scope flushes and
-   * unmounts, releasing any delegations this mount held.
+   * request) and return the mount path. Concurrent scopes that mount the
+   * same path with the same options share one mount; the last one to close
+   * flushes and unmounts, releasing any delegations the mount held.
    */
   mount(options?: MountOptions): Effect.Effect<string, MountError, RuntimeContext | Scope.Scope>;
 }
@@ -137,11 +151,29 @@ const run = (
 ) =>
   Effect.gen(function* () {
     const handle = yield* ChildProcess.make(command, args, { env, extendEnv: true, shell: false });
-    const [exitCode, stderr] = yield* Effect.all(
-      [handle.exitCode, handle.stderr.pipe(Stream.decodeText, Stream.mkString)],
-      { concurrency: 2 },
+    let stderr = "";
+    const reader = yield* handle.stderr.pipe(
+      Stream.decodeText,
+      Stream.runForEach((chunk) => Effect.sync(() => void (stderr += chunk))),
+      Effect.forkScoped,
     );
-    return { exitCode: Number(exitCode), stderr };
+    // A client that never finishes attaching (no FUSE, no route to Archil)
+    // is killed, and reported with what it printed so far.
+    const exitCode = yield* handle.exitCode.pipe(
+      Effect.timeoutOption("60 seconds"),
+      Effect.flatMap((code) =>
+        Option.isSome(code)
+          ? Effect.succeed(Number(code.value))
+          : handle.kill().pipe(
+              Effect.ignore,
+              Effect.as(124),
+              Effect.tap(() => Effect.sync(() => void (stderr += "\n(timed out after 60s)"))),
+            ),
+      ),
+    );
+    // Let the stderr reader drain what's left.
+    yield* Fiber.join(reader).pipe(Effect.timeoutOption("2 seconds"), Effect.ignore);
+    return { exitCode, stderr };
   }).pipe(
     Effect.scoped,
     Effect.provideService(ChildProcessSpawner, spawner),
@@ -149,9 +181,28 @@ const run = (
     Effect.catch((cause) => Effect.succeed({ exitCode: 127, stderr: String(cause) })),
   );
 
+/** The mounts this process holds, by path. */
+interface Mounts {
+  readonly lock: Semaphore.Semaphore;
+  readonly byPath: Map<string, { readonly key: string; users: number }>;
+}
+
+const makeMounts = Effect.gen(function* () {
+  return {
+    lock: yield* Semaphore.make(1),
+    byPath: new Map(),
+  } satisfies Mounts;
+});
+
+// `archil unmount` returns before the client's daemon exits, and a mount at
+// the same path fails until it has.
+const isStillUnmounting = (e: MountError) =>
+  e._tag === "Archil.MountFailed" && e.stderr.includes("older Archil process is still running");
+
 /** Mount a disk for the life of the ambient scope. */
 const mountFor = (
   spawner: Option.Option<ChildProcessSpawner["Service"]>,
+  mounts: Mounts,
   input: {
     readonly disk: string;
     readonly token: Redacted.Redacted<string> | undefined;
@@ -170,32 +221,56 @@ const mountFor = (
     const target = input.options.subdirectory
       ? `${input.disk}:/${input.options.subdirectory.replace(/^\//, "")}`
       : input.disk;
+    const args = [
+      "mount",
+      target,
+      path,
+      "--region",
+      input.region,
+      ...modeFlags(input.options.mode),
+      ...(input.options.branch ? ["--branch", input.options.branch] : []),
+      ...(input.options.force ? ["--force"] : []),
+    ];
+    const key = args.join(" ");
     const env: Record<string, string | Redacted.Redacted<string>> = input.token
       ? { ARCHIL_MOUNT_TOKEN: input.token }
       : {};
+    const mount = Effect.gen(function* () {
+      const result = yield* run(spawner.value, "archil", args, env);
+      if (result.exitCode !== 0) {
+        return yield* new MountFailed({ disk: input.disk, path, ...result });
+      }
+    }).pipe(
+      Effect.retry({
+        while: isStillUnmounting,
+        schedule: Schedule.spaced("1 second"),
+        times: 15,
+      }),
+    );
     yield* Effect.acquireRelease(
       Effect.gen(function* () {
-        yield* run(spawner.value, "mkdir", ["-p", path]);
-        const result = yield* run(
-          spawner.value,
-          "archil",
-          [
-            "mount",
-            target,
-            path,
-            "--region",
-            input.region,
-            ...modeFlags(input.options.mode),
-            ...(input.options.branch ? ["--branch", input.options.branch] : []),
-            ...(input.options.force ? ["--force"] : []),
-          ],
-          env,
-        );
-        if (result.exitCode !== 0) {
-          return yield* new MountFailed({ disk: input.disk, path, ...result });
+        const held = mounts.byPath.get(path);
+        if (held !== undefined) {
+          if (held.key !== key) {
+            return yield* new MountConflict({
+              path,
+              message: `${path} is already mounted with \`archil ${held.key}\``,
+            });
+          }
+          held.users++;
+          return;
         }
-      }),
-      () => run(spawner.value, "archil", ["unmount", path], env).pipe(Effect.ignore),
+        yield* run(spawner.value, "mkdir", ["-p", path]);
+        yield* mount;
+        mounts.byPath.set(path, { key, users: 1 });
+      }).pipe(mounts.lock.withPermits(1)),
+      () =>
+        Effect.gen(function* () {
+          const held = mounts.byPath.get(path);
+          if (held === undefined || --held.users > 0) return;
+          mounts.byPath.delete(path);
+          yield* run(spawner.value, "archil", ["unmount", path], env);
+        }).pipe(mounts.lock.withPermits(1)),
     );
     return path;
   });
@@ -274,12 +349,13 @@ export const MountDiskLive = Layer.effect(
   Effect.gen(function* () {
     const Users = yield* DiskUser;
     const spawner = yield* Effect.serviceOption(ChildProcessSpawner);
+    const mounts = yield* makeMounts;
     return Effect.fn(function* (disk?: Disk, options?: MountDiskOptions) {
       yield* bindClientCapability;
       if (disk === undefined) {
         const client: MountAnyDiskClient = {
           mount: (input) =>
-            mountFor(spawner, {
+            mountFor(spawner, mounts, {
               disk: input.disk,
               token: typeof input.token === "string" ? Redacted.make(input.token) : input.token,
               region: input.region ?? options?.region ?? DEFAULT_REGION,
@@ -298,7 +374,7 @@ export const MountDiskLive = Layer.effect(
       const client: MountDiskClient = {
         mount: (mountOptions) =>
           Effect.gen(function* () {
-            return yield* mountFor(spawner, {
+            return yield* mountFor(spawner, mounts, {
               disk: yield* diskId,
               token: yield* token,
               region: yield* region,

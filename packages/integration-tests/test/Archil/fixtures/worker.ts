@@ -93,7 +93,7 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
             yield* files.delete(q("key"));
             return yield* HttpServerResponse.json({
               text,
-              after: yield* files.head(q("key")) ?? null,
+              after: (yield* files.head(q("key"))) ?? null,
             });
           }
           case "/branch": {

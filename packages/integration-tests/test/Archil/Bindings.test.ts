@@ -3,6 +3,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import { describe, expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
 import * as Alchemy from "alchemy";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -45,6 +46,8 @@ const call = (path: string, init?: { method?: "PUT"; body?: string }) =>
 const json = <A>(path: string) =>
   call(path).pipe(Effect.flatMap((r) => r.json as Effect.Effect<A, any>));
 const text = (path: string) => call(path).pipe(Effect.flatMap((r) => r.text));
+
+class MountRouteFailed extends Data.TaggedError("MountRouteFailed")<{ readonly text: string }> {}
 
 const tags = ["provider:archil", "provider:cloudflare", "provider:cloudflare:worker", "live"];
 
@@ -174,9 +177,19 @@ describe("MountDisk", () => {
   test(
     "a Container mounts the disk with its own disk user and reads a file",
     Effect.gen(function* () {
+      const { url } = yield* stack;
       yield* call("/put?key=mounted.txt", { method: "PUT", body: "through fuse" });
-      const body = yield* text("/mount?key=mounted.txt").pipe(
+      const client = yield* HttpClient.HttpClient;
+      // The container cold-starts; keep its error text so a failed mount
+      // shows the Archil client's stderr instead of a bare 500.
+      const body = yield* client.get(`${url}/mount?key=mounted.txt`).pipe(
+        Effect.flatMap((res) =>
+          Effect.flatMap(res.text, (text) =>
+            res.status === 200 ? Effect.succeed(text) : Effect.fail(new MountRouteFailed({ text })),
+          ),
+        ),
         Effect.retry({ schedule: Schedule.spaced("5 seconds"), times: 18 }),
+        Effect.catchTag("MountRouteFailed", (e) => Effect.succeed(e.text)),
       );
       expect(body).toBe("through fuse");
     }),

@@ -118,8 +118,14 @@ export const CreateSandboxHttp = Layer.effect(
       const prefix = yield* prefixes("Sandboxes", ["sandbox"], options?.onDestroy);
       const imageId = image ? yield* image.imageId : undefined;
       const fullName = (name: string) => Effect.map(prefix, (p) => runtimeName(p, name));
+      // Forks are stamped like the sandboxes they come from, so destroy
+      // sweeps them too; an unnamed fork gets a random name.
+      const forkName = Effect.fn(function* (name: string | undefined) {
+        const id = yield* Effect.sync(() => crypto.randomUUID().slice(0, 8));
+        return yield* fullName(name ?? `fork-${id}`);
+      });
       const handle = (s: { sandbox_id: string; name: string }) =>
-        makeSandboxHandle({ sandboxId: s.sandbox_id, name: s.name }, authorize);
+        makeSandboxHandle({ sandboxId: s.sandbox_id, name: s.name }, authorize, forkName);
       return {
         create: (request) =>
           authorize(

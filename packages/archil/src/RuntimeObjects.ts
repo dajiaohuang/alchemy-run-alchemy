@@ -66,7 +66,25 @@ export const sweep = Effect.fn(function* (
     const sandboxes = (yield* listSandboxes()).filter(
       (s) => owned(s.name) && s.status !== "deleted",
     );
-    yield* Effect.forEach(sandboxes, (s) => deleteSandbox(s.sandbox_id), { concurrency: 4 });
+    // A sandbox with forks can't be deleted until they are, so whatever
+    // conflicts is retried once its forks are gone.
+    let pending = sandboxes.map((s) => s.sandbox_id);
+    for (let round = 0; pending.length > 0 && round < 5; round++) {
+      const conflicted = yield* Effect.forEach(
+        pending,
+        (sid) =>
+          deleteSandbox(sid).pipe(
+            Effect.as(undefined),
+            Effect.catchTag("SandboxStateConflict", () => Effect.succeed(sid)),
+          ),
+        { concurrency: 4 },
+      );
+      const next = conflicted.filter((sid) => sid !== undefined);
+      if (next.length === pending.length) {
+        yield* Effect.forEach(next, (sid) => deleteSandbox(sid), { discard: true });
+      }
+      pending = next;
+    }
   }
   if (kinds.includes("disk")) {
     const { data } = yield* archil.listDisks({ limit: 1000 });
