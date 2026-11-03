@@ -19,7 +19,7 @@ import { toBranchAttributes } from "./Branch.ts";
 import type { DiskAttributes } from "./Disk.ts";
 import type { DiskUserAttributes } from "./DiskUser.ts";
 import { addDiskUser, removeDiskUser, type DiskUserUnexpectedResponse } from "./DiskUser.ts";
-import { toSandboxAttributes, type SandboxAttributes } from "./Sandbox.ts";
+import { observeSandbox, type SandboxAttributes } from "./Sandbox.ts";
 import { toEgressPolicy, type SandboxEgress } from "./SandboxOptions.ts";
 import type { SandboxPortTokenAttributes } from "./SandboxPortToken.ts";
 import { createPortToken, revokePortToken } from "./SandboxPortToken.ts";
@@ -443,7 +443,7 @@ export const makeSandboxHandle = (
 ): SandboxHandle => {
   const sid = sandbox.sandboxId;
   const attrs = <E>(effect: Effect.Effect<{ data: archil.Sandbox }, E, any>) =>
-    authorize(effect.pipe(Effect.map(({ data }) => toSandboxAttributes(data))));
+    authorize(effect.pipe(Effect.flatMap(({ data }) => observeSandbox(data))));
   const handle: SandboxHandle = {
     sandboxId: sid,
     name: sandbox.name,

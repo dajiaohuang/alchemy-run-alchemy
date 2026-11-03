@@ -113,9 +113,15 @@ export const capabilities: BuildPlan.Capabilities = {
 };
 
 /** Map an image response to attributes. */
-export const toImageAttributes = (image: archil.Image, hash: string): ImageAttributes => ({
+export const toImageAttributes = (
+  image: archil.Image,
+  hash: string,
+  source: string = image.source,
+): ImageAttributes => ({
   imageId: image.image_id,
-  source: image.source,
+  // Archil may answer with a reference it normalized (or one an earlier
+  // build of the same image used), so keep the one that was asked for.
+  source,
   canonicalSource: image.canonical_source,
   digest: image.digest,
   private: image.private,
@@ -156,7 +162,7 @@ export const pullImage = Effect.fn(function* (
       ? { username: registry.username, password: registry.password }
       : undefined,
   });
-  return toImageAttributes(yield* waitForImage(data.image_id), hash);
+  return toImageAttributes(yield* waitForImage(data.image_id), hash, source);
 });
 
 /** Plan, then pull, an image. */
@@ -184,7 +190,7 @@ export const ImageProvider = () =>
         read: Effect.fn(function* ({ output }) {
           if (!output) return undefined;
           return yield* archil.getImage({ image_id: output.imageId }).pipe(
-            Effect.map(({ data }) => toImageAttributes(data, output.hash)),
+            Effect.map(({ data }) => toImageAttributes(data, output.hash, output.source)),
             Effect.catchTag("ImageNotFound", () => Effect.undefined),
           );
         }),
@@ -198,9 +204,14 @@ export const ImageProvider = () =>
               Effect.map(({ data }) => data),
               Effect.catchTag("ImageNotFound", () => Effect.undefined),
             );
-            if (observed?.status === "ready") return toImageAttributes(observed, plan.hash);
+            if (observed?.status === "ready")
+              return toImageAttributes(observed, plan.hash, output.source);
             if (observed?.status === "building") {
-              return toImageAttributes(yield* waitForImage(observed.image_id), plan.hash);
+              return toImageAttributes(
+                yield* waitForImage(observed.image_id),
+                plan.hash,
+                output.source,
+              );
             }
           }
           // Ensure

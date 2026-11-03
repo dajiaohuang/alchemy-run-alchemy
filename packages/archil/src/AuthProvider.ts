@@ -22,7 +22,7 @@ export type ArchilAuthConfig = StoredAuthConfig;
  * Resolved Archil credentials.
  *
  * Archil's control plane authenticates with account API keys (created in
- * the console or with `Archil.ApiToken`). Every disk, sandbox and image
+ * the console). Every disk, sandbox and image
  * lives in one region, which picks the control plane and S3 endpoints.
  */
 export interface ArchilResolvedCredentials {

@@ -90,6 +90,19 @@ export const toEgressPolicy = (egress: SandboxEgress): archil.SandboxEgressPolic
   drain_on_pause: egress.drainOnPause ? [...egress.drainOnPause] : undefined,
 });
 
+const isArchilEgress = (entry: string | object) =>
+  typeof entry === "string" && /^(mount|data)\.\*\.archil\.com$/.test(entry);
+
+/**
+ * Split off the allow-list entries Archil adds itself to a sandbox that
+ * mounts disks (`mount.*.archil.com`, `data.*.archil.com`). They aren't
+ * part of the desired policy, but an update must keep them.
+ */
+export const splitArchilEgress = (egress: archil.SandboxEgressPolicy | undefined) => ({
+  managed: (egress?.allow ?? []).filter(isArchilEgress),
+  policy: egress && { ...egress, allow: egress.allow?.filter((entry) => !isArchilEgress(entry)) },
+});
+
 /** The wire shape of a mount. */
 export const toSandboxMount = (mount: SandboxMount): archil.SandboxMount => ({
   disk_id: mount.disk,

@@ -56,8 +56,10 @@ export type ApiToken = Resource<
  *
  * Archil only shows the key once, when it's created, so Alchemy stores it
  * in state as a `Redacted` value. Changing a prop creates a new key, and
- * destroying it revokes the key. The `Create…` bindings create one per host
- * for you.
+ * destroying it revokes the key.
+ *
+ * Archil only creates API keys from a console session: deploying with an
+ * API key fails with `ApiTokenCreationForbidden`.
  * @see https://docs.archil.com/api-reference
  *
  * ### Creating a Key

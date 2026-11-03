@@ -182,6 +182,26 @@ export const waitForSandbox = (sid: string) =>
       }),
   );
 
+/** States a sandbox can be deleted from. */
+export const deletableSandboxStates = new Set(["stopped", "exited", "failed"]);
+
+/** Wait until a stopping sandbox is stopped (or exited, or failed). */
+export const waitForSandboxStopped = (sid: string) =>
+  pollUntil(
+    getSandbox(sid),
+    (sandbox) =>
+      sandbox === undefined || deletableSandboxStates.has(sandbox.status)
+        ? Effect.succeed(true as const)
+        : Effect.undefined,
+    (sandbox) =>
+      new ArchilNotReady({
+        resource: "Sandbox",
+        id: sid,
+        status: sandbox?.status ?? "deleted",
+        message: `Sandbox ${sandbox?.name ?? sid} is still ${sandbox?.status}`,
+      }),
+  ).pipe(Effect.asVoid);
+
 /** Wait until a sandbox is gone after a delete. */
 export const waitForSandboxGone = (sid: string) =>
   pollUntil(

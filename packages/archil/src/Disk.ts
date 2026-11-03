@@ -247,7 +247,9 @@ export const toDiskAttributes = (
   disk: archil.DiskResponse,
   settings: { allowedIps: string[]; allowSandboxMount: boolean },
 ): DiskAttributes => {
-  const mount = disk.mounts?.[0];
+  const first = disk.mounts?.[0];
+  // Archil-managed storage is an `s3` mount on Archil's own bucket.
+  const mount = first?.config?.bucketName?.startsWith("archil.prod.") ? undefined : first;
   return {
     diskId: disk.id,
     name: disk.name,

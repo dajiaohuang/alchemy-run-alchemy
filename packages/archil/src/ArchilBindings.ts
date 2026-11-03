@@ -1,11 +1,11 @@
 /**
  * How Archil bindings reach the control plane from any host.
  *
- * Archil API keys can't be scoped, so a binding never ships the deployer's
- * key: it creates an `Archil.ApiToken` for its host (one per host and
- * binding, revocable on its own) and the host reads it back at run time.
- * A host that only mounts disks never holds an API key at all; it gets a
- * per-disk `Archil.DiskUser` instead (see `MountDisk`).
+ * Archil only mints API keys from a console session and can't scope them,
+ * so a host's control-plane clients use the key the stack deploys with,
+ * recorded per host and read back at run time. A host that only mounts
+ * disks never holds an API key at all; it gets a per-disk `Archil.DiskUser`
+ * instead (see `MountDisk`).
  */
 import { controlPlaneUrl, Credentials, DEFAULT_REGION } from "@distilled.cloud/archil/Credentials";
 import * as Binding from "alchemy/Binding";
@@ -15,7 +15,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { ApiToken } from "./ApiToken.ts";
+import { DeployerKey } from "./internal/DeployerKey.ts";
 import { RuntimeObjects, type OnDestroy } from "./RuntimeObjects.ts";
 
 /** Runs Archil SDK effects and streams with the host's own API key. */
@@ -29,18 +29,16 @@ export interface Authorize {
 }
 
 /**
- * Create (at deploy) and read back (at run time) the API key a host's
+ * Record (at deploy) and read back (at run time) the API key a host's
  * Archil clients call the control plane with. Every Archil binding on one
- * host shares one key (the engine de-duplicates the declaration).
+ * host shares one record (the engine de-duplicates the declaration).
  */
 export const ApiAccess = Effect.gen(function* () {
-  const Token = yield* ApiToken;
+  const Key = yield* DeployerKey;
   return Effect.fn(function* () {
     const host = yield* Binding.Host;
-    const token = yield* Token(`${host?.LogicalId ?? "Script"}ArchilApiKey`, {
-      description: `Alchemy: Archil bindings on ${host?.LogicalId ?? "a script"}`,
-    });
-    const apiKey = yield* token.token;
+    const token = yield* Key(`${host?.LogicalId ?? "Script"}ArchilApiKey`, {});
+    const apiKey = yield* token.apiKey;
     const region = yield* token.region;
     const credentials = Effect.all([apiKey, region]).pipe(
       Effect.map(([key, r]) => ({

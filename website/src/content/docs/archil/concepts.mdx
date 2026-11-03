@@ -38,4 +38,4 @@ const disks = yield* Archil.CreateDisk({ onDestroy: "retain" });
 
 ## Credentials
 
-An API key can call the whole account, so each host that uses Archil bindings gets its own, revocable on its own. A disk token opens one disk and nothing else; `MountDisk(disk)` makes one per host, and `home.createToken()` makes one at run time. A port token opens one port of one sandbox, for a browser or client that shouldn't hold a key.
+An API key can call the whole account. Archil only creates keys from the console, so a host that uses Archil's control plane gets the key you deploy with; rotate it there and redeploy. A disk token opens one disk and nothing else; `MountDisk(disk)` makes one per host, and `home.createToken()` makes one at run time. A port token opens one port of one sandbox, for a browser or client that shouldn't hold a key.

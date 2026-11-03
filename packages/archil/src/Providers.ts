@@ -11,6 +11,7 @@ import * as Credentials from "./Credentials.ts";
 import { Disk, DiskProvider } from "./Disk.ts";
 import { DiskUser, DiskUserProvider } from "./DiskUser.ts";
 import { Image, ImageProvider } from "./Image.ts";
+import { DeployerKey, DeployerKeyProvider } from "./internal/DeployerKey.ts";
 import { RuntimeObjects, RuntimeObjectsProvider } from "./RuntimeObjects.ts";
 import { Sandbox, SandboxProvider } from "./Sandbox.ts";
 import { SandboxPortToken, SandboxPortTokenProvider } from "./SandboxPortToken.ts";
@@ -40,6 +41,7 @@ export const providers = () =>
       ApiToken,
       Branch,
       Checkpoint,
+      DeployerKey,
       Disk,
       DiskUser,
       Image,
@@ -53,6 +55,7 @@ export const providers = () =>
         ApiTokenProvider(),
         BranchProvider(),
         CheckpointProvider(),
+        DeployerKeyProvider(),
         DiskProvider(),
         DiskUserProvider(),
         ImageProvider(),

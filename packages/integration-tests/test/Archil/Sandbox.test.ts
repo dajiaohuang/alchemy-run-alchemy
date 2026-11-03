@@ -47,7 +47,8 @@ test.provider(
       expect(ports.map((p) => p.port).sort()).toEqual([3000, 8080]);
       const network = yield* archil.getSandboxNetwork({ sid: sandbox.sandboxId });
       expect(network.data.egress?.default).toBe("deny");
-      expect(network.data.egress?.allow).toEqual(["registry.npmjs.org"]);
+      // Archil adds its own mount endpoints for the mounted disk.
+      expect(network.data.egress?.allow).toContain("registry.npmjs.org");
 
       // Size is create-only: a new sandbox replaces the old one.
       const resized = yield* stack.deploy(app({ ports: [3000, 8080], memSizeMiB: 4096 }));

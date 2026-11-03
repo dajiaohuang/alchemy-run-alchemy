@@ -6,6 +6,7 @@ import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import {
+  deletableSandboxStates,
   findSandboxByName,
   getSandbox,
   isAlchemyName,
@@ -13,10 +14,12 @@ import {
   sandboxName,
   waitForSandbox,
   waitForSandboxGone,
+  waitForSandboxStopped,
 } from "./internal/archil.ts";
 import type { Providers } from "./Providers.ts";
 import {
   egressIdentity,
+  splitArchilEgress,
   toEgressPolicy,
   toEnv,
   toSandboxMount,
@@ -153,9 +156,15 @@ export type Sandbox = Resource<"Archil.Sandbox", SandboxProps, SandboxAttributes
  */
 export const Sandbox = Resource<Sandbox>("Archil.Sandbox");
 
-/** Map a sandbox response to attributes. */
-export const toSandboxAttributes = (sandbox: archil.Sandbox): SandboxAttributes => {
-  const endpoints = (sandbox.endpoints ?? []).map((e) => ({ port: e.port, hostname: e.hostname }));
+/**
+ * Map a sandbox and its exposed ports to attributes. Archil lists port
+ * hostnames separately; sandbox responses don't carry them.
+ */
+export const toSandboxAttributes = (
+  sandbox: archil.Sandbox,
+  ports: ReadonlyArray<{ port: number; hostname: string }>,
+): SandboxAttributes => {
+  const endpoints = ports.map((e) => ({ port: e.port, hostname: e.hostname }));
   return {
     sandboxId: sandbox.sandbox_id,
     name: sandbox.name,
@@ -168,6 +177,15 @@ export const toSandboxAttributes = (sandbox: archil.Sandbox): SandboxAttributes 
     url: endpoints[0] ? `https://${endpoints[0].hostname}` : undefined,
   };
 };
+
+/** Read a sandbox's exposed ports and map it to attributes. */
+export const observeSandbox = Effect.fn(function* (sandbox: archil.Sandbox) {
+  const ports = yield* archil.listSandboxPorts({ sid: sandbox.sandbox_id }).pipe(
+    Effect.map(({ data }) => data.ports ?? []),
+    Effect.catchTag("SandboxNotFound", () => Effect.succeed([])),
+  );
+  return toSandboxAttributes(sandbox, ports);
+});
 
 /** The create request for sandbox props. */
 export const toCreateSandboxRequest = (
@@ -190,20 +208,26 @@ export const toCreateSandboxRequest = (
   max_concurrent_execs: props.maxConcurrentExecs,
 });
 
-/** Delete a sandbox and wait until it is gone. Deleting a missing sandbox succeeds. */
+/**
+ * Delete a sandbox and wait until it is gone. Archil only deletes stopped,
+ * exited or failed sandboxes, so a live one is stopped first. Deleting a
+ * missing sandbox succeeds.
+ */
 export const deleteSandbox = Effect.fn(function* (sid: string) {
-  const request = archil.deleteSandbox({ sid }).pipe(
+  const observed = yield* getSandbox(sid);
+  if (observed === undefined) return;
+  if (!deletableSandboxStates.has(observed.status)) {
+    // Let a booting or pausing sandbox settle, then stop it.
+    yield* waitForSandbox(sid).pipe(Effect.catchTag("SandboxNotFound", () => Effect.undefined));
+    yield* archil.stopSandbox({ sid }).pipe(
+      Effect.asVoid,
+      Effect.catchTag("SandboxNotFound", () => Effect.void),
+    );
+    yield* waitForSandboxStopped(sid);
+  }
+  yield* archil.deleteSandbox({ sid }).pipe(
     Effect.asVoid,
     Effect.catchTag("SandboxNotFound", () => Effect.void),
-  );
-  // A sandbox mid-transition can't be deleted yet; let it settle first.
-  yield* request.pipe(
-    Effect.catchTag("SandboxStateConflict", () =>
-      waitForSandbox(sid).pipe(
-        Effect.catchTag("SandboxNotFound", () => Effect.undefined),
-        Effect.andThen(request),
-      ),
-    ),
   );
   yield* waitForSandboxGone(sid);
 });
@@ -227,8 +251,12 @@ const syncNetwork = Effect.fn(function* (sid: string, egress: SandboxEgress | un
   if (egress === undefined) return;
   const desired = toEgressPolicy(egress);
   const { data } = yield* archil.getSandboxNetwork({ sid });
-  if (!deepEqual(data.egress, desired)) {
-    yield* archil.updateSandboxNetwork({ sid, egress: desired });
+  const { managed, policy } = splitArchilEgress(data.egress);
+  if (!deepEqual(policy, desired)) {
+    yield* archil.updateSandboxNetwork({
+      sid,
+      egress: { ...desired, allow: [...(desired.allow ?? []), ...managed] },
+    });
   }
 });
 
@@ -255,7 +283,7 @@ export const SandboxProvider = () =>
         list: Effect.fn(function* () {
           return (yield* listSandboxes())
             .filter((s) => isAlchemyName(s.name) && s.status !== "deleted")
-            .map(toSandboxAttributes);
+            .map((sandbox) => toSandboxAttributes(sandbox, []));
         }),
         diff: Effect.fn(function* ({ id, olds, news, output }) {
           if (!isResolved(news)) return undefined;
@@ -264,7 +292,13 @@ export const SandboxProvider = () =>
             return { action: "replace" } as const;
           }
           if (olds !== undefined && !deepEqual(createOnly(news), createOnly(olds))) {
-            return { action: "replace" } as const;
+            // A disk mounted for exclusive writes can only be held by one
+            // sandbox, so the old one has to let go before the new one boots.
+            const held = new Set(
+              (olds.mounts ?? []).filter((m) => !m.readOnly && !m.conditional).map((m) => m.disk),
+            );
+            const deleteFirst = (news.mounts ?? []).some((m) => held.has(m.disk));
+            return { action: "replace", deleteFirst } as const;
           }
           if (
             !deepEqual(egressIdentity(news.network?.egress), egressIdentity(olds?.network?.egress))
@@ -279,7 +313,7 @@ export const SandboxProvider = () =>
             (output ? yield* getSandbox(output.sandboxId) : undefined) ??
             (yield* findSandboxByName(name));
           if (!sandbox) return undefined;
-          const attrs = toSandboxAttributes(sandbox);
+          const attrs = yield* observeSandbox(sandbox);
           if (output === undefined && olds?.name !== undefined && !isAlchemyName(sandbox.name)) {
             return Unowned(attrs);
           }
@@ -324,7 +358,7 @@ export const SandboxProvider = () =>
           }
           // Return
           const final = yield* getSandbox(sid);
-          return toSandboxAttributes(final ?? sandbox);
+          return yield* observeSandbox(final ?? sandbox);
         }),
         delete: Effect.fn(function* ({ output }) {
           yield* deleteSandbox(output.sandboxId);

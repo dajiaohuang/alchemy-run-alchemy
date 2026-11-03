@@ -13,7 +13,25 @@ const listed = (tokenId: string) =>
     .listApiTokens({})
     .pipe(Effect.map(({ data }) => (data.tokens ?? []).find((t) => t.id === tokenId)));
 
+// Archil only mints API keys from a console session; an API key gets a
+// bare 401 (typed `ApiTokenCreationForbidden`). Set ARCHIL_TEST_API_TOKEN=1
+// when ARCHIL_API_KEY is a console-session credential.
 test.provider(
+  "deploying an API token with an API key is rejected with a typed error",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const result = yield* Effect.result(stack.deploy(Archil.ApiToken("Ci", {})));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure._tag).toBe("ApiTokenCreationForbidden");
+      }
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:archil", "provider:archil:apitoken", "live"], timeout: 60_000 },
+);
+
+test.provider.skipIf(!process.env.ARCHIL_TEST_API_TOKEN)(
   "API token is minted, usable on its own, replaced on change, and revoked on destroy",
   (stack) =>
     Effect.gen(function* () {
