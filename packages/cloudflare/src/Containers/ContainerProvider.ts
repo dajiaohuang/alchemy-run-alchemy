@@ -6,7 +6,7 @@ import * as Containers from "@distilled.cloud/cloudflare/containers";
 import { Unowned, Unresolved, UnresolvedIdentity } from "alchemy/AdoptPolicy";
 import { AlchemyContext } from "alchemy/AlchemyContext";
 import { getStableContextDir } from "alchemy/Bundle/TempRoot";
-import { deepEqual, isResolved } from "alchemy/Diff";
+import { deepEqual, isResolved, stripEffects } from "alchemy/Diff";
 import { collectMountCapabilities, mountInstallLines, MountUnsupported } from "alchemy/Mount";
 import * as Provider from "alchemy/Provider";
 import type { ScopedPlanStatusSession } from "alchemy/Report";
@@ -1343,11 +1343,15 @@ export const LiveContainerProvider = () =>
         diff: Effect.fn(function* ({
           id,
           olds = {},
-          news: declared = {},
+          news: desired = {},
           output,
           newBindings,
           oldBindings,
         }) {
+          // An Effect-native (`main`) Container carries its program as an
+          // Effect in `exports`, which `isResolved` never accepts. Strip it so
+          // a guest-code change still reaches the image hash comparison.
+          const declared = stripEffects(desired);
           if (!isResolved(declared)) return;
           yield* validateContainerConfiguration(declared, output?.schedulingPolicy);
           if (!isResolved(newBindings)) return;
