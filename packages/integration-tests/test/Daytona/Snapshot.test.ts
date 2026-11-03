@@ -62,7 +62,11 @@ test.provider.skipIf(!!process.env.FAST)(
           });
           const warm = yield* Daytona.Snapshot("Warm", {
             from: pulled,
-            run: ["echo warm > /home/daytona/marker", "test -f /home/daytona/marker"],
+            // A plain node image has no /home/daytona.
+            run: [
+              "mkdir -p /opt/alchemy && echo warm > /opt/alchemy/marker",
+              "test -f /opt/alchemy/marker",
+            ],
           });
           return { pulled, built, context, warm };
         }),

@@ -44,7 +44,9 @@ export type WarmPool = Resource<
  * sandbox from that snapshot hands one over instead of booting a new one.
  * Daytona uses the pool automatically for matching creates.
  *
- * Deleting the snapshot deletes its warm pools.
+ * Deleting the snapshot deletes its warm pools. Daytona Cloud doesn't
+ * serve warm pools to every organization; where it doesn't, deploying one
+ * fails with `WarmPoolsUnavailable`.
  * @see https://www.daytona.io/docs/en/warm-pools/
  *
  * ### Keeping Sandboxes Warm

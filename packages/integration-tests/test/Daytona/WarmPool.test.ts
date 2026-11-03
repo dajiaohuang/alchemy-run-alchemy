@@ -6,8 +6,28 @@ import * as Effect from "effect/Effect";
 
 const { test } = Test.make({ providers: Daytona.providers() });
 
+// Daytona Cloud (v0.229) does not serve warm pools; set
+// DAYTONA_TEST_WARM_POOLS=1 against a deployment that does.
+const warmPoolsAvailable = !!process.env.DAYTONA_TEST_WARM_POOLS;
+
+test.provider.skipIf(warmPoolsAvailable)(
+  "a deployment without warm pools fails with WarmPoolsUnavailable",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const error = yield* stack
+        .deploy(
+          Daytona.WarmPool("Pool", { snapshot: { name: "daytonaio/sandbox:0.11.0" }, size: 1 }),
+        )
+        .pipe(Effect.flip);
+      expect(error._tag).toEqual("WarmPoolsUnavailable");
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 120_000 },
+);
+
 // A warm pool keeps started sandboxes running, which Daytona bills.
-test.provider.skipIf(!!process.env.FAST)(
+test.provider.skipIf(!!process.env.FAST || !warmPoolsAvailable)(
   "keep a sandbox warm, resize the pool in place, delete it",
   (stack) =>
     Effect.gen(function* () {
