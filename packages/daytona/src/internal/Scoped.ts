@@ -2,6 +2,7 @@ import type { Credentials } from "@distilled.cloud/daytona/Credentials";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
+import * as SchemaAST from "effect/SchemaAST";
 
 /** A generated Daytona operation: callable with its input, and an Effect. */
 type Operation<I, O, E> = ((input: I) => Effect.Effect<O, E, Credentials | HttpClient.HttpClient>) &
@@ -27,10 +28,26 @@ export type ScopedModule<M> = {
   ]: M[K] extends Operation<infer I, infer O, infer E> ? ScopedOperation<I, O, E> : never;
 };
 
+// Generated operations are plain callables, not Effects, so the name tells
+// them apart: a service module exports operations camelCase and its error
+// classes and schemas PascalCase.
 const isOperation = (
+  name: string,
   value: unknown,
 ): value is (input: unknown) => Effect.Effect<unknown, unknown, unknown> =>
-  typeof value === "function" && Effect.isEffect(value);
+  typeof value === "function" && /^[a-z]/.test(name);
+
+/** The members an operation's input declares, read from its schema on first use. */
+const inputMembers = (op: object): ReadonlySet<string> | undefined => {
+  if (!("input" in op)) return undefined;
+  const schema = op.input;
+  if (typeof schema !== "object" || schema === null || !("ast" in schema)) return undefined;
+  let ast = schema.ast as SchemaAST.AST;
+  while (SchemaAST.isSuspend(ast)) ast = ast.thunk();
+  return SchemaAST.isObjects(ast)
+    ? new Set(ast.propertySignatures.map((p) => String(p.name)))
+    : undefined;
+};
 
 /**
  * Wrap every operation of `module`: merge `fixed` into each input and run
@@ -45,21 +62,30 @@ export const scopeModule = <M extends object>(
 ): ScopedModule<M> =>
   Object.fromEntries(
     Object.entries(module)
-      .filter(([, value]) => isOperation(value))
-      .map(([name, op]) => [
-        name,
-        (input?: Record<string, unknown>) =>
-          run(
-            (
-              op as (
-                input: unknown,
-              ) => Effect.Effect<unknown, unknown, Credentials | HttpClient.HttpClient>
-            )({
-              ...input,
-              ...fixed,
-            }),
-          ),
-      ]),
+      .filter(([name, value]) => isOperation(name, value))
+      .map(([name, op]) => {
+        // Only the fixed fields the operation takes: the protocol sends any
+        // member it doesn't model as a body, which a GET can't carry.
+        let members: ReadonlySet<string> | undefined;
+        const fixedFor = () => {
+          members ??= inputMembers(op) ?? new Set(Object.keys(fixed));
+          return Object.fromEntries(Object.entries(fixed).filter(([key]) => members!.has(key)));
+        };
+        return [
+          name,
+          (input?: Record<string, unknown>) =>
+            run(
+              (
+                op as (
+                  input: unknown,
+                ) => Effect.Effect<unknown, unknown, Credentials | HttpClient.HttpClient>
+              )({
+                ...input,
+                ...fixedFor(),
+              }),
+            ),
+        ];
+      }),
     // Object.fromEntries can't produce a mapped type; the entries are exactly
     // the module's operations, each wrapped with the signature ScopedModule gives it.
   ) as unknown as ScopedModule<M>;

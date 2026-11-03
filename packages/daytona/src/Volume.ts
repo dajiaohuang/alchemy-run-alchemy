@@ -4,6 +4,7 @@ import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 import { isOwnedName, resolveName } from "./internal/Names.ts";
 import { waitForState, waitUntilGone } from "./internal/Wait.ts";
 import type { Providers } from "./Providers.ts";
@@ -115,9 +116,21 @@ export const ensureVolume = Effect.fn(function* (name: string) {
 });
 
 export const deleteVolumeById = Effect.fn(function* (volumeId: string) {
-  yield* volumes
-    .deleteVolume({ volumeId })
-    .pipe(Effect.catchTag("VolumeNotFound", () => Effect.void));
+  yield* volumes.deleteVolume({ volumeId }).pipe(
+    Effect.catchTag("VolumeNotFound", () => Effect.void),
+    // Refused while the volume is still being created (wait for it) or is
+    // already being deleted (nothing left to do).
+    Effect.catchTag("VolumeNotReady", (error) =>
+      Effect.flatMap(getVolumeById(volumeId), (live) =>
+        live === undefined ? Effect.void : Effect.fail(error),
+      ),
+    ),
+    Effect.retry({
+      while: (e) => e._tag === "VolumeNotReady",
+      schedule: Schedule.spaced("2 seconds"),
+      times: 15,
+    }),
+  );
   yield* waitUntilGone(
     "volume",
     volumeId,

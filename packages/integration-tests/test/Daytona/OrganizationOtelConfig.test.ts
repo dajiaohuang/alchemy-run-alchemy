@@ -7,37 +7,47 @@ import * as Redacted from "effect/Redacted";
 
 const { test } = Test.make({ providers: Daytona.providers() });
 
+// Daytona resolves the endpoint's hostname, so these must be real hosts. It
+// stores them normalized, with a trailing slash.
+const HONEYCOMB = "https://api.honeycomb.io/";
+const NEW_RELIC = "https://otlp.nr-data.net/";
+
+const otelConfig = (organizationId: string) =>
+  Effect.map(organizations.getOrganization({ organizationId }), (o) => o.otelConfig);
+
 test.provider(
-  "export telemetry to an OTLP endpoint, change it, stop on destroy",
+  "export telemetry to an OTLP endpoint, change it, stop it",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
+      const deploy = (endpoint?: string) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const organization = yield* Daytona.Organization("Team", { defaultRegionId: "us" });
+            const telemetry = endpoint
+              ? yield* Daytona.OrganizationOtelConfig("Telemetry", {
+                  organization,
+                  endpoint,
+                  headers: { "x-honeycomb-team": Redacted.make("not-a-key") },
+                })
+              : undefined;
+            return { organization, telemetry };
+          }),
+        );
 
-      const config = yield* stack.deploy(
-        Daytona.OrganizationOtelConfig("Telemetry", {
-          endpoint: "https://otel.example.com",
-          headers: { Authorization: Redacted.make("Bearer test") },
-        }),
-      );
-      expect(config.headerNames).toEqual(["Authorization"]);
-      const observed = yield* organizations.getOrganizationOtelConfig({
-        organizationId: config.organizationId,
-      });
-      expect(observed?.endpoint).toEqual("https://otel.example.com");
+      const first = yield* deploy(HONEYCOMB);
+      expect(first.telemetry?.headerNames).toEqual(["x-honeycomb-team"]);
+      const organizationId = first.organization.organizationId;
+      expect((yield* otelConfig(organizationId))?.endpoint).toEqual(HONEYCOMB);
 
-      yield* stack.deploy(
-        Daytona.OrganizationOtelConfig("Telemetry", { endpoint: "https://otel2.example.com" }),
-      );
-      expect(
-        (yield* organizations.getOrganizationOtelConfig({ organizationId: config.organizationId }))
-          ?.endpoint,
-      ).toEqual("https://otel2.example.com");
+      yield* deploy(NEW_RELIC);
+      expect((yield* otelConfig(organizationId))?.endpoint).toEqual(NEW_RELIC);
+
+      // Removing the resource stops the export.
+      yield* deploy();
+      expect((yield* otelConfig(organizationId))?.endpoint).toBeUndefined();
 
       yield* stack.destroy();
-      const after = yield* organizations.getOrganizationOtelConfig({
-        organizationId: config.organizationId,
-      });
-      expect(after?.endpoint ?? undefined).toBeUndefined();
     }),
-  { tags: ["provider:daytona", "live"], exclusive: "daytona:organization-otel", timeout: 120_000 },
+  { tags: ["provider:daytona", "live"], timeout: 120_000 },
 );

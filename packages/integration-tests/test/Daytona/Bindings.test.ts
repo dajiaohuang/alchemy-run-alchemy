@@ -65,10 +65,13 @@ describe("CreateSandbox", () => {
     "creates a sandbox, runs a command, finds and lists it, deletes it",
     Effect.gen(function* () {
       const body = yield* get("/create-sandbox");
-      expect(body.echo).toEqual({ exitCode: 0, result: expect.stringContaining("hello") });
+      expect(body).toMatchObject({
+        echo: { exitCode: 0, result: expect.stringContaining("hello") },
+        size: expect.any(Number),
+        found: true,
+        listed: true,
+      });
       expect(body.size).toBeGreaterThan(0);
-      expect(body.found).toBe(true);
-      expect(body.listed).toBe(true);
       // The sandbox was deleted when the request's scope closed.
       const { stage } = yield* stack;
       const left = yield* sandboxes

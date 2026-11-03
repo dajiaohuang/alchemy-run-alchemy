@@ -76,6 +76,12 @@ const plainHeaders = (headers: OrganizationOtelConfigProps["headers"]) =>
         ]),
       );
 
+// Daytona stores the endpoint normalized (`https://host` -> `https://host/`).
+const sameEndpoint = (observed: string | undefined, desired: string) =>
+  observed !== undefined && URL.canParse(observed) && URL.canParse(desired)
+    ? new URL(observed).href === new URL(desired).href
+    : observed === desired;
+
 // getOrganizationOtelConfig is for Daytona's runners and proxy (users get
 // 401); the organization itself carries the config.
 const observeOtelConfig = (organizationId: string) =>
@@ -110,7 +116,7 @@ export const OrganizationOtelConfigProvider = () =>
         const current = yield* observeOtelConfig(organizationId);
         const headers = plainHeaders(news.headers);
         if (
-          current?.endpoint !== news.endpoint ||
+          !sameEndpoint(current?.endpoint, news.endpoint) ||
           olds === undefined ||
           !deepEqual(plainHeaders(olds.headers), headers)
         ) {

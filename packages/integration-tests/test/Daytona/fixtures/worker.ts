@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import { DevBox } from "./resources.ts";
 
 export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
@@ -40,7 +41,14 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
           const echo = yield* sandbox.exec("echo hello > /tmp/greeting && cat /tmp/greeting");
           const info = yield* sandbox.fs.getFileInfo({ path: "/tmp/greeting" });
           const found = yield* sandboxes.get(sandbox.name);
-          const listed = yield* sandboxes.list({ labels: { purpose: "bindings-test" } });
+          // The list lags creation by a few seconds.
+          const listed = yield* sandboxes.list({ labels: { purpose: "bindings-test" } }).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("1 second"),
+              until: (all) => all.some((s) => s.id === sandbox.sandboxId),
+              times: 15,
+            }),
+          );
           return yield* HttpServerResponse.json({
             echo,
             size: info.size,
