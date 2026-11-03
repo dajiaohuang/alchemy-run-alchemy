@@ -44,6 +44,9 @@ export interface Volume extends Resource<
  * generated name. A volume found under an explicit name without prior state
  * is reported as unowned and is only adopted with `--adopt`.
  *
+ * E2B enables volumes per team; on a team without them, a deploy fails
+ * with `VolumesNotEnabled`.
+ *
  * ### Creating a Volume
  * **Example:** A shared cache volume
  * ```typescript

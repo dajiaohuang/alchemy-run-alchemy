@@ -18,15 +18,14 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
 const stack = beforeAll(deploy(Stack));
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack));
 
-const { getWhenReady } = Test;
+const { executeWhenReady } = Test;
 const user = `user-${Test.defaultStage()}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
 test(
   "runs code in a one-shot sandbox",
   Effect.gen(function* () {
     const { url } = yield* stack;
-    yield* getWhenReady(url);
-    const res = yield* HttpClient.execute(
+    const res = yield* executeWhenReady(
       HttpClientRequest.post(`${url}/run`).pipe(HttpClientRequest.bodyText("console.log(6 * 7)")),
     );
     expect(res.status).toBe(200);
@@ -36,11 +35,12 @@ test(
   { timeout: 180_000 },
 );
 
-test(
+// E2B enables volumes per team; set E2B_TEST_VOLUMES=1 on an enabled one.
+test.skipIf(!process.env.E2B_TEST_VOLUMES)(
   "keeps a user's files in their sandbox and volume across requests",
   Effect.gen(function* () {
     const { url } = yield* stack;
-    const put = yield* HttpClient.execute(
+    const put = yield* executeWhenReady(
       HttpClientRequest.put(`${url}/users/${user}/files/notes.md`).pipe(
         HttpClientRequest.bodyText("hello"),
       ),
