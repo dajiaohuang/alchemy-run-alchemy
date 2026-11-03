@@ -71,6 +71,10 @@ export type ApiKey = Resource<"Daytona.ApiKey", ApiKeyProps, ApiKeyAttributes, n
  * Daytona shows a key's value only once, so alchemy stores it in state as
  * a `Redacted` value. Keys can't be edited: changing any prop mints a new
  * key and deletes the old one.
+ *
+ * Creating keys needs a signed-in profile, or an API key with
+ * `manage:api_keys` (Daytona's managed API keys, enabled on request);
+ * otherwise Daytona refuses with `ManagedApiKeysNotEnabled`.
  * @see https://www.daytona.io/docs/en/api-keys/
  *
  * ### Creating a Key

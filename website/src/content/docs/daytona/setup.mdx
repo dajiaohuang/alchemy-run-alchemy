@@ -1,13 +1,11 @@
 ---
 title: Setup
-description: Give Alchemy a Daytona API key.
+description: Sign Alchemy in to Daytona, or give it an API key.
 ---
 
 import PackageManagers from "../../../components/PackageManagers.astro";
 
-Sign up at [app.daytona.io](https://app.daytona.io) and create an API key under **Keys**. Give it every permission: Alchemy creates narrower keys from it for each Worker.
-
-Use a separate organization for tests. Tests create and delete sandboxes, snapshots, volumes, secrets and keys.
+Sign up at [app.daytona.io](https://app.daytona.io). Use a separate organization for tests: they create and delete sandboxes, snapshots, volumes, secrets, keys and organizations.
 
 ## Add the provider
 
@@ -30,14 +28,22 @@ export default Alchemy.Stack(
 );
 ```
 
-## Store the key in a profile
+## Sign in
 
 ```sh
 alchemy profile edit --add Daytona
 ```
 
-Paste the key when asked. Leave the API URL empty unless you run Daytona yourself.
+Pick **Sign in**. Alchemy opens Daytona's device login, the same one `daytona login` uses, and asks which organization to use if you belong to several. The session refreshes itself.
+
+Signing in is what lets Alchemy create a key for each Worker that uses a binding. Daytona only lets a signed-in user create API keys, organizations, roles and invitations.
+
+## Use an API key instead
+
+Pick **API key** and paste a key from **Keys** in the dashboard. An API key covers sandboxes, snapshots, volumes, secrets and registries.
+
+It can't create the per-Worker keys bindings need unless Daytona has enabled [managed API keys](https://www.daytona.io/docs/en/api-keys/) for your organization. Give that key every permission, including `manage:api_keys`.
 
 ## CI
 
-Set `DAYTONA_API_KEY` as a secret in your CI. Set `DAYTONA_API_URL` only for a self-hosted Daytona.
+Set `DAYTONA_API_KEY` as a secret in your CI. A stack with bindings needs a key with `manage:api_keys`. Set `DAYTONA_API_URL` only for a self-hosted Daytona.
