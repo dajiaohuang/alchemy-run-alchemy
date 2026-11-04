@@ -6,6 +6,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import type { Endpoint } from "./Endpoint.ts";
 import { FetchServer, type ServerClient } from "./FetchServer.ts";
 import type { Function } from "./Function.ts";
 import * as ModalBindings from "./ModalBindings.ts";
@@ -38,7 +39,7 @@ export const FetchServerHttp = Layer.effect(
     // Deploy only: a host bundle never creates the token.
     const Token = globalThis.__ALCHEMY_RUNTIME__ ? undefined : yield* WebhookToken;
 
-    return Effect.fn("Modal.FetchServer")(function* (server: Server | Function) {
+    return Effect.fn("Modal.FetchServer")(function* (server: Server | Function | Endpoint) {
       if (!globalThis.__ALCHEMY_RUNTIME__) {
         const host = yield* Binding.Host;
         if (host !== undefined && Token !== undefined) {
@@ -55,7 +56,7 @@ export const FetchServerHttp = Layer.effect(
           : Effect.fail(
               new ServerUrlMissing({
                 message:
-                  "The server has no URL: deploy it as a Modal.Server, or a Modal.Function with web",
+                  "The server has no URL: deploy it as a Modal.Server, a Modal.Function with web, or a Modal.Endpoint",
               }),
             ),
       );

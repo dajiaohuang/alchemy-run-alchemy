@@ -3,10 +3,11 @@ import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
+import type { Endpoint } from "./Endpoint.ts";
 import type { Function } from "./Function.ts";
 import type { Server } from "./Server.ts";
 
-/** Send requests to a deployed Modal Server or web Function. */
+/** Send requests to a deployed Modal Server, web Function or model Endpoint. */
 export interface ServerClient {
   /** The server's URL. */
   readonly url: Effect.Effect<string, any, RuntimeContext>;
@@ -20,8 +21,8 @@ export interface ServerClient {
 }
 
 /**
- * Call a `Modal.Server`, or a `Modal.Function` with `web`, from any
- * runtime. Servers require Modal's proxy auth by default: the binding
+ * Call a `Modal.Server`, a `Modal.Function` with `web`, or a model
+ * `Modal.Endpoint` from any runtime. Servers and endpoints require Modal's proxy auth by default: the binding
  * creates a `Modal.WebhookToken` for the host and sends its `Modal-Key` /
  * `Modal-Secret` headers with every request.
  *
@@ -56,7 +57,7 @@ export interface ServerClient {
 export interface FetchServer extends Binding.Service<
   FetchServer,
   "Modal.FetchServer",
-  (server: Server | Function) => Effect.Effect<ServerClient>
+  (server: Server | Function | Endpoint) => Effect.Effect<ServerClient>
 > {}
 
 export const FetchServer = Binding.Service<FetchServer>("Modal.FetchServer");

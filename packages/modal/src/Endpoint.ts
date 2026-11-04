@@ -146,14 +146,36 @@ export interface EndpointAttributes {
  * ```
  *
  * ### Calling it
- * **Example:** With a proxy auth token from a Worker
+ * **Example:** From a Cloudflare Worker with `Modal.FetchServer`
  * ```typescript
- * const qwen = yield* Qwen;
- * const caller = yield* Caller; // a Modal.WebhookToken
- * const response = yield* HttpClient.post(`${qwen.url}/v1/chat/completions`, {
- *   headers: { "Modal-Key": caller.tokenId, "Modal-Secret": Redacted.value(caller.tokenSecret) },
- *   body: HttpBody.jsonUnsafe({ model: "Qwen/Qwen3-8B", messages: [{ role: "user", content: "hi" }] }),
- * });
+ * import * as Cloudflare from "@alchemy.run/cloudflare";
+ * import * as Modal from "@alchemy.run/modal";
+ * import * as Effect from "effect/Effect";
+ * import * as HttpClientRequest from "effect/http/HttpClientRequest";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
+ * import { Qwen } from "./Qwen.ts";
+ *
+ * export default class Chat extends Cloudflare.Worker<Chat>()(
+ *   "Chat",
+ *   { main: import.meta.url },
+ *   Effect.gen(function* () {
+ *     // Creates a webhook token for the Worker and sends it as Modal's proxy auth.
+ *     const qwen = yield* Modal.FetchServer(Qwen);
+ *     return {
+ *       fetch: Effect.gen(function* () {
+ *         const response = yield* qwen.fetch(
+ *           HttpClientRequest.post("/v1/chat/completions").pipe(
+ *             HttpClientRequest.bodyJsonUnsafe({
+ *               model: "Qwen/Qwen3-8B",
+ *               messages: [{ role: "user", content: "hi" }],
+ *             }),
+ *           ),
+ *         );
+ *         return HttpServerResponse.json(yield* response.json);
+ *       }).pipe(Effect.orDie),
+ *     };
+ *   }).pipe(Effect.provide(Modal.FetchServerHttp)),
+ * ) {}
  * ```
  *
  * @resource
