@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import * as BuildPlan from "@alchemy.run/docker/BuildPlan";
 import type { InlineDockerfile } from "@alchemy.run/docker/Dockerfile";
 import * as DockerfileParser from "@alchemy.run/docker/DockerfileParser";
+import {
+  computeStaticSourceHash,
+  makeContainerImageSource,
+  type DockerfileImageSource,
+  type ImageRegistryTarget,
+} from "@alchemy.run/docker/ImageSource";
+import * as dockerRegistry from "@distilled.cloud/daytona/docker_registry";
 import * as sandboxes from "@distilled.cloud/daytona/sandbox";
 import * as snapshots from "@distilled.cloud/daytona/snapshots";
 import { Unowned } from "alchemy/AdoptPolicy";
@@ -10,6 +17,7 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import type * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { uploadBuildContext } from "./internal/BuildContext.ts";
 import { createInternalLabels } from "./internal/Labels.ts";
@@ -27,6 +35,25 @@ export type SnapshotRegistry = { readonly registryId: string };
 
 export type GpuType = snapshots.GpuType;
 
+export interface SnapshotBuild {
+  /** Build arguments, read by the Dockerfile's `ARG` instructions. */
+  args?: Record<string, string>;
+  /**
+   * BuildKit secrets, keyed by id; mount one in a `RUN` step with
+   * `--mount=type=secret,id=<id>`. They never enter the image or its hash.
+   * Daytona's builders can't receive secrets, so setting any builds locally.
+   */
+  secrets?: Record<string, Redacted.Redacted<string>>;
+  /**
+   * Build on Daytona's builders (`true`), or with your local Docker
+   * (`false`), pushing the image to Daytona's registry. Build locally to use
+   * build secrets, base images only your machine can pull, or your local
+   * layer cache.
+   * @default true, unless `secrets` are set
+   */
+  remote?: boolean;
+}
+
 export interface SnapshotProps {
   /**
    * Snapshot name, unique in the organization. Sandboxes are created from
@@ -41,11 +68,12 @@ export interface SnapshotProps {
    */
   image?: string;
   /**
-   * A Dockerfile Daytona builds on its own builders: a path (relative to
-   * the cwd), or inline content (`Dockerfile.inline`). No local Docker is
-   * needed. Files it `COPY`s are uploaded from {@link context}. Changing the
-   * Dockerfile or any file it copies replaces the snapshot. Exclusive with
-   * `image` and `from`.
+   * A Dockerfile to build: a path (relative to the cwd), or inline content
+   * (`Dockerfile.inline`). Daytona builds it on its own builders, uploading
+   * the files it `COPY`s from {@link context}; no local Docker is needed.
+   * Set `build.remote: false` to build it with your local Docker instead.
+   * Changing the Dockerfile or any file it copies replaces the snapshot.
+   * Exclusive with `image` and `from`.
    * @default `${context}/Dockerfile` when `context` is set
    */
   dockerfile?: string | InlineDockerfile;
@@ -55,8 +83,8 @@ export interface SnapshotProps {
    * Inline Dockerfiles have no context and can't `COPY` local files.
    */
   context?: string;
-  /** Build arguments, baked into the Dockerfile's `ARG` defaults. */
-  build?: { args?: Record<string, string> };
+  /** How the Dockerfile is built. */
+  build?: SnapshotBuild;
   /**
    * Build a warm base from another snapshot: start a sandbox from `from`,
    * run `run` in it, and capture its filesystem as this snapshot. Use it to
@@ -163,6 +191,18 @@ export type Snapshot = Resource<
  * export const App = Daytona.Snapshot("App", {
  *   context: "./sandbox",
  *   build: { args: { NODE_ENV: "production" } },
+ * });
+ * ```
+ *
+ * ### Building with Local Docker
+ * **Example:** A build that reads a private npm token
+ * ```typescript
+ * export const App = Daytona.Snapshot("App", {
+ *   context: "./sandbox",
+ *   build: {
+ *     remote: false,
+ *     secrets: { npmrc: Redacted.make(process.env.NPM_TOKEN!) },
+ *   },
  * });
  * ```
  *
@@ -320,12 +360,24 @@ const resolveSource = Effect.fn(function* (news: SnapshotProps) {
     });
   }
   if (news.image !== undefined) yield* checkImage(news.image);
-  const plan = fromDockerfile
-    ? yield* BuildPlan.plan(
-        { dockerfile: news.dockerfile, context: news.context, build: { args: news.build?.args } },
-        { capabilities },
-      )
-    : undefined;
+  // A Dockerfile builds on Daytona unless it asks for local Docker, or
+  // has build secrets (Daytona's builders can't receive them).
+  const remote = news.build?.remote ?? news.build?.secrets === undefined;
+  const local: DockerfileImageSource | undefined =
+    fromDockerfile && !remote
+      ? {
+          dockerfile: news.dockerfile,
+          context: news.context,
+          build: { args: news.build?.args, secrets: news.build?.secrets },
+        }
+      : undefined;
+  const plan =
+    fromDockerfile && remote
+      ? yield* BuildPlan.plan(
+          { dockerfile: news.dockerfile, context: news.context, build: { args: news.build?.args } },
+          { capabilities },
+        )
+      : undefined;
   const sizing = {
     entrypoint: news.entrypoint,
     cpu: news.cpu,
@@ -346,11 +398,12 @@ const resolveSource = Effect.fn(function* (news: SnapshotProps) {
   const buildHash = yield* sha256({
     image: source.image,
     plan: plan?.hash,
+    local: local ? yield* computeStaticSourceHash(local, "linux/amd64") : undefined,
     from: source.from,
     run: source.run,
     ...sizing,
   });
-  return { source, plan, buildHash };
+  return { source, plan, local, buildHash };
 });
 
 export const toSnapshotAttributes = (
@@ -520,68 +573,110 @@ export const buildSnapshot = Effect.fn(function* (input: {
   return yield* waitForSnapshot(name);
 });
 
+/**
+ * Daytona's transient registry as a push target: a short-lived robot
+ * account scoped to the organization's own project, which Daytona pulls
+ * snapshots from without a registry entry.
+ */
+const transientRegistry = Effect.fn(function* (name: string, regionId: string | undefined) {
+  const access = yield* dockerRegistry.getTransientPushAccess({ regionId });
+  return {
+    repositoryUri: Effect.succeed(`${access.registryUrl}/${access.project}/${name}`),
+    // Pushes are content-addressed and the registry can't be listed with
+    // this account; pushing an existing tag is a no-op upload.
+    hasTag: () => Effect.succeed(false),
+    credentials: Effect.succeed({
+      server: access.registryUrl,
+      username: access.username,
+      password: access.secret,
+    }),
+  } satisfies ImageRegistryTarget;
+});
+
 export const SnapshotProvider = () =>
   Provider.effect(
     Snapshot,
-    Effect.succeed({
-      stables: ["snapshotId"],
-      list: Effect.fn(function* () {
-        const all = yield* snapshots.getAllSnapshots.items({}).pipe(Stream.runCollect);
-        return Array.from(all)
-          .filter((s) => !s.general)
-          .map((s) => toSnapshotAttributes(s, ""));
-      }),
-      diff: Effect.fn(function* ({ id, news, output }) {
-        if (!isResolved(news) || output === undefined) return undefined;
-        const name = yield* resolveName(
-          id,
-          news.name,
-          news.name === undefined ? output.name : undefined,
-        );
-        const { buildHash } = yield* resolveSource(news);
-        if (name !== output.name || buildHash !== output.buildHash) {
-          // Sandboxes reference snapshots by name, so a pinned name is freed first.
-          return { action: "replace", deleteFirst: name === output.name } as const;
-        }
-      }),
-      read: Effect.fn(function* ({ id, olds, output }) {
-        const name = yield* resolveName(id, olds?.name, output?.name);
-        const found =
-          (output ? yield* getSnapshot(output.snapshotId) : undefined) ??
-          (yield* getSnapshot(name));
-        if (found === undefined) return undefined;
-        const attrs = toSnapshotAttributes(found, output?.buildHash ?? "");
-        return (yield* isOwnedName(id, found.name, output !== undefined)) ? attrs : Unowned(attrs);
-      }),
-      reconcile: Effect.fn(function* ({ id, news, output, session }) {
-        const name = yield* resolveName(id, news.name, output?.name);
-        const { source, plan, buildHash } = yield* resolveSource(news);
+    Effect.gen(function* () {
+      const images = yield* makeContainerImageSource;
+      return {
+        stables: ["snapshotId"],
+        list: Effect.fn(function* () {
+          const all = yield* snapshots.getAllSnapshots.items({}).pipe(Stream.runCollect);
+          return Array.from(all)
+            .filter((s) => !s.general)
+            .map((s) => toSnapshotAttributes(s, ""));
+        }),
+        diff: Effect.fn(function* ({ id, news, output }) {
+          if (!isResolved(news) || output === undefined) return undefined;
+          const name = yield* resolveName(
+            id,
+            news.name,
+            news.name === undefined ? output.name : undefined,
+          );
+          const { buildHash } = yield* resolveSource(news);
+          if (name !== output.name || buildHash !== output.buildHash) {
+            // Sandboxes reference snapshots by name, so a pinned name is freed first.
+            return { action: "replace", deleteFirst: name === output.name } as const;
+          }
+        }),
+        read: Effect.fn(function* ({ id, olds, output }) {
+          const name = yield* resolveName(id, olds?.name, output?.name);
+          const found =
+            (output ? yield* getSnapshot(output.snapshotId) : undefined) ??
+            (yield* getSnapshot(name));
+          if (found === undefined) return undefined;
+          const attrs = toSnapshotAttributes(found, output?.buildHash ?? "");
+          return (yield* isOwnedName(id, found.name, output !== undefined))
+            ? attrs
+            : Unowned(attrs);
+        }),
+        reconcile: Effect.fn(function* ({ id, news, output, session }) {
+          const name = yield* resolveName(id, news.name, output?.name);
+          const { source, plan, local, buildHash } = yield* resolveSource(news);
 
-        // Observe
-        const current = yield* getSnapshot(output?.snapshotId ?? name);
-        if (current !== undefined && current.name === name) {
-          // Ensure usable: reactivate a snapshot Daytona deactivated after
-          // two weeks unused, and wait out a build already in flight.
-          const ready = current.state === "active" ? current : yield* waitForSnapshot(current.id);
-          return toSnapshotAttributes(ready, output?.buildHash ?? buildHash);
-        }
+          // Observe
+          const current = yield* getSnapshot(output?.snapshotId ?? name);
+          if (current !== undefined && current.name === name) {
+            // Ensure usable: reactivate a snapshot Daytona deactivated after
+            // two weeks unused, and wait out a build already in flight.
+            const ready = current.state === "active" ? current : yield* waitForSnapshot(current.id);
+            return toSnapshotAttributes(ready, output?.buildHash ?? buildHash);
+          }
 
-        // Ensure — upload what the Dockerfile copies, then build.
-        for (const warning of plan?.warnings ?? []) yield* session.note(warning);
-        const contextHashes =
-          plan !== undefined && plan.files.length > 0
-            ? [yield* uploadBuildContext(plan)]
-            : undefined;
-        const built = yield* buildSnapshot({
-          name,
-          source: { ...source, contextHashes },
-          labels: yield* createInternalLabels(id),
-          note: session.note,
-        });
-        return toSnapshotAttributes(built, buildHash);
-      }),
-      delete: Effect.fn(function* ({ output }) {
-        yield* deleteSnapshot(output.snapshotId);
-      }),
+          // Ensure — a local build pushes its image to Daytona's registry,
+          // which the snapshot then pulls.
+          if (local !== undefined) {
+            yield* session.note(`Building ${name} with local Docker...`);
+            const pushed = yield* images.resolve(
+              { id, source: local, session, platform: "linux/amd64", bootstrap: () => "" },
+              yield* transientRegistry(name, news.regionId),
+            );
+            const built = yield* buildSnapshot({
+              name,
+              source: { ...source, dockerfile: undefined, image: pushed.imageUri },
+              labels: yield* createInternalLabels(id),
+              note: session.note,
+            });
+            return toSnapshotAttributes(built, buildHash);
+          }
+
+          // Ensure — upload what the Dockerfile copies, then build.
+          for (const warning of plan?.warnings ?? []) yield* session.note(warning);
+          const contextHashes =
+            plan !== undefined && plan.files.length > 0
+              ? [yield* uploadBuildContext(plan)]
+              : undefined;
+          const built = yield* buildSnapshot({
+            name,
+            source: { ...source, contextHashes },
+            labels: yield* createInternalLabels(id),
+            note: session.note,
+          });
+          return toSnapshotAttributes(built, buildHash);
+        }),
+        delete: Effect.fn(function* ({ output }) {
+          yield* deleteSnapshot(output.snapshotId);
+        }),
+      };
     }),
   );

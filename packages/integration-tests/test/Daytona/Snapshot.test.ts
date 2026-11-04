@@ -4,6 +4,7 @@ import * as Test from "@alchemy.run/test/Alchemy";
 import * as sandboxes from "@distilled.cloud/daytona/sandbox";
 import * as snapshots from "@distilled.cloud/daytona/snapshots";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 
 const { test } = Test.make({ providers: Daytona.providers() });
 
@@ -98,6 +99,46 @@ test.provider.skipIf(!!process.env.FAST)(
       expect(yield* find(built.snapshotId)).toBeUndefined();
       expect(yield* find(context.snapshotId)).toBeUndefined();
       expect(yield* find(warm.snapshotId)).toBeUndefined();
+    }),
+  { tags: ["provider:daytona", "live", "slow"], timeout: 1_200_000 },
+);
+
+test.provider.skipIf(!!process.env.FAST)(
+  "build a Dockerfile with local Docker and a build secret, push it to Daytona, boot from it",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const { local, checked } = yield* stack.deploy(
+        Effect.gen(function* () {
+          const local = yield* Daytona.Snapshot("Local", {
+            dockerfile: {
+              content: [
+                "FROM node:22-bookworm-slim",
+                // The secret is readable during the build and never stored.
+                'RUN --mount=type=secret,id=token test "$(cat /run/secrets/token)" = from-alchemy \\',
+                "  && mkdir -p /opt/alchemy && echo built-locally > /opt/alchemy/local",
+              ].join("\n"),
+            },
+            build: { secrets: { token: Redacted.make("from-alchemy") } },
+            cpu: 1,
+            memory: 1,
+            disk: 3,
+          });
+          // Booting a sandbox from the pushed image proves Daytona pulled it.
+          const checked = yield* Daytona.Snapshot("LocalChecked", {
+            from: local,
+            run: ['test "$(cat /opt/alchemy/local)" = built-locally'],
+          });
+          return { local, checked };
+        }),
+      );
+      expect(local.state).toEqual("active");
+      expect(local.imageName).toMatch(/^cr\.app\.daytona\.io\/sbox-transient-/);
+      expect(checked.state).toEqual("active");
+
+      yield* stack.destroy();
+      expect(yield* find(local.snapshotId)).toBeUndefined();
+      expect(yield* find(checked.snapshotId)).toBeUndefined();
     }),
   { tags: ["provider:daytona", "live", "slow"], timeout: 1_200_000 },
 );

@@ -1,3 +1,4 @@
+import { DockerLive } from "@alchemy.run/docker/Docker";
 import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
 import { ProfileStoreLive } from "alchemy/Auth/Profile";
 import * as Provider from "alchemy/Provider";
@@ -84,6 +85,8 @@ export const providers = () =>
         WebhooksProvider(),
       ),
     ),
+    // Snapshots Daytona can't build are built with local Docker.
+    Layer.provideMerge(DockerLive),
     Layer.provideMerge(Credentials.fromAuthProvider()),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(DaytonaAuth),
