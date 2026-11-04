@@ -451,8 +451,14 @@ export const makeSandboxMethods = (
       .filter(Boolean)
       .join("; ");
     yield* toolbox(process.createSession({ sessionId }));
+    // Quoted, not piped in: the command's stdin is the session's input.
     const begun = yield* toolbox(
-      process.sessionExecuteCommand({ sessionId, command: yield* viaShell(line), runAsync: true }),
+      process.sessionExecuteCommand({
+        sessionId,
+        command: `sh -c ${quote(line)}`,
+        runAsync: true,
+        suppressInputEcho: true,
+      }),
     );
     const commandId = begun.cmdId;
     return {
@@ -460,7 +466,15 @@ export const makeSandboxMethods = (
       commandId,
       output: stream(toolboxStreams.followSessionCommandLogs({ sessionId, commandId })),
       write: (data: string) =>
-        toolbox(process.sendInput({ sessionId, commandId, data })).pipe(Effect.asVoid),
+        toolbox(process.sendInput({ sessionId, commandId, data })).pipe(
+          // The daemon creates the command's input pipe just after it starts.
+          Effect.retry({
+            while: (e) => e._tag === "SessionInputNotReady",
+            schedule: Schedule.spaced("250 millis"),
+            times: 20,
+          }),
+          Effect.asVoid,
+        ),
       kill: toolbox(process.deleteSession({ sessionId })).pipe(Effect.asVoid),
       wait: toolbox(process.getSessionCommand({ sessionId, commandId })).pipe(
         Effect.repeat({

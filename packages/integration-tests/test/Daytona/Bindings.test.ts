@@ -290,6 +290,28 @@ describe("ConnectSandbox", () => {
   );
 
   test(
+    "the handle vocabulary: exec, start, files, pty and fetch",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/vocabulary")).toEqual({
+        shell: { exitCode: 0, result: "hi from /tmp" },
+        argv: "two words|it's|$HOME|",
+        failed: 7,
+        started: { stdout: "got:alchemy\n", stderr: "oops\n", exit: { exitCode: 3 } },
+        files: {
+          text: "alpha",
+          bytes: [0, 255],
+          listed: ["a.txt", "b.bin"],
+          isDir: false,
+          gone: "gone",
+        },
+        pty: { output: true, exit: { exitCode: 2, reason: "non-zero exit" } },
+        fetch: { status: 200, body: "fetched-ok" },
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
     "bulk upload and download, with a per-path failure",
     Effect.gen(function* () {
       expect(yield* get("/toolbox/bulk")).toEqual({

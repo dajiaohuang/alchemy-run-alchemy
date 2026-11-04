@@ -1,5 +1,6 @@
 import type { ConnectedSandbox, DaytonaSandbox } from "@alchemy.run/daytona/SandboxClient";
 import * as Effect from "effect/Effect";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
@@ -650,5 +651,126 @@ export const bulk = Effect.fn(function* (box: Box, prefix: string) {
       code: e.code,
       statusCode: e.statusCode,
     })),
+  };
+});
+
+/**
+ * The shared handle vocabulary: exec (shell and argv forms), start (a
+ * process with stdin, output and exit), files, pty.open and fetch.
+ */
+export const vocabulary = Effect.fn(function* (box: Box, prefix: string) {
+  // Each part is bounded and named, so a hang reports where it is.
+  const step = <A, E, R>(name: string, effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.timeoutOrElse({
+        duration: "45 seconds",
+        orElse: () => Effect.die(`vocabulary step "${name}" timed out`),
+      }),
+    );
+  const shell = yield* box.exec("echo $GREETING from $(pwd)", {
+    cwd: "/tmp",
+    env: { GREETING: "hi" },
+  });
+  const argv = yield* box.exec(["printf", "%s|", "two words", "it's", "$HOME"]);
+  const failed = yield* box.exec("exit 7");
+
+  const decode = (chunks: Iterable<Uint8Array>) => {
+    const decoder = new TextDecoder();
+    return Array.from(chunks, (c) => decoder.decode(c, { stream: true })).join("");
+  };
+
+  // A started process: stdin, streamed output, and its exit code.
+  const started = yield* step(
+    "start",
+    Effect.scoped(
+      Effect.gen(function* () {
+        const proc = yield* box.start(
+          ["sh", "-c", "read line; echo got:$line; echo oops >&2; exit 3"],
+          {
+            env: { UNUSED: "x" },
+          },
+        );
+        yield* proc.write("alchemy\n");
+        const output = Array.from(yield* Stream.runCollect(proc.output));
+        const join = (stream: "stdout" | "stderr") =>
+          output
+            .filter((p) => p.stream === stream)
+            .map((p) => p.text)
+            .join("");
+        return { stdout: join("stdout"), stderr: join("stderr"), exit: yield* proc.wait };
+      }),
+    ),
+  );
+
+  // Files.
+  const dir = `/tmp/alchemy-files-${prefix}`;
+  yield* box.files.remove(dir, { recursive: true }).pipe(Effect.ignore);
+  yield* box.files.makeDir(dir);
+  yield* box.files.write(`${dir}/a.txt`, "alpha");
+  yield* box.files.write(`${dir}/b.bin`, new Uint8Array([0, 255]));
+  const text = yield* box.files.readText(`${dir}/a.txt`);
+  const bytes = Array.from(yield* box.files.read(`${dir}/b.bin`));
+  const listed = (yield* box.files.list(dir)).map((f) => f.name).sort();
+  const stat = yield* box.files.stat(`${dir}/a.txt`);
+  yield* box.files.remove(dir, { recursive: true });
+  const gone = yield* box.files.stat(dir).pipe(
+    Effect.map(() => "present"),
+    Effect.catch(() => Effect.succeed("gone")),
+  );
+
+  // A terminal.
+  const pty = yield* step(
+    "pty",
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connection = yield* box.pty.open({ cols: 100, rows: 30, env: { PTY_VAR: "pty-ok" } });
+        yield* connection.write("echo marker-$PTY_VAR; exit 2\n");
+        const output = decode(yield* Stream.runCollect(connection.output));
+        return { output: output.includes("marker-pty-ok"), exit: yield* connection.exit };
+      }),
+    ),
+  );
+
+  // fetch through the preview URL, with the sandbox's token.
+  const server = yield* step(
+    "fetch",
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* box.exec(`mkdir -p ${dir}-site && echo fetched-ok > ${dir}-site/index.html`);
+        const proc = yield* box.start(["python3", "-m", "http.server", "8090"], {
+          cwd: `${dir}-site`,
+        });
+        yield* box.ports.isPortInUse({ port: 8090 }).pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced("1 second"),
+            until: (r) => r.isInUse === true,
+            times: 15,
+          }),
+        );
+        const response = yield* box.fetch(8090, HttpClientRequest.get("/index.html")).pipe(
+          Effect.flatMap((r) =>
+            Effect.map(r.text, (body) => ({ status: r.status, body: body.trim() })),
+          ),
+          Effect.repeat({
+            schedule: Schedule.spaced("1 second"),
+            until: (r) => r.status === 200,
+            times: 10,
+          }),
+        );
+        yield* proc.kill;
+        yield* box.exec(`rm -rf ${dir}-site`);
+        return response;
+      }),
+    ),
+  );
+
+  return {
+    shell: { exitCode: shell.exitCode, result: shell.result.trim() },
+    argv: argv.result,
+    failed: failed.exitCode,
+    started,
+    files: { text, bytes, listed, isDir: stat.isDir, gone },
+    pty,
+    fetch: server,
   };
 });
