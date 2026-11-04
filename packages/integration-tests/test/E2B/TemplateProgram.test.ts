@@ -22,7 +22,13 @@ const fetchFromSandbox = (templateId: string, path: string) =>
         const token = sandbox.trafficAccessToken;
         const res = yield* client
           .get(`https://3000-${sandbox.sandboxID}.${sandbox.domain ?? "e2b.app"}${path}`, {
-            headers: token ? { "e2b-traffic-access-token": Redacted.value(token) } : {},
+            headers: token
+              ? {
+                  "e2b-traffic-access-token": Redacted.isRedacted(token)
+                    ? Redacted.value(token)
+                    : token,
+                }
+              : {},
           })
           .pipe(Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }));
         return yield* res.text;
