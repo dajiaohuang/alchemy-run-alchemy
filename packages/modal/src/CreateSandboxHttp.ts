@@ -102,6 +102,7 @@ export const CreateSandboxHttp = Layer.effect(
         const secretId = yield* resource.secretId;
         const command = yield* resource.command;
         const port = yield* resource.port;
+        const mounts = yield* resource.mounts;
         const target = Effect.all({
           imageId,
           appId,
@@ -110,13 +111,14 @@ export const CreateSandboxHttp = Layer.effect(
           secretId,
           command,
           port,
+          mounts,
         }).pipe(
           Effect.map((t): SandboxTarget => ({
             imageId: t.imageId,
             appId: t.appId,
             appName: t.appName,
             environment: t.environment,
-            program: { secretId: t.secretId, command: t.command, port: t.port },
+            program: { secretId: t.secretId, command: t.command, port: t.port, mounts: t.mounts },
           })),
         );
         return makeSandboxesClient(target, ops);

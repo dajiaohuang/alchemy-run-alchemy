@@ -47,15 +47,16 @@ const hasDeclarations = (value: unknown): boolean =>
   (Array.isArray(value) && value.some(hasDeclarations)) ||
   (isPlain(value) && !isResource(value) && Object.values(value).some(hasDeclarations));
 
-const resolve = (value: unknown): Effect.Effect<unknown, never, Providers> =>
+/** Yield every declaration in `value`, at any depth. */
+export const resolveDeclarations = (value: unknown): Effect.Effect<unknown, never, Providers> =>
   isDeclaration(value)
     ? value
     : Array.isArray(value)
-      ? Effect.forEach(value, resolve)
+      ? Effect.forEach(value, resolveDeclarations)
       : isPlain(value) && !isResource(value) && hasDeclarations(value)
         ? Effect.map(
             Effect.forEach(Object.entries(value), ([key, entry]) =>
-              Effect.map(resolve(entry), (resolved) => [key, resolved] as const),
+              Effect.map(resolveDeclarations(entry), (resolved) => [key, resolved] as const),
             ),
             Object.fromEntries,
           )
@@ -74,6 +75,6 @@ export const declarable =
     new Proxy(resource as C & ((...args: unknown[]) => unknown), {
       apply: (target, self, args: unknown[]) =>
         typeof args[0] === "string" && hasDeclarations(args[1])
-          ? Reflect.apply(target, self, [args[0], resolve(args[1])])
+          ? Reflect.apply(target, self, [args[0], resolveDeclarations(args[1])])
           : Reflect.apply(target, self, args),
     }) as never;

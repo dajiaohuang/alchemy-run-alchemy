@@ -2,7 +2,7 @@ import * as BuildPlan from "@alchemy.run/docker/BuildPlan";
 import * as image from "@distilled.cloud/modal/image";
 import * as secret from "@distilled.cloud/modal/secret";
 import type * as Bundle from "alchemy/Bundle/Bundle";
-import { isResolved } from "alchemy/Diff";
+import { deepEqual, isResolved } from "alchemy/Diff";
 import { Platform, type Main, type PlatformProps } from "alchemy/Platform";
 import * as Provider from "alchemy/Provider";
 import type { Resource } from "alchemy/Resource";
@@ -19,6 +19,8 @@ import type { App } from "./App.ts";
 import { buildImage, ImageBuildOps } from "./ImageBuild.ts";
 import { checkCommands, lowerPlan, MODAL_CAPABILITIES } from "./ImagePlan.ts";
 import { envNameOf, objectName } from "./internal.ts";
+import { resolveDeclarations } from "./internal/Declared.ts";
+import { boundMounts, type ModalMounts, type Mount, modalMountsOf } from "./Mounts.ts";
 import type { Providers } from "./Providers.ts";
 import { putSecret } from "./Secret.ts";
 
@@ -59,6 +61,12 @@ export interface SandboxProps extends PlatformProps {
   env?: Record<string, any>;
   /** Bundler options. */
   build?: Bundle.BundleConfig;
+  /**
+   * Volumes and cloud buckets mounted into every sandbox:
+   * `[{ volume: Data, path: "/data" }]`. `Modal.MountVolume` and
+   * `Modal.MountBucket` in the program add more.
+   */
+  mounts?: Mount[];
 }
 
 export interface SandboxAttributes {
@@ -78,6 +86,8 @@ export interface SandboxAttributes {
   port: number;
   /** The command each sandbox runs. */
   command: string[];
+  /** Modal's volume and bucket mounts every sandbox gets (props and bindings). */
+  mounts: ModalMounts;
   /** Content hash of the bundle and image inputs. */
   hash: string;
 }
@@ -86,7 +96,7 @@ export type Sandbox = Resource<
   "Modal.Sandbox",
   SandboxProps,
   SandboxAttributes,
-  { env?: Record<string, any> },
+  { env?: Record<string, any>; mounts?: Mount[] },
   Providers
 >;
 
@@ -234,7 +244,11 @@ export const Sandbox: Platform<Sandbox, SandboxServices, SandboxShape, SandboxRu
         const app = Effect.isEffect(props.app)
           ? yield* props.app as Effect.Effect<App, never, Providers>
           : props.app;
-        return { ...props, app };
+        const mounts =
+          props.mounts === undefined
+            ? undefined
+            : ((yield* resolveDeclarations(props.mounts)) as Mount[]);
+        return { ...props, app, mounts };
       }),
   });
 
@@ -291,11 +305,18 @@ export const SandboxProvider = () =>
 
       return {
         stables: ["appId", "secretName"],
-        diff: Effect.fn(function* ({ news, output }) {
-          if (!isResolved(news) || output === undefined) return undefined;
+        diff: Effect.fn(function* ({ news, output, newBindings }) {
+          if (!isResolved(news) || !isResolved(newBindings) || output === undefined) {
+            return undefined;
+          }
           if (appOf(news.app).appId !== output.appId) return { action: "replace" } as const;
           const { hash } = yield* prepare(news, news.port ?? DEFAULT_PORT);
-          return hash !== output.hash ? ({ action: "update" } as const) : undefined;
+          if (hash !== output.hash) return { action: "update" } as const;
+          const mounts = yield* modalMountsOf([
+            ...(news.mounts ?? []),
+            ...boundMounts(newBindings),
+          ]);
+          return deepEqual(mounts, output.mounts) ? undefined : ({ action: "update" } as const);
         }),
         read: Effect.fn(function* ({ output }) {
           if (output === undefined) return undefined;
@@ -304,8 +325,10 @@ export const SandboxProvider = () =>
             .pipe(Effect.catchTag("ImageNotFound", () => Effect.undefined));
           return found?.imageId ? output : undefined;
         }),
-        reconcile: Effect.fn(function* ({ id, news, output, session }) {
+        reconcile: Effect.fn(function* ({ id, news, output, session, bindings }) {
           const app = appOf(news.app);
+          // The props' mounts, then the ones `Modal.MountVolume` / `MountBucket` bound.
+          const mounts = yield* modalMountsOf([...(news.mounts ?? []), ...boundMounts(bindings)]);
           const port = news.port ?? DEFAULT_PORT;
           const secretName = output?.secretName ?? `${yield* objectName(id, undefined, 58)}-env`;
 
@@ -342,6 +365,7 @@ export const SandboxProvider = () =>
             secretName,
             port,
             command,
+            mounts,
             hash,
           };
         }),

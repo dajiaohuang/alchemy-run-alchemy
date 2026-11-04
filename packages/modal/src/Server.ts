@@ -17,6 +17,7 @@ import {
   runtimeLifecycle,
   type RuntimeAttributes,
 } from "./internal/Runtime.ts";
+import type { Mount } from "./Mounts.ts";
 import type { Providers } from "./Providers.ts";
 import type { DurationInput } from "./SandboxClient.ts";
 
@@ -72,7 +73,7 @@ export type Server = Resource<
   "Modal.Server",
   ServerProps,
   ServerAttributes,
-  { env?: Record<string, any> },
+  { env?: Record<string, any>; mounts?: Mount[] },
   Providers
 >;
 
@@ -256,12 +257,13 @@ export const ServerProvider = () =>
           const found = yield* lifecycle.read({ output });
           return found === undefined ? undefined : (output as ServerAttributes);
         }),
-        reconcile: Effect.fn(function* ({ id, news, output, session }) {
+        reconcile: Effect.fn(function* ({ id, news, output, session, bindings }) {
           const { attributes, metadata } = yield* lifecycle.reconcile({
             id,
             news,
             output,
             session,
+            bindings,
           });
           return {
             ...attributes,

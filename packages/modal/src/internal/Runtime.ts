@@ -6,12 +6,13 @@ import { Stack } from "alchemy/Stack";
 import { sha256Object } from "alchemy/Util/sha256";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import type { ContainerProps, Ref, VolumeRef } from "../Container.ts";
+import type { ContainerProps, Ref } from "../Container.ts";
 import { gpuConfig } from "../ImageBuild.ts";
 import { envNameOf, objectName, seconds } from "../internal.ts";
+import { boundMounts, type ModalMounts, type Mount, modalMountsOf } from "../Mounts.ts";
 import type { Providers } from "../Providers.ts";
-import { cloudBucketMountsOf, type SandboxVolumeMount, volumeMountsOf } from "../SandboxClient.ts";
 import { putSecret } from "../Secret.ts";
+import { resolveDeclarations } from "./Declared.ts";
 import {
   buildRuntimeImage,
   clientMount,
@@ -65,15 +66,10 @@ export interface RuntimeKind<P extends ContainerProps> {
 const resolveRef = <T>(value: Ref<T>) =>
   Effect.isEffect(value) ? (value as Effect.Effect<T, never, Providers>) : Effect.succeed(value);
 
-const resolveVolume = (value: VolumeRef): Effect.Effect<SandboxVolumeMount, never, Providers> =>
-  typeof value === "object" && value !== null && "volume" in value
-    ? Effect.map(resolveRef(value.volume), (volume) => ({ ...value, volume }))
-    : resolveRef(value);
-
 /**
- * `{ app: Coder, volumes: { "/data": Data } }` at module scope holds
- * Effects: yield them so the resources are registered and the props hold
- * their resolved attributes at reconcile.
+ * `{ app: Coder, mounts: [{ volume: Data, path: "/data" }] }` at module scope
+ * holds Effects: yield them so the resources are registered and the props
+ * hold their resolved attributes at reconcile.
  */
 export const resolveContainerProps = <P extends ContainerProps>(_id: string, props: P) =>
   Effect.gen(function* () {
@@ -82,18 +78,11 @@ export const resolveContainerProps = <P extends ContainerProps>(_id: string, pro
     const proxy = props.proxy === undefined ? undefined : yield* resolveRef(props.proxy);
     const secrets =
       props.secrets === undefined ? undefined : yield* Effect.forEach(props.secrets, resolveRef);
-    const volumes =
-      props.volumes === undefined
+    const mounts =
+      props.mounts === undefined
         ? undefined
-        : Object.fromEntries(
-            yield* Effect.forEach(Object.entries(props.volumes), ([path, volume]) =>
-              Effect.map(
-                resolveVolume(volume),
-                (resolved): readonly [string, SandboxVolumeMount] => [path, resolved],
-              ),
-            ),
-          );
-    return { ...props, app, proxy, secrets, volumes };
+        : ((yield* resolveDeclarations(props.mounts)) as Mount[]);
+    return { ...props, app, proxy, secrets, mounts };
   });
 
 /** The resolved app of the props. */
@@ -124,9 +113,8 @@ const baseDefinition = (
     readonly timeout: number;
     readonly startupTimeout: number;
   },
+  mounts: ModalMounts,
 ): functions.Function => {
-  // Resolved by `resolveContainerProps`: every volume is attributes by now.
-  const volumes = props.volumes as Record<string, SandboxVolumeMount> | undefined;
   return {
     moduleName: ENTRYPOINT_MODULE,
     functionName: context.tag,
@@ -140,8 +128,8 @@ const baseDefinition = (
       gpuConfig: gpuConfig(props.gpu),
       ephemeralDiskMb: props.ephemeralDisk,
     },
-    volumeMounts: volumeMountsOf(volumes),
-    cloudBucketMounts: cloudBucketMountsOf(props.cloudBucketMounts),
+    volumeMounts: mounts.volumeMounts,
+    cloudBucketMounts: mounts.cloudBucketMounts,
     proxyId: idOf(props.proxy, "proxyId"),
     timeoutSecs: Math.round(context.timeout),
     startupTimeoutSecs: Math.round(context.startupTimeout),
@@ -188,7 +176,11 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
   Effect.gen(function* () {
     const stack = yield* Stack;
 
-    const prepare = Effect.fn(function* (id: string, news: P) {
+    const prepare = Effect.fn(function* (
+      id: string,
+      news: P,
+      bindings: ReadonlyArray<{ readonly data: { readonly mounts?: ReadonlyArray<Mount> } }>,
+    ) {
       const port = news.port ?? DEFAULT_PORT;
       const tag = news.name ?? id;
       const app = appOf(news.app);
@@ -200,7 +192,13 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
         port,
         news.isExternal ? undefined : kind.bootstrap(news.handler ?? "default"),
       );
-      const base = baseDefinition(news, { tag, appName: app.appName, timeout, startupTimeout });
+      // The props' mounts, then the ones `Modal.MountVolume` / `MountBucket` bound.
+      const mounts = yield* modalMountsOf([...(news.mounts ?? []), ...boundMounts(bindings)]);
+      const base = baseDefinition(
+        news,
+        { tag, appName: app.appName, timeout, startupTimeout },
+        mounts,
+      );
       const specific = kind.definition(news, { port, startupTimeout });
       const definition: functions.Function = {
         ...base,
@@ -225,15 +223,19 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
         id,
         news,
         output,
+        newBindings,
       }: {
         id: string;
         news: Input<P>;
         output: RuntimeAttributes | undefined;
+        newBindings: Input<ReadonlyArray<{ readonly data: { readonly mounts?: Mount[] } }>>;
       }) {
-        if (!isResolved(news) || output === undefined) return undefined;
+        if (!isResolved(news) || !isResolved(newBindings) || output === undefined) {
+          return undefined;
+        }
         if (appOf(news.app).appId !== output.appId) return { action: "replace" } as const;
         if ((news.name ?? id) !== output.name) return { action: "replace" } as const;
-        const { hash } = yield* prepare(id, news);
+        const { hash } = yield* prepare(id, news, newBindings);
         return hash !== output.hash ? ({ action: "update" } as const) : undefined;
       }),
       read: Effect.fn(function* ({ output }: { output: RuntimeAttributes | undefined }) {
@@ -248,13 +250,19 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
         news,
         output,
         session,
+        bindings,
       }: {
         id: string;
         news: P;
         output: RuntimeAttributes | undefined;
         session: { note: (message: string) => Effect.Effect<void> };
+        bindings: ReadonlyArray<{ readonly data: { readonly mounts?: ReadonlyArray<Mount> } }>;
       }) {
-        const { port, tag, app, image, definition, secretIds, hash } = yield* prepare(id, news);
+        const { port, tag, app, image, definition, secretIds, hash } = yield* prepare(
+          id,
+          news,
+          bindings,
+        );
         for (const warning of image.warnings) yield* session.note(warning);
         const secretName = output?.secretName ?? `${yield* objectName(id, undefined, 58)}-env`;
 

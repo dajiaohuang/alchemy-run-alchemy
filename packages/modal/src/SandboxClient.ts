@@ -11,6 +11,7 @@ import * as Schedule from "effect/Schedule";
 import { buildImage, gpuConfig, ImageBuildOps, type ImageBuildSpec } from "./ImageBuild.ts";
 import { environmentOf, operations, seconds } from "./internal.ts";
 import { withRouter } from "./ModalBindings.ts";
+import { type ModalMounts, modalMountsOf, type SandboxMount } from "./Mounts.ts";
 
 /** A sandbox ended (or never became ready) before the call could finish. */
 export class SandboxNotRunning extends Data.TaggedError("Modal.SandboxNotRunning")<{
@@ -34,32 +35,6 @@ export type DurationInput = number | string;
 
 /** An image a sandbox boots from: a registry ref, or a `Modal.Image` (resolved). */
 export type SandboxImage = string | { readonly imageId: string };
-
-/** A volume a sandbox mounts, by itself or with mount options. */
-export type SandboxVolumeMount =
-  | { readonly volumeId: string }
-  | {
-      readonly volume: { readonly volumeId: string };
-      /** Mount read-only. */
-      readonly readOnly?: boolean;
-      /** Mount this directory of the volume instead of its root. */
-      readonly subPath?: string;
-    };
-
-/** An S3, R2 or GCS bucket a sandbox mounts with Modal's cloud bucket mounts. */
-export interface CloudBucketMountOptions {
-  readonly bucketName: string;
-  readonly type?: "s3" | "r2" | "gcp";
-  /** S3-compatible endpoint, e.g. an R2 account endpoint. */
-  readonly endpointUrl?: string;
-  /** A Modal secret holding `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (or GCS HMAC keys). */
-  readonly secret?: { readonly secretId: string };
-  /** Mount only keys under this prefix. */
-  readonly keyPrefix?: string;
-  readonly readOnly?: boolean;
-  /** Assume this AWS role with Modal's OIDC identity instead of a secret. */
-  readonly oidcAuthRoleArn?: string;
-}
 
 /** Where a route sends matching traffic: blocked, through a `Modal.Proxy`, or to a sidecar. */
 export type OutboundRedirect =
@@ -148,12 +123,11 @@ export interface SandboxCreateOptions {
   readonly env?: Record<string, string>;
   /** Secrets whose variables the sandbox sees as environment variables. */
   readonly secrets?: ReadonlyArray<{ readonly secretId: string }>;
-  /** Volumes by mount path. */
-  readonly volumes?: Record<string, SandboxVolumeMount>;
-  /** Cloud buckets by mount path. */
-  readonly cloudBucketMounts?: Record<string, CloudBucketMountOptions>;
-  /** Mounts (local files uploaded with `Modal.Mount`). */
-  readonly mounts?: ReadonlyArray<{ readonly mountId: string }>;
+  /**
+   * Volumes and cloud buckets to mount: volume handles, bucket names, or
+   * the references `Modal.MountVolume` / `Modal.MountBucket` return.
+   */
+  readonly mounts?: ReadonlyArray<SandboxMount>;
   /** CPU cores (fractional allowed). */
   readonly cpu?: number;
   /** Memory in MiB. */
@@ -320,11 +294,12 @@ export interface SandboxTarget {
   readonly appName?: string;
   /** Image used when `create` names none. */
   readonly imageId?: string;
-  /** A `Modal.Sandbox` program: the secret holding its env, its command, and its port. */
+  /** A `Modal.Sandbox` program: the secret holding its env, its command, its port and mounts. */
   readonly program?: {
     readonly secretId: string;
     readonly command: ReadonlyArray<string>;
     readonly port: number;
+    readonly mounts?: ModalMounts;
   };
 }
 
@@ -344,49 +319,19 @@ const encodeBase64 = (data: string | Uint8Array) =>
 const tunnelTypeOf = (h2: boolean): sandbox.TunnelType | undefined =>
   h2 ? "TUNNEL_TYPE_H2" : undefined;
 
-const BUCKET_TYPE = { s3: "S3", r2: "R2", gcp: "GCP" } as const;
-
-/** Modal's volume mounts for a `{ [path]: volume }` map. */
-export const volumeMountsOf = (
-  volumes: Record<string, SandboxVolumeMount> | undefined,
-): sandbox.VolumeMount[] =>
-  Object.entries(volumes ?? {}).map(([mountPath, mount]) =>
-    "volume" in mount
-      ? {
-          mountPath,
-          volumeId: mount.volume.volumeId,
-          readOnly: mount.readOnly,
-          subPath: mount.subPath,
-          allowBackgroundCommits: true,
-        }
-      : { mountPath, volumeId: mount.volumeId, allowBackgroundCommits: true },
-  );
-
-/** Modal's cloud bucket mounts for a `{ [path]: bucket }` map. */
-export const cloudBucketMountsOf = (
-  buckets: Record<string, CloudBucketMountOptions> | undefined,
-): sandbox.CloudBucketMount[] =>
-  Object.entries(buckets ?? {}).map(([mountPath, mount]) => ({
-    mountPath,
-    bucketName: mount.bucketName,
-    bucketType: mount.type ? BUCKET_TYPE[mount.type] : undefined,
-    bucketEndpointUrl: mount.endpointUrl,
-    credentialsSecretId: mount.secret?.secretId,
-    keyPrefix: mount.keyPrefix,
-    readOnly: mount.readOnly,
-    oidcAuthRoleArn: mount.oidcAuthRoleArn,
-  }));
-
 /** Modal's `Sandbox` definition for {@link SandboxCreateOptions}. */
-const definitionOf = (imageId: string, options: SandboxCreateOptions): sandbox.Sandbox => ({
+const definitionOf = (
+  imageId: string,
+  options: SandboxCreateOptions,
+  mounts: ModalMounts,
+): sandbox.Sandbox => ({
   imageId,
   entrypointArgs: options.command ? [...options.command] : ["sleep", "infinity"],
   workdir: options.workdir,
   environmentVariables: options.env,
   secretIds: options.secrets?.map((s) => s.secretId),
-  mountIds: options.mounts?.map((m) => m.mountId),
-  volumeMounts: volumeMountsOf(options.volumes),
-  cloudBucketMounts: cloudBucketMountsOf(options.cloudBucketMounts),
+  volumeMounts: mounts.volumeMounts,
+  cloudBucketMounts: mounts.cloudBucketMounts,
   resources: {
     milliCpu: options.cpu !== undefined ? Math.round(options.cpu * 1000) : undefined,
     memoryMb: options.memory,
@@ -883,9 +828,14 @@ export const createSandbox = Effect.fn(function* (
         encryptedPorts: [...new Set([program.port, ...(options.encryptedPorts ?? [])])],
       }
     : options;
+  const own = yield* modalMountsOf(options.mounts);
+  const mounts: ModalMounts = {
+    volumeMounts: [...(program?.mounts?.volumeMounts ?? []), ...own.volumeMounts],
+    cloudBucketMounts: [...(program?.mounts?.cloudBucketMounts ?? []), ...own.cloudBucketMounts],
+  };
   const created = yield* ops.create({
     appId: target.appId,
-    definition: definitionOf(imageId, withProgram),
+    definition: definitionOf(imageId, withProgram, mounts),
     tags: Object.entries(options.tags ?? {}).map(([tagName, tagValue]) => ({ tagName, tagValue })),
   });
   if (!created.sandboxId) {
@@ -1026,7 +976,11 @@ export const createPersistentSandbox = Effect.fn(function* (
   const imageId = yield* resolveSandboxImage(ops, target, options.image);
   const created = yield* ops.createPersistent({
     appId: target.appId,
-    definition: definitionOf(imageId, { ...options, ...PERSISTENT_SESSION }),
+    definition: definitionOf(
+      imageId,
+      { ...options, ...PERSISTENT_SESSION },
+      yield* modalMountsOf(options.mounts),
+    ),
   });
   if (!created.persistentSandboxId) {
     return yield* new SandboxUnexpectedResponse({

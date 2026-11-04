@@ -2,22 +2,12 @@ import type * as Bundle from "alchemy/Bundle/Bundle";
 import type { PlatformProps } from "alchemy/Platform";
 import type * as Effect from "effect/Effect";
 import type { App } from "./App.ts";
+import type { Mount } from "./Mounts.ts";
 import type { Providers } from "./Providers.ts";
-import type { CloudBucketMountOptions, DurationInput } from "./SandboxClient.ts";
+import type { DurationInput } from "./SandboxClient.ts";
 
 /** A resource, or the module-scope Effect that declares it. */
 export type Ref<T> = T | Effect.Effect<T, never, Providers>;
-
-/** A volume mounted by itself, or with mount options. */
-export type VolumeRef =
-  | Ref<{ readonly volumeId: string }>
-  | {
-      readonly volume: Ref<{ readonly volumeId: string }>;
-      /** Mount read-only. */
-      readonly readOnly?: boolean;
-      /** Mount this directory of the volume instead of its root. */
-      readonly subPath?: string;
-    };
 
 /**
  * Container settings shared by `Modal.Function` and `Modal.Server`: the
@@ -72,10 +62,12 @@ export interface ContainerProps extends PlatformProps {
   build?: Bundle.BundleConfig;
   /** Secrets whose variables the program sees as environment variables. */
   secrets?: Array<Ref<{ readonly secretId: string }>>;
-  /** Volumes (`Modal.Volume`) by mount path. */
-  volumes?: Record<string, VolumeRef>;
-  /** S3, R2 or GCS buckets by mount path. */
-  cloudBucketMounts?: Record<string, CloudBucketMountOptions>;
+  /**
+   * Volumes and cloud buckets mounted into every container:
+   * `{ volume: Data, path: "/data" }`, `{ bucket: Uploads, path: "/uploads", secret: R2Keys }`.
+   * `Modal.MountVolume` and `Modal.MountBucket` add more from the program.
+   */
+  mounts?: Mount[];
   /** CPU cores to reserve (fractional allowed). */
   cpu?: number;
   /** Most CPU cores a container may use. */

@@ -5,6 +5,7 @@ import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import { envNameOf } from "./internal.ts";
 import { declarable } from "./internal/Declared.ts";
+import type { Mount } from "./Mounts.ts";
 import type { Providers } from "./Providers.ts";
 import {
   createPersistentSandbox,
@@ -13,7 +14,12 @@ import {
   type PersistentSandboxCreateOptions,
 } from "./SandboxClient.ts";
 
-export interface PersistentSandboxProps extends PersistentSandboxCreateOptions {
+export interface PersistentSandboxProps extends Omit<PersistentSandboxCreateOptions, "mounts"> {
+  /**
+   * Volumes and cloud buckets mounted into every session:
+   * `[{ volume: Home, path: "/home/user" }]`. Changing them replaces the box.
+   */
+  mounts?: Mount[];
   /** The App the box runs in (`Modal.App`). Changing it replaces the box. */
   app: { readonly appId: string; readonly name?: string; readonly environment?: unknown };
 }
@@ -111,7 +117,12 @@ export const PersistentSandboxProvider = () =>
           // Ensure.
           yield* session.note("Creating persistent sandbox...");
           const { app: _app, ...options } = news;
-          const handle = yield* createPersistentSandbox(yield* SandboxOps, app, options);
+          // Resolved by the engine: every mount's resource is attributes by now.
+          const handle = yield* createPersistentSandbox(
+            yield* SandboxOps,
+            app,
+            options as PersistentSandboxCreateOptions,
+          );
           return {
             persistentSandboxId: handle.persistentSandboxId,
             appId: app.appId,
