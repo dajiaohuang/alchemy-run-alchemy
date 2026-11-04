@@ -33,4 +33,4 @@ export * from "./Snapshot.ts";
 export * from "./Volume.ts";
 export * from "./WarmPool.ts";
 export * from "./Webhooks.ts";
-export type { DaytonaSandbox, ExecOptions, ExecResult } from "./SandboxClient.ts";
+export type { ConnectedSandbox, DaytonaSandbox, ExecOptions, ExecResult } from "./SandboxClient.ts";

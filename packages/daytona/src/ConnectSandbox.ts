@@ -1,13 +1,15 @@
 import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import type { Sandbox } from "./Sandbox.ts";
-import type { DaytonaSandbox } from "./SandboxClient.ts";
+import type { ConnectedSandbox } from "./SandboxClient.ts";
 
 /**
  * Work with one {@link Sandbox} declared at deploy, from any host: run
  * commands, read and write files, use git, open previews, fork it or
- * snapshot it. Returns the same {@link DaytonaSandbox} handle as
- * {@link CreateSandbox}.
+ * snapshot it. The handle has the same methods as the
+ * {@link DaytonaSandbox} that {@link CreateSandbox} returns; its
+ * `sandboxId`, `name` and `toolboxProxyUrl` are Effects, resolved at
+ * runtime.
  *
  * The host gets its own Daytona API key with `write:sandboxes` and
  * `delete:sandboxes`; Daytona checks permissions per kind of object, so
@@ -27,6 +29,9 @@ import type { DaytonaSandbox } from "./SandboxClient.ts";
  * ```
  *
  * ### Forking a Dev Box
+ * Daytona forks `linux-vm` sandboxes; a container's fork fails with
+ * `ForkNotSupported`.
+ *
  * **Example:** Fork it per pull request
  * ```typescript
  * const fork = yield* devBox.forkSandbox({ name: `pr-${number}` });
@@ -38,7 +43,7 @@ import type { DaytonaSandbox } from "./SandboxClient.ts";
 export interface ConnectSandbox extends Binding.Service<
   ConnectSandbox,
   "Daytona.ConnectSandbox",
-  (sandbox: Sandbox) => Effect.Effect<DaytonaSandbox>
+  (sandbox: Sandbox) => Effect.Effect<ConnectedSandbox>
 > {}
 
 export const ConnectSandbox = Binding.Service<ConnectSandbox>("Daytona.ConnectSandbox");

@@ -3,11 +3,11 @@ import * as Binding from "alchemy/Binding";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { makeAccess } from "./DaytonaBindings.ts";
-import { scopeModule, type ScopedModule } from "./internal/Scoped.ts";
+import { scopeModule, type OrganizationFixed, type ScopedModule } from "./internal/Scoped.ts";
 import { lazyScoped } from "./ReadOrganization.ts";
 
 /** Usage from Daytona's analytics API: totals, charts and per-sandbox usage. */
-export interface ReadUsageClient extends ScopedModule<typeof usage> {}
+export interface ReadUsageClient extends ScopedModule<typeof usage, OrganizationFixed> {}
 
 /**
  * Read the organization's compute usage at runtime: aggregated totals, a
@@ -42,7 +42,9 @@ export const ReadUsageHttp = Layer.effect(
     return Effect.fn(function* () {
       const { authorize, organizationId } = yield* access("Usage", ["read:billing"]);
       return lazyScoped(organizationId, (id) =>
-        scopeModule(usage, { organizationId: id }, (effect) => authorize(effect)),
+        scopeModule<typeof usage, OrganizationFixed>(usage, { organizationId: id }, (effect) =>
+          authorize(effect),
+        ),
       );
     });
   }),

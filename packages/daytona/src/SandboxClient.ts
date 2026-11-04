@@ -125,6 +125,24 @@ export interface DaytonaSandbox extends ScopedModule<SandboxOperations> {
   ): Effect.Effect<ExecResult, process.ExecuteCommandError, RuntimeContext>;
 }
 
+/**
+ * The handle {@link ConnectSandbox} returns for a sandbox declared at
+ * deploy. Its methods are the same as {@link DaytonaSandbox}'s; its
+ * identity resolves at runtime, so `sandboxId`, `name` and
+ * `toolboxProxyUrl` are Effects.
+ */
+export interface ConnectedSandbox extends Omit<
+  DaytonaSandbox,
+  "sandboxId" | "name" | "toolboxProxyUrl"
+> {
+  /** Sandbox ID. */
+  readonly sandboxId: Effect.Effect<string, never, RuntimeContext>;
+  /** Sandbox name. */
+  readonly name: Effect.Effect<string, never, RuntimeContext>;
+  /** The sandbox's toolbox proxy. */
+  readonly toolboxProxyUrl: Effect.Effect<string, never, RuntimeContext>;
+}
+
 /** What a binding needs to build a handle. */
 export interface SandboxIdentity {
   readonly id: string;

@@ -1,9 +1,12 @@
-import type { DaytonaSandbox } from "@alchemy.run/daytona/SandboxClient";
+import type { ConnectedSandbox, DaytonaSandbox } from "@alchemy.run/daytona/SandboxClient";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
+/** Every toolbox call works the same on either handle. */
+type Box = DaytonaSandbox | ConnectedSandbox;
+
 /** Files: folders, uploads, search, replace, download, move, permissions, delete. */
-export const files = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+export const files = Effect.fn(function* (box: Box, prefix: string) {
   const dir = `/tmp/alchemy-fs-${prefix}`;
   yield* box.fs.deleteFile({ path: dir, recursive: true }).pipe(Effect.ignore);
   yield* box.fs.createFolder({ path: dir, mode: "755" });
@@ -32,7 +35,7 @@ export const files = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
 });
 
 /** Processes: a stateful session, an async command and its logs, code runs, PTYs. */
-export const processes = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+export const processes = Effect.fn(function* (box: Box, prefix: string) {
   const sessionId = `alchemy-${prefix}`;
   yield* box.process.deleteSession({ sessionId }).pipe(Effect.ignore);
   yield* box.process.createSession({ sessionId });
@@ -81,7 +84,7 @@ export const processes = Effect.fn(function* (box: DaytonaSandbox, prefix: strin
 });
 
 /** Git: init, commit, branch, history, status, and a clone. */
-export const git = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+export const git = Effect.fn(function* (box: Box, prefix: string) {
   const path = `/tmp/alchemy-git-${prefix}`;
   yield* box.exec(`rm -rf ${path} ${path}-clone`);
   yield* box.git.initRepository({ path, initial_branch: "main" });
@@ -119,7 +122,7 @@ export const git = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
 });
 
 /** Language servers: open a TypeScript file, list its symbols, complete. */
-export const lsp = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+export const lsp = Effect.fn(function* (box: Box, prefix: string) {
   const pathToProject = `/tmp/alchemy-lsp-${prefix}`;
   const uri = `file://${pathToProject}/index.ts`;
   yield* box.exec(`rm -rf ${pathToProject} && mkdir -p ${pathToProject}`);
@@ -145,7 +148,7 @@ export const lsp = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
 });
 
 /** Interpreter contexts, ports, versions, home directory and system metrics. */
-export const system = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+export const system = Effect.fn(function* (box: Box, prefix: string) {
   const context = yield* box.interpreter.createInterpreterContext({ language: "python" });
   const contexts = yield* box.interpreter.listInterpreterContexts();
   yield* box.interpreter.deleteInterpreterContext({ id: context.id });
@@ -245,7 +248,7 @@ ThreadingHTTPServer(("127.0.0.1", PORT), Git).serve_forever()
 `;
 
 /** Git against a remote: config, remotes, push, clone, pull, restore, reset, branches. */
-export const gitRemote = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+export const gitRemote = Effect.fn(function* (box: Box, prefix: string) {
   const root = `/tmp/alchemy-remote-${prefix}`;
   const path = `${root}/work`;
   const other = `${root}/other`;
@@ -337,7 +340,7 @@ export const gitRemote = Effect.fn(function* (box: DaytonaSandbox, prefix: strin
 });
 
 /** Interactive input, a single command, the entrypoint, daemon env, LSP workspace symbols. */
-export const sessions = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+export const sessions = Effect.fn(function* (box: Box, prefix: string) {
   const sessionId = `alchemy-input-${prefix}`;
   yield* box.process.deleteSession({ sessionId }).pipe(Effect.ignore);
   yield* box.process.createSession({ sessionId });

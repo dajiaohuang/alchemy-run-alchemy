@@ -3,11 +3,11 @@ import * as Binding from "alchemy/Binding";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { makeAccess } from "./DaytonaBindings.ts";
-import { scopeModule, type ScopedModule } from "./internal/Scoped.ts";
+import { scopeModule, type OrganizationFixed, type ScopedModule } from "./internal/Scoped.ts";
 import { lazyScoped } from "./ReadOrganization.ts";
 
 /** The organization's audit log. */
-export interface ReadAuditLogsClient extends ScopedModule<typeof audit> {}
+export interface ReadAuditLogsClient extends ScopedModule<typeof audit, OrganizationFixed> {}
 
 /**
  * Read the organization's audit log at runtime: who created, started,
@@ -41,7 +41,9 @@ export const ReadAuditLogsHttp = Layer.effect(
     return Effect.fn(function* () {
       const { authorize, organizationId } = yield* access("AuditLogs", ["read:audit_logs"]);
       return lazyScoped(organizationId, (id) =>
-        scopeModule(audit, { organizationId: id }, (effect) => authorize(effect)),
+        scopeModule<typeof audit, OrganizationFixed>(audit, { organizationId: id }, (effect) =>
+          authorize(effect),
+        ),
       );
     });
   }),

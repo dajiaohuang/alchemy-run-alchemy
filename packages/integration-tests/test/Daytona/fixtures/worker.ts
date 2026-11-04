@@ -239,7 +239,16 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
           const uname = yield* devBox.exec("uname -s");
           const workDir = yield* devBox.info.getWorkDir();
           const preview = yield* devBox.getPortPreviewUrl({ port: 3000 });
-          return yield* HttpServerResponse.json({ uname, workDir, previewUrl: preview.url });
+          return yield* HttpServerResponse.json({
+            uname,
+            workDir,
+            previewUrl: preview.url,
+            identity: {
+              id: typeof (yield* devBox.sandboxId),
+              name: yield* devBox.name,
+              toolbox: (yield* devBox.toolboxProxyUrl).startsWith("https://"),
+            },
+          });
         }
 
         if (url.pathname === "/volume") {
@@ -288,9 +297,17 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
         if (url.pathname === "/organization") {
           const regions = yield* organization.listSharedRegions();
           const classes = yield* organization.listAvailableSandboxClasses();
+          const overview = yield* organization.getOrganizationUsageOverview();
+          const gpus = yield* organization.getGpuCapacity();
+          const webhooks = yield* organization.getWebhookControllerInitializationStatus();
+          const portal = yield* organization.getWebhookControllerAppPortalAccess();
           return yield* HttpServerResponse.json({
             regions: regions.length,
             classes: classes.length,
+            quota: overview.regionUsage.length,
+            gpus: gpus.capacity.length,
+            webhooks: webhooks !== undefined,
+            portal: typeof portal.url,
           });
         }
 
@@ -298,12 +315,28 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
           const to = new Date().toISOString();
           const from = new Date(Date.now() - 86_400_000).toISOString();
           const total = yield* usage.getOrganizationUsageAggregated({ from, to });
-          return yield* HttpServerResponse.json({ ok: total !== undefined });
+          const chart = yield* usage.listOrganizationUsageChart({ from, to });
+          const perSandbox = yield* usage.listOrganizationUsageSandbox({ from, to });
+          const box = yield* usage.listOrganizationSandboxUsage({
+            sandboxId: yield* devBox.sandboxId,
+            from,
+            to,
+          });
+          return yield* HttpServerResponse.json({
+            total: total !== undefined,
+            chart: Array.isArray(chart),
+            perSandbox: Array.isArray(perSandbox),
+            box: box !== undefined,
+          });
         }
 
         if (url.pathname === "/audit") {
           const page = yield* audit.getOrganizationAuditLogs({ limit: 5 });
-          return yield* HttpServerResponse.json({ items: page.items.length });
+          const scenarios = yield* audit.getAuditScenarios();
+          return yield* HttpServerResponse.json({
+            items: page.items.length,
+            scenarios: scenarios !== undefined,
+          });
         }
 
         return HttpServerResponse.text("not found", { status: 404 });

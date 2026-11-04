@@ -295,6 +295,11 @@ describe("ConnectSandbox", () => {
       expect(body.uname.result.trim()).toEqual("Linux");
       expect(body.workDir.dir).toEqual(expect.any(String));
       expect(body.previewUrl).toMatch(/^https:\/\//);
+      expect(body.identity).toEqual({
+        id: "string",
+        name: expect.stringContaining("bindingsdevbox"),
+        toolbox: true,
+      });
     }),
     { tags, timeout: 300_000 },
   );
@@ -341,11 +346,20 @@ describe("CreateSnapshot", () => {
 
 describe("ReadOrganization", () => {
   test(
-    "reads shared regions and sandbox classes",
+    "reads regions, sandbox classes, quotas, GPU capacity and the webhook portal",
     Effect.gen(function* () {
       const body = yield* get("/organization");
+      expect(body).toEqual({
+        regions: expect.any(Number),
+        classes: expect.any(Number),
+        quota: expect.any(Number),
+        gpus: expect.any(Number),
+        webhooks: true,
+        portal: "string",
+      });
       expect(body.regions).toBeGreaterThan(0);
       expect(body.classes).toBeGreaterThan(0);
+      expect(body.quota).toBeGreaterThan(0);
     }),
     { tags, timeout: 120_000 },
   );
@@ -353,9 +367,14 @@ describe("ReadOrganization", () => {
 
 describe("ReadUsage", () => {
   test(
-    "reads aggregated usage for the last day",
+    "reads aggregated, charted and per-sandbox usage",
     Effect.gen(function* () {
-      expect((yield* get("/usage")).ok).toBe(true);
+      expect(yield* get("/usage")).toEqual({
+        total: true,
+        chart: true,
+        perSandbox: true,
+        box: true,
+      });
     }),
     { tags, timeout: 120_000 },
   );
@@ -366,7 +385,9 @@ describe("ReadAuditLogs", () => {
     "reads the audit log",
     Effect.gen(function* () {
       // Deploying the stack minted API keys, which the audit log records.
-      expect((yield* get("/audit")).items).toBeGreaterThan(0);
+      const body = yield* get("/audit");
+      expect(body.items).toBeGreaterThan(0);
+      expect(body.scenarios).toBe(true);
     }),
     { tags, timeout: 120_000 },
   );

@@ -8,24 +8,31 @@ import * as SchemaAST from "effect/SchemaAST";
 type Operation<I, O, E> = ((input: I) => Effect.Effect<O, E, Credentials | HttpClient.HttpClient>) &
   Effect.Effect<unknown, never, unknown>;
 
-/** Members a scoped client fills in itself. */
-type Fixed = "sandboxIdOrName" | "sandboxId" | "organizationId" | "xDaytonaOrganizationID";
+/** Members a sandbox-scoped client fills in itself. */
+export type SandboxFixed =
+  | "sandboxIdOrName"
+  | "sandboxId"
+  | "organizationId"
+  | "xDaytonaOrganizationID";
+
+/** Members an organization-scoped client fills in itself. */
+export type OrganizationFixed = "organizationId" | "xDaytonaOrganizationID";
 
 /** One operation, with the fields the client fixes removed from its input. */
-export type ScopedOperation<I, O, E> =
-  {} extends Omit<I, Fixed>
-    ? (input?: Omit<I, Fixed>) => Effect.Effect<O, E, RuntimeContext>
-    : (input: Omit<I, Fixed>) => Effect.Effect<O, E, RuntimeContext>;
+export type ScopedOperation<I, O, E, F extends PropertyKey = SandboxFixed> =
+  {} extends Omit<I, F>
+    ? (input?: Omit<I, F>) => Effect.Effect<O, E, RuntimeContext>
+    : (input: Omit<I, F>) => Effect.Effect<O, E, RuntimeContext>;
 
 /**
  * Every operation of a generated service module (`@distilled.cloud/daytona/process`,
  * `/git`, …), re-exposed with Daytona's own parameters and typed errors,
  * minus the fields the client supplies (the sandbox and organization).
  */
-export type ScopedModule<M> = {
+export type ScopedModule<M, F extends PropertyKey = SandboxFixed> = {
   readonly [
     K in keyof M as M[K] extends Operation<any, any, any> ? K : never
-  ]: M[K] extends Operation<infer I, infer O, infer E> ? ScopedOperation<I, O, E> : never;
+  ]: M[K] extends Operation<infer I, infer O, infer E> ? ScopedOperation<I, O, E, F> : never;
 };
 
 // Generated operations are plain callables, not Effects, so the name tells
@@ -53,13 +60,13 @@ const inputMembers = (op: object): ReadonlySet<string> | undefined => {
  * Wrap every operation of `module`: merge `fixed` into each input and run
  * the call through `run` (which supplies credentials and sandbox scope).
  */
-export const scopeModule = <M extends object>(
+export const scopeModule = <M extends object, F extends PropertyKey = SandboxFixed>(
   module: M,
   fixed: Record<string, unknown>,
   run: <A, E>(
     effect: Effect.Effect<A, E, Credentials | HttpClient.HttpClient>,
   ) => Effect.Effect<A, E, RuntimeContext>,
-): ScopedModule<M> =>
+): ScopedModule<M, F> =>
   Object.fromEntries(
     Object.entries(module)
       .filter(([name, value]) => isOperation(name, value))
@@ -88,7 +95,7 @@ export const scopeModule = <M extends object>(
       }),
     // Object.fromEntries can't produce a mapped type; the entries are exactly
     // the module's operations, each wrapped with the signature ScopedModule gives it.
-  ) as unknown as ScopedModule<M>;
+  ) as unknown as ScopedModule<M, F>;
 
 /** The named operations of a module, as a module-shaped object. */
 export const pick = <M extends object, K extends keyof M>(
