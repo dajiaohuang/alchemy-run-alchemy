@@ -113,10 +113,10 @@ export type ServiceRuntimeContext = HostRuntimeContext;
  * URL stay the same. Several Services can share one sandbox on
  * different ports.
  *
- * The program reaches the internet as its sandbox does. Daytona
- * restricts sandbox egress on lower usage tiers: Daytona's API stays
- * reachable (bindings like `ConnectSandbox` can manage sandboxes), but
- * toolbox calls and other hosts may be refused.
+ * The program reaches the internet as its sandbox does. Below Daytona's
+ * Tier 3, sandboxes reach only an allowlist of essential services
+ * (package registries, GitHub, AI APIs, Daytona's API), so bindings that
+ * manage sandboxes work but toolbox calls are refused.
  *
  * The process lives as long as the sandbox runs: set the sandbox's
  * `autoStopInterval` to `0` to keep it serving. If the sandbox stopped,

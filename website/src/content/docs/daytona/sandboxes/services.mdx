@@ -58,7 +58,7 @@ Effect.gen(function* () {
 }).pipe(Effect.provide(Daytona.ConnectSandboxHttp));
 ```
 
-The program reaches the internet the way its sandbox does. Daytona restricts sandbox egress on lower usage tiers: its API stays reachable, so bindings that manage sandboxes work, but toolbox calls and other hosts may be refused.
+The program reaches the internet the way its sandbox does. Below Daytona's Tier 3, sandboxes reach only an allowlist of essential services (package registries, GitHub, AI APIs, Daytona's API), so bindings that manage sandboxes work but toolbox calls are refused. From Tier 3, sandboxes have full internet access.
 
 ## Keep it private
 

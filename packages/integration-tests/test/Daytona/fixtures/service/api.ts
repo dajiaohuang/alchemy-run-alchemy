@@ -24,8 +24,8 @@ export default class Api extends Daytona.Service<Api>()(
         const request = yield* HttpServerRequest;
         const url = new URL(request.url, "http://service");
         if (url.pathname === "/box") {
-          // Platform calls work from a sandbox; Daytona keeps the toolbox
-          // proxy out of reach of sandboxes with restricted egress.
+          // Platform calls work from any sandbox; below Tier 3 the toolbox
+          // proxy isn't on Daytona's egress allowlist.
           const self = yield* box.getSandbox().pipe(Effect.orDie);
           return yield* HttpServerResponse.json({ sandboxId: self.id, state: self.state });
         }
