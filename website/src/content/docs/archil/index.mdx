@@ -1,6 +1,6 @@
 ---
 title: Archil
-description: Durable disks that mount in about 100 ms, services and websites in Firecracker sandboxes, serverless exec, and branches.
+description: Durable disks that mount in about 100 ms, programs and websites in Firecracker sandboxes, serverless exec, and branches.
 ---
 
 Archil gives you disks that mount anywhere in about 100 ms, and sandboxes
@@ -15,11 +15,10 @@ import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 export const Files = Archil.Disk("Files", {});
-export const Box = Archil.Sandbox("Box", {});
 
-export default class Api extends Archil.Service<Api>()(
+export default class Api extends Archil.Sandbox<Api>()(
   "Api",
-  { sandbox: Box, main: import.meta.url, port: 3000 },
+  { main: import.meta.url, port: 3000 },
   Effect.gen(function* () {
     const files = yield* Archil.ReadWriteDisk(Files);
     return {
@@ -34,32 +33,32 @@ export default class Api extends Archil.Service<Api>()(
 ) {}
 ```
 
-The service runs in the sandbox at a public `https://` URL, and reads the
-disk with its own S3 user on that disk.
+The program runs in its own sandbox at a public `https://` URL, and reads
+the disk with its own S3 user on that disk.
 
 New here? [Set up credentials](/archil/setup), then
 [build the tutorial](/archil/tutorial/part-1).
 
 ## Compute
 
-- [Choosing a runtime](/archil/compute/choosing-a-runtime): services,
-  run-time sandboxes, serverless exec, and mounts
-- [Services](/archil/compute/services): your program in a sandbox, in
-  the Effect or async form
+- [Choosing a runtime](/archil/compute/choosing-a-runtime): program
+  sandboxes, run-time sandboxes, serverless exec, and mounts
+- [Programs](/archil/compute/programs): your program in its own sandbox,
+  in the Effect or async form
 - [Sandboxes](/archil/compute/sandboxes): microVMs per task, dev boxes,
   ports, and images
 
 ## Frontend
 
 - [Websites](/archil/frontend/websites): Astro, Next.js, Nuxt,
-  SvelteKit, Vite, and nine more frameworks on Archil services
+  SvelteKit, Vite, and nine more frameworks, each in its own sandbox
 
 ## Storage
 
 - [Disks](/archil/storage/disks): disks per user at run time, exec,
   objects, branches, and your own bucket
-- [Mounting](/archil/storage/mounting): mount disks in Cloudflare
-  Containers and ECS tasks
+- [Mounting](/archil/storage/mounting): mount disks in program
+  sandboxes, Cloudflare Containers and ECS tasks
 
 ## Security
 
@@ -74,5 +73,5 @@ New here? [Set up credentials](/archil/setup), then
   `getBillingSubscription`): billing objects, not infrastructure.
 - A workflow engine: Archil has no durable execution engine.
 - Event sources: Archil has no webhooks, notifications, or streams.
-- Custom domains: every service is served from its own `archil.app`
-  hostname.
+- Custom domains: every sandbox port is served from its own
+  `archil.app` hostname.

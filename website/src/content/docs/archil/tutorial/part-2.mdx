@@ -1,45 +1,32 @@
 ---
-title: "Part 2: Add a Service"
-description: Run an Effect HTTP service in an Archil sandbox that stores files on the disk.
+title: "Part 2: Run a Program"
+description: Run an Effect HTTP program in its own Archil sandbox that stores files on the disk.
 sidebar:
   order: 2
 ---
 
 import PackageManagers from "../../../../components/PackageManagers.astro";
 
-Run a service in an Archil sandbox with `PUT /:key` and `GET /:key`
+Run a program in its own Archil sandbox, with `PUT /:key` and `GET /:key`
 routes that store files on the disk from [Part 1](/archil/tutorial/part-1).
 The finished code is
-[`examples/archil-service`](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-service).
+[`examples/archil-sandbox`](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-sandbox).
 
-## Declare a sandbox
+## Create the program
 
-A service runs in a sandbox. Add one next to the disk:
-
-```diff lang="typescript"
-// src/Storage.ts
-import * as Archil from "@alchemy.run/archil";
-
-export const Files = Archil.Disk("Files", {});
-+
-+export const Box = Archil.Sandbox("Box", {});
-```
-
-## Create the service
-
-`main: import.meta.url` makes this file both the bundle and the program.
-The service listens on port 3000:
+An `Archil.Sandbox` with `main` runs your program.
+`main: import.meta.url` makes this file both the bundle and the program,
+and the program listens on port 3000:
 
 ```typescript
 // src/Api.ts
 import * as Archil from "@alchemy.run/archil";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { Box } from "./Storage.ts";
 
-export default class Api extends Archil.Service<Api>()(
+export default class Api extends Archil.Sandbox<Api>()(
   "Api",
-  { sandbox: Box, main: import.meta.url, port: 3000 },
+  { main: import.meta.url, port: 3000 },
   Effect.gen(function* () {
     return {
       fetch: Effect.succeed(HttpServerResponse.text("hello")),
@@ -50,7 +37,7 @@ export default class Api extends Archil.Service<Api>()(
 
 ## Bind the disk
 
-`Archil.ReadWriteDisk(Files)` gives the service its own S3 user on that
+`Archil.ReadWriteDisk(Files)` gives the program its own S3 user on that
 disk, so it can read and write that disk and nothing else:
 
 ```diff lang="typescript"
@@ -58,12 +45,11 @@ disk, so it can read and write that disk and nothing else:
 import * as Archil from "@alchemy.run/archil";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
--import { Box } from "./Storage.ts";
-+import { Box, Files } from "./Storage.ts";
++import { Files } from "./Storage.ts";
 
-export default class Api extends Archil.Service<Api>()(
+export default class Api extends Archil.Sandbox<Api>()(
   "Api",
-  { sandbox: Box, main: import.meta.url, port: 3000 },
+  { main: import.meta.url, port: 3000 },
   Effect.gen(function* () {
 +    const files = yield* Archil.ReadWriteDisk(Files);
     return {
@@ -126,7 +112,7 @@ Read the key from the path and put the request body on the disk:
 +      ),
 ```
 
-## Wire the service into the Stack
+## Wire the program into the Stack
 
 ```diff lang="typescript"
 // alchemy.run.ts
@@ -154,12 +140,12 @@ curl -X PUT --data "hello archil" "$URL/notes/first.txt"
 curl "$URL/notes/first.txt"
 ```
 
-The second command prints `hello archil`. Leave the service alone for a
+The second command prints `hello archil`. Leave the program alone for a
 few minutes and the sandbox stops; the next request starts it again.
 
 ## Recap
 
-The service runs your Effect program in a sandbox and reads and writes
-the disk through its own S3 user. In [Part 3](/archil/tutorial/part-3)
+The sandbox runs your Effect program and reads and writes the disk
+through its own S3 user. In [Part 3](/archil/tutorial/part-3)
 you'll test it.
 

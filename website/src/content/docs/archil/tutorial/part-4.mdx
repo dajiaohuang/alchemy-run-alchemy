@@ -20,7 +20,7 @@ Without `--stage`, Alchemy deploys to `live_$USER` (for example
 alchemy deploy --stage staging
 ```
 
-Alchemy creates a new disk, sandbox and service for `staging`, with
+Alchemy creates a new disk and program sandbox for `staging`, with
 their own `archil.app` URL. Your own stage is untouched.
 
 ## What a stage owns
@@ -39,26 +39,29 @@ Stage names match `[a-z0-9][-_a-z0-9]*`.
 
 ## Size the sandbox per stage
 
-Read the stage from the `Stack` service and pick the sandbox size from it:
+The props can be an Effect. Read the stage from the `Stack` service and
+pick the sandbox size from it:
 
-```typescript
-// src/Storage.ts
-import * as Archil from "@alchemy.run/archil";
-import { Stack } from "alchemy/Stack";
-import * as Effect from "effect/Effect";
+```diff lang="typescript"
+// src/Api.ts
++import { Stack } from "alchemy/Stack";
 
-export const Files = Archil.Disk("Files", {});
-
-export const Box = Effect.gen(function* () {
-  const { stage } = yield* Stack;
-  return yield* Archil.Sandbox("Box", {
-    vcpuCount: stage === "prod" ? 2 : 1,
-    memSizeMiB: stage === "prod" ? 4096 : 2048,
-  });
-});
+export default class Api extends Archil.Sandbox<Api>()(
+  "Api",
+-  { main: import.meta.url, port: 3000 },
++  Effect.gen(function* () {
++    const { stage } = yield* Stack;
++    return {
++      main: import.meta.url,
++      port: 3000,
++      vcpuCount: stage === "prod" ? 2 : 1,
++      memSizeMiB: stage === "prod" ? 4096 : 2048,
++    };
++  }),
+  Effect.gen(function* () {
 ```
 
-`Archil.Service` takes the Effect as its `sandbox` as it is.
+Each stage has its own sandbox, so only `prod` gets the bigger one.
 
 ## Stages in tests
 

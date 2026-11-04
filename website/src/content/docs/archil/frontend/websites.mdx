@@ -6,8 +6,8 @@ sidebar:
   order: 1
 ---
 
-`Archil.Website` resources build your frontend and run it as an
-[`Archil.Service`](/archil/compute/services) in an
+`Archil.Website` resources build your frontend and run it as the
+[program](/archil/compute/programs) of its own
 [`Archil.Sandbox`](/archil/compute/sandboxes): a Node server on port
 3000 at a public `https://3000-…archil.app` URL. Your framework's own
 config file loads as it is; there is no adapter to set.
@@ -48,10 +48,10 @@ Use the resource named after your framework: it runs that framework's
 build and knows its output layout. Use `Vite` when the whole output is
 static assets, and `StaticSite` when any shell command produces the files.
 
-## Share a sandbox with an API
+## Call an API
 
-Pass one sandbox to the site and to an API service. Each listens on its
-own port and gets its own hostname:
+Run the API as a program in its own sandbox, and pass its URL to the
+site's build:
 
 ```typescript
 // alchemy.run.ts
@@ -60,16 +60,13 @@ import * as Alchemy from "alchemy";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
-import { Box } from "./src/shared.ts";
 
 export default Alchemy.Stack(
   "Notes",
   { providers: Archil.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
-    const sandbox = yield* Box;
     const api = yield* Api;
     const web = yield* Archil.Website.Vite("Web", {
-      sandbox,
       env: { VITE_API_URL: Output.map(api.url, (url) => url ?? "") },
     });
     return { url: web.url, apiUrl: api.url };
@@ -81,9 +78,20 @@ export default Alchemy.Stack(
 is the whole app: a React SPA and an Effect API that stores notes on an
 `Archil.Disk`.
 
+## Size the sandbox
+
+`sandbox` sets the site's sandbox: size, image, timeouts, disks and
+network policy.
+
+```typescript
+export const Website = Archil.Website.Astro("Website", {
+  sandbox: { vcpuCount: 2, memSizeMiB: 4096 },
+});
+```
+
 ## Set environment variables
 
-`env` reaches the build, `alchemy dev`, and the service's process. The
+`env` reaches the build, `alchemy dev`, and the program's process. The
 framework inlines what it already inlines (`VITE_*` for Vite); server
 code reads `process.env`.
 
@@ -97,9 +105,9 @@ export const Website = Archil.Website.Astro("Website", {
 
 `alchemy dev` runs the framework's own dev server instead of deploying,
 and `site.url` is its local address. Wrap the site in `Alchemy.remote()`
-to deploy the live service even during dev.
+to deploy the live sandbox even during dev.
 
 ## Where next
 
-- [Services](/archil/compute/services) — what each site runs as
+- [Programs](/archil/compute/programs) — what each site runs as
 - [Sandboxes](/archil/compute/sandboxes) — sizes, timeouts, and disks

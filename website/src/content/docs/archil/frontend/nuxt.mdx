@@ -1,6 +1,6 @@
 ---
 title: Nuxt
-description: "Deploy a Nuxt app to Archil with Archil.Website.Nuxt: an Archil service in a sandbox at a public https URL, and Nuxt's own dev server under alchemy dev."
+description: "Deploy a Nuxt app to Archil with Archil.Website.Nuxt: a program in its own Archil sandbox at a public https URL, and Nuxt's own dev server under alchemy dev."
 sidebar:
   order: 10
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.Nuxt` deploys a [Nuxt](https://nuxt.com) app to an Archil
-sandbox, through nitro's Node server; prerendered pages are served first. The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, through nitro's Node server; prerendered pages are served first. The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -60,15 +57,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.Nuxt("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.Nuxt("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -98,8 +92,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-nuxt](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-nuxt)
@@ -109,7 +103,7 @@ for the checked-in example.
 
 Process environment is the top-level `env` prop — plain strings, or
 `Redacted` values. They are copied onto `process.env` before build
-and `alchemy dev`, and onto the service at deploy:
+and `alchemy dev`, and onto the program at deploy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
@@ -141,7 +135,7 @@ export default defineEventHandler(() => {
 
 Routes marked for prerendering in `routeRules` (or via
 `nitro.prerender`) render at build time into `.output/public` and
-are baked into the service, served as static files before the nitro
+are uploaded with the program, served as static files before the nitro
 handler:
 
 ```typescript
@@ -169,11 +163,11 @@ bun alchemy dev
 `alchemy dev` runs Nuxt's own dev server (nitro dev, full HMR)
 instead of deploying; `site.url` is the local address and no
 Archil resources are created. Wrap the site in `Alchemy.remote()`
-to deploy the live sandbox and service even during dev.
+to deploy the live sandbox even during dev.
 
 ## Where next
 
 - [`Archil.Website.Nuxt` reference](/providers/archil/website#nuxt)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

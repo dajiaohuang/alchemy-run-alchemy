@@ -1,14 +1,14 @@
 ---
 title: Static sites
-description: "Deploy a static site to Archil with Archil.Website.StaticSite: run your build command and serve its output from an Archil service at a public https URL."
+description: "Deploy a static site to Archil with Archil.Website.StaticSite: run your build command and serve its output from its own Archil sandbox at a public https URL."
 sidebar:
   order: 4
 ---
 
 `Archil.Website.StaticSite` runs your build command and serves the output
 directory from a small static-file server (`GET` assets, `/health`,
-optional SPA or 404 page). It runs as an
-[`Archil.Service`](/archil/compute/services) in an
+optional SPA or 404 page). It runs as the
+[program](/archil/compute/programs) of its own
 [`Archil.Sandbox`](/archil/compute/sandboxes), at a public
 `https://3000-…archil.app` URL. Use it for Hugo, Zola, Eleventy, or any
 custom pipeline; for Vite projects, use
@@ -59,20 +59,18 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-Omit `sandbox` and Alchemy creates one for the site.
 
-## Share a sandbox
+## Size the sandbox
 
-Pass `sandbox` to run the site next to other services:
+`sandbox` sets the site's sandbox: size, image, timeouts and network
+policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.StaticSite("Website", {
   command: "hugo --minify",
   outdir: "public",
-+  sandbox: Box,
++  sandbox: { idleTtlSeconds: 0 },
 });
 ```
 
@@ -114,7 +112,7 @@ export const Docs = Archil.Website.StaticSite("Docs", {
 
 ## Set environment variables
 
-`env` reaches the build command and the service's process:
+`env` reaches the build command and the program's process:
 
 ```diff lang="typescript"
 // alchemy.run.ts
@@ -140,12 +138,12 @@ export const Website = Archil.Website.StaticSite("Website", {
 ```
 
 Without `dev`, the site builds and a local static server serves
-`outdir`. Wrap it in `Alchemy.remote()` to deploy the live service even
+`outdir`. Wrap it in `Alchemy.remote()` to deploy the live sandbox even
 during dev.
 
 ## Where next
 
 - [`Archil.Website.StaticSite` reference](/providers/archil/website#staticsite)
 - [Websites](/archil/frontend/websites) — the framework resources
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

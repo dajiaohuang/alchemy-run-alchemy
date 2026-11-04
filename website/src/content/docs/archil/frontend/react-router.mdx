@@ -1,6 +1,6 @@
 ---
 title: React Router
-description: "Deploy a React Router app to Archil with Archil.Website.ReactRouter: an Archil service in a sandbox at a public https URL, and React Router's own dev server under alchemy dev."
+description: "Deploy a React Router app to Archil with Archil.Website.ReactRouter: a program in its own Archil sandbox at a public https URL, and React Router's own dev server under alchemy dev."
 sidebar:
   order: 7
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.ReactRouter` deploys a [React Router](https://reactrouter.com) app to an Archil
-sandbox, in framework mode, built through your own `vite build`; the SSR server serves the client assets first. The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, in framework mode, built through your own `vite build`; the SSR server serves the client assets first. The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -87,15 +84,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.ReactRouter("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.ReactRouter("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -125,8 +119,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-react-router](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-react-router)
@@ -135,11 +129,11 @@ for the checked-in example.
 ## How the two build outputs are deployed
 
 `react-router build` writes two directories, and both land in the
-service:
+sandbox:
 
 ```
 build/
-├── client/    -> baked into the service, served first
+├── client/    -> uploaded with the program, served first
 └── server/    -> wrapped as a Node HTTP server on port 3000
 ```
 
@@ -147,11 +141,11 @@ build/
 in `public/`. `build/server/index.js` is a `ServerBuild` manifest, not a
 request handler, so Alchemy wraps it with `createRequestHandler` during
 the build and emits a Node serve entry — that process is the
-[`Archil.Service`](/hetzner/compute/services).
+sandbox's [program](/archil/compute/programs).
 
 If you set Vite's `base`, set React Router's `basename` to the same
 prefix: the client directory maps onto the site root one-for-one, so the
-paths the SSR document emits have to be the paths the service was given.
+paths the SSR document emits have to be the paths the program was given.
 
 ## Add environment variables
 
@@ -168,7 +162,7 @@ export const Website = Archil.Website.ReactRouter("Website", {
 ```
 
 The values are copied onto `process.env` before the build and the
-dev server, and onto the service at deploy time, so server
+dev server, and onto the program at deploy time, so server
 code reads the same keys in both modes. Client inlining is whatever
 Vite does (`VITE_` prefixes).
 
@@ -232,7 +226,7 @@ bun alchemy dev
 `alchemy dev` runs React Router's own Vite dev server (native HMR)
 instead of deploying; `site.url` is the local address and no Archil
 resources are created. Wrap the site in `Alchemy.remote()` to deploy
-the live sandbox and service even during dev:
+the live sandbox even during dev:
 
 ```typescript
 export const Website = Archil.Website.ReactRouter("Website").pipe(
@@ -252,5 +246,5 @@ rather than deploying something broken.
 
 - [`Archil.Website.ReactRouter` reference](/providers/archil/website#reactrouter)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

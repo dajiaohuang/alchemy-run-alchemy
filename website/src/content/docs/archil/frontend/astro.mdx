@@ -1,6 +1,6 @@
 ---
 title: Astro
-description: "Deploy an Astro app to Archil with Archil.Website.Astro: an Archil service in a sandbox at a public https URL, and Astro's own dev server under alchemy dev."
+description: "Deploy an Astro app to Archil with Archil.Website.Astro: a program in its own Archil sandbox at a public https URL, and Astro's own dev server under alchemy dev."
 sidebar:
   order: 11
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.Astro` deploys a [Astro](https://astro.build) app to an Archil
-sandbox, server-rendered on Node by default; pages that `export const prerender = true` are served as static files. The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, server-rendered on Node by default; pages that `export const prerender = true` are served as static files. The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -48,15 +45,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.Astro("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.Astro("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -86,8 +80,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-astro](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-astro)
@@ -97,7 +91,7 @@ for the checked-in example.
 
 Process environment is the top-level `env` prop — plain strings, or
 `Redacted` values. They are copied onto `process.env` before build
-and `alchemy dev`, and onto the service at deploy:
+and `alchemy dev`, and onto the program at deploy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
@@ -133,7 +127,7 @@ applied before the build, those keys behave the same as in a local
 
 With `astro: { output: "static" }` every page is prerendered at
 build time and the deploy is assets-only — no Astro handler, just a
-static-file server as the service:
+static-file server as the program:
 
 ```typescript
 export const Website = Archil.Website.Astro("Website", {
@@ -200,11 +194,11 @@ Two options are managed for you regardless of the config file:
 `alchemy dev` runs Astro's own dev server (native HMR) instead of
 deploying; `site.url` is the local address and no Archil resources
 are created. Wrap the site in `Alchemy.remote()` to deploy the real
-sandbox and service even during dev.
+sandbox even during dev.
 
 ## Where next
 
 - [`Archil.Website.Astro` reference](/providers/archil/website#astro)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

@@ -1,6 +1,6 @@
 ---
 title: Vite
-description: "Deploy a Vite SPA to Archil with Archil.Website.Vite: static assets served by an Archil service at a public https URL, and Vite's own dev server under alchemy dev."
+description: "Deploy a Vite SPA to Archil with Archil.Website.Vite: static assets served from its own Archil sandbox at a public https URL, and Vite's own dev server under alchemy dev."
 sidebar:
   order: 2
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.Vite` deploys a [Vite](https://vite.dev) app to an Archil
-sandbox, as static assets from `vite build`, served by a small static-file server. The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, as static assets from `vite build`, served by a small static-file server. The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -60,15 +57,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.Vite("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.Vite("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -98,8 +92,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-vite](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-vite)
@@ -108,7 +102,7 @@ for the checked-in example.
 ## Add environment variables
 
 `env` is process environment — set on `process.env` before
-`vite build` / `alchemy dev`, and on the service at deploy. It
+`vite build` / `alchemy dev`, and on the program at deploy. It
 is not Worker bindings:
 
 ```diff lang="typescript"
@@ -167,7 +161,7 @@ base path.
 ## Local development
 
 `alchemy dev` runs Vite's own dev server (native HMR) instead of
-deploying; `site.url` is the local address and no Server or Service
+deploying; `site.url` is the local address and no sandbox
 is created. Wrap the site in `Alchemy.remote()` to deploy the real
 infrastructure even during dev.
 
@@ -175,5 +169,5 @@ infrastructure even during dev.
 
 - [`Archil.Website.Vite` reference](/providers/archil/website#vite)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

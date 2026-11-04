@@ -1,6 +1,6 @@
 ---
 title: "Part 3: Testing"
-description: Deploy the stack in a test, call the service over HTTP, and check the file landed on the disk.
+description: Deploy the stack in a test, call the program over HTTP, and check the file landed on the disk.
 sidebar:
   order: 3
 ---
@@ -8,7 +8,7 @@ sidebar:
 import PackageManagers from "../../../../components/PackageManagers.astro";
 
 Write an integration test that deploys the stack from
-[Part 2](/archil/tutorial/part-2), calls the service, and checks the disk
+[Part 2](/archil/tutorial/part-2), calls the program, and checks the disk
 directly.
 
 ## Install the test harness
@@ -49,7 +49,7 @@ the stack's outputs. `afterAll` destroys it unless `NO_DESTROY` is set:
 +afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), { timeout: 180_000 });
 ```
 
-## Retry while the service starts
+## Retry while the program starts
 
 A fresh hostname, or a sandbox waking up, can take a few seconds to
 answer:

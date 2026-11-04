@@ -1368,7 +1368,7 @@ export default defineConfig({
               label: "Compute",
               items: [
                 { label: "Choosing a runtime", link: "/archil/compute/choosing-a-runtime" },
-                { label: "Services", link: "/archil/compute/services" },
+                { label: "Programs", link: "/archil/compute/programs" },
                 { label: "Sandboxes", link: "/archil/compute/sandboxes" },
               ],
             },

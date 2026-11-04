@@ -1,13 +1,44 @@
 ---
 title: Sandboxes
-description: Firecracker microVMs with disks mounted, created per task or declared as a dev box.
+description: Firecracker microVMs with disks mounted, declared as a dev box or created per task.
 ---
 
 A sandbox is a microVM with disks mounted and public ports. It pauses when idle and resumes on the next connection with its memory intact.
 
+## A long-lived dev box
+
+Declare a sandbox in your Stack to keep it across deploys. Each `mounts` entry names a disk and a `path`:
+
+```typescript
+export const Workspace = Archil.Disk("Workspace", {});
+
+export const DevBox = Archil.Sandbox("DevBox", {
+  baseImage: "node:24-bookworm",
+  mounts: [{ disk: Workspace, path: "/workspace" }],
+  ports: [3000],
+});
+```
+
+A mount change updates the same sandbox: it stops, then starts with the new mounts.
+
+## Mount modes
+
+An entry takes Archil's own options: `mode` (`exclusive`, `conditional`, or `read-only`), `subdirectory`, and `queueMs`:
+
+```typescript
+export const Box = Archil.Sandbox("Box", {
+  mounts: [
+    { disk: Workspace, path: "/workspace", mode: "conditional" },
+    { disk: Dataset, path: "/data", mode: "read-only", subdirectory: "exports" },
+  ],
+});
+```
+
+`exclusive` (the default) lets one client write the whole disk. `conditional` lets several write at once. Branches and the `shared` mode belong to the FUSE client, so they work in [mounts on your own hosts](/archil/storage/mounting), not in a sandbox.
+
 ## Create sandboxes at run time
 
-Bind an image, then create a sandbox per task:
+Bind an image, then create a sandbox per task. A mount's disk is a handle, such as one from `CreateDisk`:
 
 ```typescript
 export const Agent = Archil.Image("Agent", { image: "node:24-bookworm" });
@@ -15,19 +46,47 @@ export const Agent = Archil.Image("Agent", { image: "node:24-bookworm" });
 const sandboxes = yield* Archil.CreateSandbox(Agent);
 const sandbox = yield* sandboxes.create({
   name: "task-1",
-  mounts: [{ disk: home.diskId, path: "/home/user" }],
+  mounts: [{ disk: home, path: "/home/user" }],
   idleTtlSeconds: 300,
 });
 ```
 
-## Run commands and move files
+## Run commands
+
+`exec` runs a command to completion. A non-zero exit comes back in `exitCode`:
 
 ```typescript
-yield* sandbox.writeFile("/home/user/app/.env", "MODE=test");
 const result = yield* sandbox.exec("npm test", { cwd: "/home/user/app" });
+const upper = yield* sandbox.exec(["tr", "a-z", "A-Z"], { stdin: "hello" });
 ```
 
-`run` starts a command and streams its output; the process keeps running after you detach, and `attach` picks it up again.
+## Start a background process
+
+`start` returns a process whose output you can stream. Closing the scope detaches; the process keeps running, and `attach` picks it up again by id:
+
+```typescript
+const server = yield* sandbox.start("npm run dev", { cwd: "/home/user/app" });
+yield* server.output.pipe(Stream.take(10), Stream.runDrain);
+```
+
+## Open a terminal
+
+`pty.open` runs a shell on a pseudo-terminal:
+
+```typescript
+const pty = yield* sandbox.pty.open({ cols: 120, rows: 40 });
+yield* pty.write("ls -la\n");
+yield* pty.resize({ cols: 160, rows: 50 });
+```
+
+## Move files
+
+```typescript
+yield* sandbox.files.write("/home/user/app/.env", "MODE=test");
+const env = yield* sandbox.files.readText("/home/user/app/.env");
+```
+
+Archil's process API moves whole files. List, remove or create directories with `exec`.
 
 ## Pause, resume, fork
 
@@ -37,26 +96,25 @@ yield* sandbox.resume();
 const copy = yield* sandbox.fork({ name: "task-1-retry" });
 ```
 
-A fork copies the sandbox's memory and disk into a new one.
+A fork copies the sandbox's memory and disk into a new one. Archil only forks a sandbox with mounts while it is stopped. `stop()` and `boot()` stop and start it.
 
 ## Serve a port
 
 ```typescript
 const { hostname } = yield* sandbox.exposePort(3000);
+const response = yield* sandbox.fetch(3000, new Request("http://app/health"));
 const token = yield* sandbox.createPortToken(3000, "1h");
 ```
 
 Give a browser the port token instead of your key.
 
-## A long-lived dev box
+## Drive a declared sandbox
 
-Declare a sandbox in your Stack to keep it across deploys, and drive it with `ConnectSandbox`:
+`ConnectSandbox` returns the same handle for a sandbox in your Stack:
 
 ```typescript
-export const DevBox = Archil.Sandbox("DevBox", { baseImage: "node:24-bookworm", ports: [3000] });
-
 const devbox = yield* Archil.ConnectSandbox(DevBox);
-yield* devbox.exec("pnpm build");
+yield* devbox.exec("pnpm build", { cwd: "/workspace" });
 ```
 
 ## Private images
@@ -69,3 +127,7 @@ export const Agent = Archil.Image("Agent", {
 ```
 
 Archil uses the credentials for the build only.
+
+## Run your own program
+
+Give a sandbox a `main` and it runs your program at a public URL. See [Programs](/archil/compute/programs).

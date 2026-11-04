@@ -1,31 +1,31 @@
 ---
 title: Choosing a runtime
-description: Services, run-time sandboxes, serverless exec, and mounts on your own hosts, and when to use each.
+description: Program sandboxes, run-time sandboxes, serverless exec, and mounts on your own hosts, and when to use each.
 sidebar:
   order: 1
 ---
 
 Archil runs your code four ways:
 
-- **Services** run your own program in a sandbox, at a public URL. Use
-  them for APIs and websites.
+- **Program sandboxes** run your own program in its own sandbox, at a
+  public URL. Use them for APIs and websites.
 - **Sandboxes created at run time** run commands per task, such as an
   agent's tool calls, each in its own microVM.
 - **Serverless exec** runs one command against a disk and shuts down.
 - **Mounts** attach a disk to a host you already run: a Cloudflare
   Container or an ECS task.
 
-| | Service | Run-time sandbox | Serverless exec | Mount |
+| | Program sandbox | Run-time sandbox | Serverless exec | Mount |
 | --- | --- | --- | --- | --- |
-| Resource or binding | `Archil.Service` | `Archil.CreateSandbox` | `Archil.ExecDisk` | `Archil.MountDisk` |
+| Resource or binding | `Archil.Sandbox` with `main` | `Archil.CreateSandbox` | `Archil.ExecDisk` | `Archil.MountDisk` |
 | Runs | your bundled program | commands you send | one shell command | your host's program |
 | Lifetime | until destroyed; stops when idle, wakes on request | until you delete it | one call, up to 5 minutes | the request's scope |
 | Reached by | public `https://` URL | your code, over the process API | the call's result | the host's own filesystem |
 | Cost when idle | none while stopped | none while paused | none | your host's |
 
-## Services
+## Program sandboxes
 
-Declare a sandbox and a service in it. See [Services](/archil/compute/services).
+Give a sandbox a `main`. See [Programs](/archil/compute/programs).
 
 ```typescript
 // src/api.ts
@@ -33,11 +33,9 @@ import * as Archil from "@alchemy.run/archil";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-export const Box = Archil.Sandbox("Box", {});
-
-export default class Api extends Archil.Service<Api>()(
+export default class Api extends Archil.Sandbox<Api>()(
   "Api",
-  { sandbox: Box, main: import.meta.url },
+  { main: import.meta.url },
   Effect.gen(function* () {
     return { fetch: Effect.succeed(HttpServerResponse.text("hello")) };
   }),
@@ -71,6 +69,6 @@ Mount a disk inside your own container per request. See
 [Mounting](/archil/storage/mounting).
 
 ```typescript
-const dataset = yield* Archil.MountDisk(Dataset, { readOnly: true });
-const path = yield* dataset.mount({ mode: "read-only" });
+const dataset = yield* Archil.MountDisk(Dataset, { path: "/data", mode: "read-only" });
+const path = yield* dataset.mount();
 ```

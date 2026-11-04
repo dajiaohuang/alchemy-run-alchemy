@@ -1,6 +1,6 @@
 ---
 title: Octane
-description: "Deploy an Octane app to Archil with Archil.Website.Octane: an Archil service in a sandbox at a public https URL, and Octane's own dev server under alchemy dev."
+description: "Deploy an Octane app to Archil with Archil.Website.Octane: a program in its own Archil sandbox at a public https URL, and Octane's own dev server under alchemy dev."
 sidebar:
   order: 14
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.Octane` deploys a [Octane](https://octanejs.dev) app to an Archil
-sandbox, Octane's SSR server, with client assets served first. The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, Octane's SSR server, with client assets served first. The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -72,15 +69,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.Octane("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.Octane("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -110,8 +104,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-octane](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-octane)
@@ -121,7 +115,7 @@ for the checked-in example.
 
 Process environment is configured under `env` — plain strings, or
 `Redacted` values. They are copied onto `process.env` before the
-build and onto the service at deploy time:
+build and onto the program at deploy time:
 
 ```diff lang="typescript"
 // alchemy.run.ts
@@ -159,7 +153,7 @@ Octane's intended setup is asset-first with SSR on miss: exact files
 in `dist/client` are served by the Node process without invoking the
 Octane handler, and every miss streams from Octane SSR. That is the
 default — there is nothing to configure. `GET /health` answers for
-the service health check.
+the program's health check.
 
 ## Local dev
 
@@ -170,7 +164,7 @@ bun alchemy dev
 `alchemy dev` runs Octane's own Vite dev server — the plugin's
 in-process SSR middleware serves rendering, server routes, and RPC
 with full HMR. `site.url` is the local address and no Archil
-resources are created (`sandbox` and `service` are `undefined`). Wrap
+resources are created (`sandbox` is `undefined`). Wrap
 the site in `Alchemy.remote()` to deploy the real infrastructure even
 during dev.
 
@@ -178,5 +172,5 @@ during dev.
 
 - [`Archil.Website.Octane` reference](/providers/archil/website#octane)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

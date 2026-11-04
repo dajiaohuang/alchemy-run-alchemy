@@ -1,23 +1,34 @@
 ---
 title: Mounting
-description: Mount Archil disks in your own Containers and ECS tasks, per request.
+description: Mount Archil disks in program sandboxes, your own Containers, and ECS tasks.
 ---
 
-`Archil.MountDisk` mounts disks inside hosts you run: a Cloudflare Container or an ECS task on EC2. It installs the Archil client into the host's image, and the plan fails if the host can't provide FUSE.
+`Archil.MountDisk(disk, { path, mode })` returns a mount reference: the fields of a sandbox `mounts` entry, plus `mount()`. Where it mounts depends on the host it's bound to.
 
-## Mount a shared disk
+## In a program sandbox
+
+An [`Archil.Sandbox` with `main`](/archil/compute/programs) mounts the disk itself. The binding adds it to the sandbox's mounts, and the disk is there when the program starts:
+
+```typescript
+const dataset = yield* Archil.MountDisk(Dataset, { path: "/data", mode: "read-only" });
+const names = yield* fs.readDirectory(dataset.path);
+```
+
+## On your own hosts
+
+On a Cloudflare Container or an ECS task on EC2, the binding installs the Archil client into the host's image, and the plan fails if the host can't provide FUSE. `mount()` runs the client:
 
 ```typescript
 export default class Indexer extends Cloudflare.Container<Indexer>()(
   "Indexer",
   { main: import.meta.url },
   Effect.gen(function* () {
-    const dataset = yield* Archil.MountDisk(Dataset);
+    const dataset = yield* Archil.MountDisk(Dataset, { path: "/data", mode: "read-only" });
     const fs = yield* FileSystem.FileSystem;
     return {
       fetch: Effect.scoped(
         Effect.gen(function* () {
-          const path = yield* dataset.mount({ mode: "read-only" });
+          const path = yield* dataset.mount();
           const entries = yield* fs.readDirectory(path);
           return yield* HttpServerResponse.json(entries);
         }),
@@ -29,7 +40,7 @@ export default class Indexer extends Cloudflare.Container<Indexer>()(
 
 The mount lasts as long as its scope. Closing the scope flushes writes and unmounts.
 
-The host gets a disk token for `Dataset` only, so it can't mount any other disk and never holds an API key.
+The host gets a disk token for `Dataset` only, so it can't mount any other disk and never holds an API key. With `mode: "read-only"` the token is read-only too.
 
 ## Start the Container with internet access
 
@@ -73,10 +84,20 @@ The Worker makes the token with `home.createToken(name)` and revokes it with `ho
 `mode` picks how this mount shares the disk:
 
 ```typescript
-yield* dataset.mount({ mode: "shared" });
+const dataset = yield* Archil.MountDisk(Dataset, { path: "/data", mode: "shared" });
 ```
 
-`exclusive` (the default) owns writes; `shared` lets many clients mount and write only paths they check out; `conditional` lets many clients write anywhere; `read-only` never writes. Mount a branch with `branch: "session-42"`.
+`exclusive` (the default) owns writes; `shared` lets many clients mount and write only paths they check out; `conditional` lets many clients write anywhere; `read-only` never writes. Mount a branch with `branch: "session-42"`. `shared`, `branch`, and `force` are FUSE-client options: a sandbox mounts with `exclusive`, `conditional`, or `read-only`, and takes `queueMs`.
+
+## Pass a mount to a sandbox
+
+A mount reference has the same fields as a sandbox `mounts` entry, so it goes straight into a sandbox created at run time:
+
+```typescript
+const workspace = yield* Archil.MountDisk(Workspace, { path: "/workspace", mode: "conditional" });
+const sandboxes = yield* Archil.CreateSandbox();
+const sandbox = yield* sandboxes.create({ name: `task-${id}`, mounts: [workspace] });
+```
 
 ## ECS tasks
 
@@ -87,12 +108,12 @@ export default class Reader extends AWS.ECS.Task<Reader>()(
   "Reader",
   { main: import.meta.url, port: 3000, requiresCompatibilities: ["EC2"], networkMode: "bridge" },
   Effect.gen(function* () {
-    const dataset = yield* Archil.MountDisk(Dataset);
+    const dataset = yield* Archil.MountDisk(Dataset, { path: "/data", mode: "read-only" });
     const fs = yield* FileSystem.FileSystem;
     return {
       fetch: Effect.scoped(
         Effect.gen(function* () {
-          const path = yield* dataset.mount({ mode: "read-only" });
+          const path = yield* dataset.mount();
           const entries = yield* fs.readDirectory(path);
           return yield* HttpServerResponse.json(entries);
         }),

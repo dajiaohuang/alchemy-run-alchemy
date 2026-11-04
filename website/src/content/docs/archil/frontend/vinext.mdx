@@ -1,6 +1,6 @@
 ---
 title: Vinext
-description: "Deploy a vinext app to Archil with Archil.Website.Vinext: an Archil service in a sandbox at a public https URL, and vinext's own dev server under alchemy dev."
+description: "Deploy a vinext app to Archil with Archil.Website.Vinext: a program in its own Archil sandbox at a public https URL, and vinext's own dev server under alchemy dev."
 sidebar:
   order: 9.6
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.Vinext` deploys a [vinext](https://vinext.dev) app to an Archil
-sandbox, as a long-running Node process (`vinext build`, then `startProdServer`). The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, as a long-running Node process (`vinext build`, then `startProdServer`). The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -53,15 +50,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.Vinext("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.Vinext("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -91,8 +85,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-vinext](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-vinext)
@@ -144,5 +138,5 @@ Apply `.pipe(Alchemy.remote())` to the Website for a live deployment during dev.
 
 - [`Archil.Website.Vinext` reference](/providers/archil/website#vinext)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

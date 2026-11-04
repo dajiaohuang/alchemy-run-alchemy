@@ -693,45 +693,45 @@ Turso SQLite databases as Stack resources: groups, databases, migrations, connec
 
 Archil disks that mount in about 100 ms, services and websites in Firecracker sandboxes, serverless exec, branches, and mounts in your own Containers and ECS tasks.
 
-- [Archil](https://alchemy.run/archil) — Durable disks that mount in about 100 ms, services and websites in Firecracker sandboxes, serverless exec, and branches.
+- [Archil](https://alchemy.run/archil) — Durable disks that mount in about 100 ms, programs and websites in Firecracker sandboxes, serverless exec, and branches.
 - [Setup](https://alchemy.run/archil/setup) — Give Alchemy an Archil API key.
 
 ## Archil — Tutorial
 
 - [Part 1: Your First Stack](https://alchemy.run/archil/tutorial/part-1) — Install Alchemy, create a Stack with an Archil disk, and deploy it.
-- [Part 2: Add a Service](https://alchemy.run/archil/tutorial/part-2) — Run an Effect HTTP service in an Archil sandbox that stores files on the disk.
-- [Part 3: Testing](https://alchemy.run/archil/tutorial/part-3) — Deploy the stack in a test, call the service over HTTP, and check the file landed on the disk.
+- [Part 2: Run a Program](https://alchemy.run/archil/tutorial/part-2) — Run an Effect HTTP program in its own Archil sandbox that stores files on the disk.
+- [Part 3: Testing](https://alchemy.run/archil/tutorial/part-3) — Deploy the stack in a test, call the program over HTTP, and check the file landed on the disk.
 - [Part 4: Stages](https://alchemy.run/archil/tutorial/part-4) — Deploy isolated copies of the stack with --stage, each with its own disk, sandbox and URL.
 - [Part 5: CI/CD](https://alchemy.run/archil/tutorial/part-5) — Deploy from GitHub Actions with a remote state store, a stage per pull request, and your Archil key as a repository secret.
 
 ## Archil — Compute
 
-- [Choosing a runtime](https://alchemy.run/archil/compute/choosing-a-runtime) — Services, run-time sandboxes, serverless exec, and mounts on your own hosts, and when to use each.
-- [Services](https://alchemy.run/archil/compute/services) — Run your program as a service in an Archil sandbox, in the Effect or async form, at a public https URL.
-- [Sandboxes](https://alchemy.run/archil/compute/sandboxes) — Firecracker microVMs with disks mounted, created per task or declared as a dev box.
+- [Choosing a runtime](https://alchemy.run/archil/compute/choosing-a-runtime) — Program sandboxes, run-time sandboxes, serverless exec, and mounts on your own hosts, and when to use each.
+- [Programs](https://alchemy.run/archil/compute/programs) — Run your program in its own Archil sandbox, in the Effect or async form, at a public https URL.
+- [Sandboxes](https://alchemy.run/archil/compute/sandboxes) — Firecracker microVMs with disks mounted, declared as a dev box or created per task.
 
 ## Archil — Frontend
 
 - [Websites](https://alchemy.run/archil/frontend/websites) — Deploy Vite, Astro, Next.js, vinext, Nuxt, React Router, SolidStart, SvelteKit, TanStack Start, Waku, Octane, Foldkit, Vocs, or any static build to an Archil sandbox.
-- [Vite](https://alchemy.run/archil/frontend/vite) — Deploy a Vite SPA to Archil with Archil.Website.Vite: static assets served by an Archil service at a public https URL, and Vite's own dev server under alchemy dev.
-- [Static sites](https://alchemy.run/archil/frontend/static-site) — Deploy a static site to Archil with Archil.Website.StaticSite: run your build command and serve its output from an Archil service at a public https URL.
-- [React Router](https://alchemy.run/archil/frontend/react-router) — Deploy a React Router app to Archil with Archil.Website.ReactRouter: an Archil service in a sandbox at a public https URL, and React Router's own dev server under alchemy dev.
-- [Foldkit](https://alchemy.run/archil/frontend/foldkit) — Deploy a Foldkit app to Archil with Archil.Website.Foldkit: an Archil service in a sandbox at a public https URL, and Foldkit's own dev server under alchemy dev.
-- [TanStack Start](https://alchemy.run/archil/frontend/tanstack-start) — Deploy a TanStack Start app to Archil with Archil.Website.TanStackStart: an Archil service in a sandbox at a public https URL, and TanStack Start's own dev server under alchemy dev.
-- [Next.js](https://alchemy.run/archil/frontend/nextjs) — Deploy a Next.js app to Archil with Archil.Website.Nextjs: an Archil service in a sandbox at a public https URL, and Next.js's own dev server under alchemy dev.
-- [Vinext](https://alchemy.run/archil/frontend/vinext) — Deploy a vinext app to Archil with Archil.Website.Vinext: an Archil service in a sandbox at a public https URL, and vinext's own dev server under alchemy dev.
-- [Nuxt](https://alchemy.run/archil/frontend/nuxt) — Deploy a Nuxt app to Archil with Archil.Website.Nuxt: an Archil service in a sandbox at a public https URL, and Nuxt's own dev server under alchemy dev.
-- [Vocs](https://alchemy.run/archil/frontend/vocs) — Deploy a Vocs app to Archil with Archil.Website.Vocs: an Archil service in a sandbox at a public https URL, and Vocs's own dev server under alchemy dev.
-- [SolidStart](https://alchemy.run/archil/frontend/solidstart) — Deploy a SolidStart app to Archil with Archil.Website.SolidStart: an Archil service in a sandbox at a public https URL, and SolidStart's own dev server under alchemy dev.
-- [Astro](https://alchemy.run/archil/frontend/astro) — Deploy an Astro app to Archil with Archil.Website.Astro: an Archil service in a sandbox at a public https URL, and Astro's own dev server under alchemy dev.
-- [SvelteKit](https://alchemy.run/archil/frontend/sveltekit) — Deploy a SvelteKit app to Archil with Archil.Website.SvelteKit: an Archil service in a sandbox at a public https URL, and SvelteKit's own dev server under alchemy dev.
-- [Waku](https://alchemy.run/archil/frontend/waku) — Deploy a Waku app to Archil with Archil.Website.Waku: an Archil service in a sandbox at a public https URL, and Waku's own dev server under alchemy dev.
-- [Octane](https://alchemy.run/archil/frontend/octane) — Deploy an Octane app to Archil with Archil.Website.Octane: an Archil service in a sandbox at a public https URL, and Octane's own dev server under alchemy dev.
+- [Vite](https://alchemy.run/archil/frontend/vite) — Deploy a Vite SPA to Archil with Archil.Website.Vite: static assets served from its own Archil sandbox at a public https URL, and Vite's own dev server under alchemy dev.
+- [Static sites](https://alchemy.run/archil/frontend/static-site) — Deploy a static site to Archil with Archil.Website.StaticSite: run your build command and serve its output from its own Archil sandbox at a public https URL.
+- [React Router](https://alchemy.run/archil/frontend/react-router) — Deploy a React Router app to Archil with Archil.Website.ReactRouter: a program in its own Archil sandbox at a public https URL, and React Router's own dev server under alchemy dev.
+- [Foldkit](https://alchemy.run/archil/frontend/foldkit) — Deploy a Foldkit app to Archil with Archil.Website.Foldkit: a program in its own Archil sandbox at a public https URL, and Foldkit's own dev server under alchemy dev.
+- [TanStack Start](https://alchemy.run/archil/frontend/tanstack-start) — Deploy a TanStack Start app to Archil with Archil.Website.TanStackStart: a program in its own Archil sandbox at a public https URL, and TanStack Start's own dev server under alchemy dev.
+- [Next.js](https://alchemy.run/archil/frontend/nextjs) — Deploy a Next.js app to Archil with Archil.Website.Nextjs: a program in its own Archil sandbox at a public https URL, and Next.js's own dev server under alchemy dev.
+- [Vinext](https://alchemy.run/archil/frontend/vinext) — Deploy a vinext app to Archil with Archil.Website.Vinext: a program in its own Archil sandbox at a public https URL, and vinext's own dev server under alchemy dev.
+- [Nuxt](https://alchemy.run/archil/frontend/nuxt) — Deploy a Nuxt app to Archil with Archil.Website.Nuxt: a program in its own Archil sandbox at a public https URL, and Nuxt's own dev server under alchemy dev.
+- [Vocs](https://alchemy.run/archil/frontend/vocs) — Deploy a Vocs app to Archil with Archil.Website.Vocs: a program in its own Archil sandbox at a public https URL, and Vocs's own dev server under alchemy dev.
+- [SolidStart](https://alchemy.run/archil/frontend/solidstart) — Deploy a SolidStart app to Archil with Archil.Website.SolidStart: a program in its own Archil sandbox at a public https URL, and SolidStart's own dev server under alchemy dev.
+- [Astro](https://alchemy.run/archil/frontend/astro) — Deploy an Astro app to Archil with Archil.Website.Astro: a program in its own Archil sandbox at a public https URL, and Astro's own dev server under alchemy dev.
+- [SvelteKit](https://alchemy.run/archil/frontend/sveltekit) — Deploy a SvelteKit app to Archil with Archil.Website.SvelteKit: a program in its own Archil sandbox at a public https URL, and SvelteKit's own dev server under alchemy dev.
+- [Waku](https://alchemy.run/archil/frontend/waku) — Deploy a Waku app to Archil with Archil.Website.Waku: a program in its own Archil sandbox at a public https URL, and Waku's own dev server under alchemy dev.
+- [Octane](https://alchemy.run/archil/frontend/octane) — Deploy an Octane app to Archil with Archil.Website.Octane: a program in its own Archil sandbox at a public https URL, and Octane's own dev server under alchemy dev.
 
 ## Archil — Storage
 
 - [Disks](https://alchemy.run/archil/storage/disks) — Create disks per user at run time, share a few at deploy time, and keep files on your own bucket.
-- [Mounting](https://alchemy.run/archil/storage/mounting) — Mount Archil disks in your own Containers and ECS tasks, per request.
+- [Mounting](https://alchemy.run/archil/storage/mounting) — Mount Archil disks in program sandboxes, your own Containers, and ECS tasks.
 
 ## Archil — Security
 

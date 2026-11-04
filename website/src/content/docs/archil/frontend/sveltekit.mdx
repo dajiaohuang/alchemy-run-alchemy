@@ -1,6 +1,6 @@
 ---
 title: SvelteKit
-description: "Deploy a SvelteKit app to Archil with Archil.Website.SvelteKit: an Archil service in a sandbox at a public https URL, and SvelteKit's own dev server under alchemy dev."
+description: "Deploy a SvelteKit app to Archil with Archil.Website.SvelteKit: a program in its own Archil sandbox at a public https URL, and SvelteKit's own dev server under alchemy dev."
 sidebar:
   order: 12
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.SvelteKit` deploys a [SvelteKit](https://svelte.dev/docs/kit) app to an Archil
-sandbox, with the Node adapter injected; prerendered pages are served first. The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, with the Node adapter injected; prerendered pages are served first. The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -51,15 +48,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.SvelteKit("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.SvelteKit("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -89,8 +83,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-sveltekit](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-sveltekit)
@@ -111,7 +105,7 @@ export const Website = Archil.Website.SvelteKit("Website", {
 ```
 
 The values are copied onto `process.env` before the build (and the
-dev server) and onto the service at deploy time, so server code
+dev server) and onto the program at deploy time, so server code
 reads the same keys in both modes.
 
 ## Read the environment in server code
@@ -172,7 +166,7 @@ bun alchemy dev
 
 `alchemy dev` runs SvelteKit's own Vite dev server — Node SSR with
 full HMR — instead of deploying; `site.url` is the local address and
-no Archil resources are created (`sandbox` and `service` are
+no Archil resources are created (`sandbox` is
 `undefined`). Wrap the site in `Alchemy.remote()` to deploy the live
 Server even during dev.
 
@@ -180,5 +174,5 @@ Server even during dev.
 
 - [`Archil.Website.SvelteKit` reference](/providers/archil/website#sveltekit)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on

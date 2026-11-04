@@ -1,6 +1,6 @@
 ---
 title: Waku
-description: "Deploy a Waku app to Archil with Archil.Website.Waku: an Archil service in a sandbox at a public https URL, and Waku's own dev server under alchemy dev."
+description: "Deploy a Waku app to Archil with Archil.Website.Waku: a program in its own Archil sandbox at a public https URL, and Waku's own dev server under alchemy dev."
 sidebar:
   order: 13
 ---
@@ -9,13 +9,10 @@ import PackageManagers from "../../../../components/PackageManagers.astro";
 export const devDeps = "@alchemy.run/frontend-frameworks";
 
 `Archil.Website.Waku` deploys a [Waku](https://waku.gg) app to an Archil
-sandbox, (React Server Components) on Node, with SSG pages served extensionless. The site runs as an
-[`Archil.Service`](/archil/compute/services) on port 3000, at a public
+sandbox, (React Server Components) on Node, with SSG pages served extensionless. The site is the
+[program](/archil/compute/programs) of its own sandbox, on port 3000, at a public
 `https://3000-…archil.app` URL. A stopped sandbox starts again on the next
 request.
-
-Omit `sandbox` and Alchemy creates an
-[`Archil.Sandbox`](/archil/compute/sandboxes) for the site.
 
 
 ## Install
@@ -68,15 +65,12 @@ import * as Archil from "@alchemy.run/archil";
 export const Website = Archil.Website.Waku("Website");
 ```
 
-Pass `sandbox` to run the site in a sandbox you already declared. Several
-sites and APIs can share one sandbox, each on its own port:
+`sandbox` sizes the site's sandbox and sets its image, timeouts, disks and network policy:
 
 ```diff lang="typescript"
 // alchemy.run.ts
-+export const Box = Archil.Sandbox("Box", {});
-+
 export const Website = Archil.Website.Waku("Website", {
-+  sandbox: Box,
++  sandbox: { vcpuCount: 2, memSizeMiB: 4096, idleTtlSeconds: 600 },
 });
 ```
 
@@ -106,8 +100,8 @@ export default Alchemy.Stack(
 ```
 
 Run `alchemy deploy`. `url` is the site's `https://3000-…archil.app` URL.
-`site.sandbox` and `site.service` are the resources behind it, and
-`undefined` under `alchemy dev`.
+`site.sandbox` is the sandbox behind it, and `undefined` under
+`alchemy dev`.
 
 See
 [examples/archil-website-waku](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-website-waku)
@@ -129,7 +123,7 @@ export const Website = Archil.Website.Waku("Website", {
 ```
 
 The values are copied onto `process.env` before the build and the
-dev server, and onto the service at deploy time, so server
+dev server, and onto the program at deploy time, so server
 code reads the same keys in both modes. Client inlining is whatever
 Vite does (`VITE_` prefixes).
 
@@ -156,7 +150,7 @@ bun alchemy dev
 
 `alchemy dev` runs Waku's own dev server (native HMR) instead of
 deploying; `site.url` is the local address and no Archil resources
-are created. Wrap the site in `Alchemy.remote()` to deploy the live sandbox and service even during dev:
+are created. Wrap the site in `Alchemy.remote()` to deploy the live sandbox even during dev:
 
 ```typescript
 export const Website = Archil.Website.Waku("Website").pipe(
@@ -168,5 +162,5 @@ export const Website = Archil.Website.Waku("Website").pipe(
 
 - [`Archil.Website.Waku` reference](/providers/archil/website#waku)
 - [Websites](/archil/frontend/websites) — every framework Archil hosts
-- [Services](/archil/compute/services) and
+- [Programs](/archil/compute/programs) and
   [Sandboxes](/archil/compute/sandboxes) — what the site runs on
