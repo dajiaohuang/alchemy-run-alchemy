@@ -1,47 +1,125 @@
 ---
-title: "Part 3: Run Commands in a Sandbox"
-description: Boot a sandbox with the user's disk mounted and run a command in it.
+title: "Part 3: Testing"
+description: Deploy the stack in a test, call the service over HTTP, and check the file landed on the disk.
 sidebar:
   order: 3
 ---
 
-Some work needs a real machine. Boot a sandbox with the user's disk mounted, run a command, and delete the sandbox.
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-## Declare the image
+Write an integration test that deploys the stack from
+[Part 2](/archil/tutorial/part-2), calls the service, and checks the disk
+directly.
 
-```diff lang="typescript"
-export const Template = Archil.Disk("Template", {});
-+
-+export const Agent = Archil.Image("Agent", { image: "node:24-bookworm" });
+## Install the test harness
+
+<PackageManagers dev="@alchemy.run/test" />
+
+## Create the test file
+
+`Test.make` takes the same providers and state as your Stack:
+
+```typescript
+// test/integ.test.ts
+import { expect } from "bun:test";
+import * as Archil from "@alchemy.run/archil";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Schedule from "effect/Schedule";
+import Stack from "../alchemy.run.ts";
+
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Archil.providers(),
+  state: Alchemy.localState(),
+  profile: process.env.ALCHEMY_PROFILE,
+});
 ```
 
-## Bind a sandbox client
+## Deploy before the tests
+
+`beforeAll(deploy(Stack))` deploys once for the whole file and hands back
+the stack's outputs. `afterAll` destroys it unless `NO_DESTROY` is set:
 
 ```diff lang="typescript"
-const templates = yield* Archil.BranchDisk(Template);
-+const sandboxes = yield* Archil.CreateSandbox(Agent);
+// test/integ.test.ts
++const stack = beforeAll(deploy(Stack), { timeout: 300_000 });
++afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), { timeout: 180_000 });
 ```
 
-Sandboxes this client creates boot the `Agent` image unless a call picks another.
+## Retry while the service starts
 
-## Run a command with the disk mounted
+A fresh hostname, or a sandbox waking up, can take a few seconds to
+answer:
 
 ```diff lang="typescript"
-+if (action === "run") {
-+  const sandbox = yield* sandboxes.create({
-+    name: `run-${user}`,
-+    mounts: [{ disk: home.diskId, path: "/home/user" }],
-+    idleTtlSeconds: 120,
+// test/integ.test.ts
++const send = (request: HttpClientRequest.HttpClientRequest) =>
++  Effect.gen(function* () {
++    const client = yield* HttpClient.HttpClient;
++    return yield* client.execute(request).pipe(
++      Effect.flatMap((res) =>
++        res.status >= 500 ? Effect.fail(new Error(`HTTP ${res.status}`)) : Effect.succeed(res),
++      ),
++      Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 20 }),
++    );
 +  });
-+  const result = yield* sandbox.exec("wc -l /home/user/notes.md");
-+  yield* sandbox.delete();
-+  return HttpServerResponse.text(result.stdout);
-+}
 ```
 
-The sandbox sees the notes written in part 1, because the disk is the same. Add `Archil.CreateSandboxHttp` to the Worker's layer.
+## Test the routes
 
-## Where next
+```diff lang="typescript"
+// test/integ.test.ts
++test(
++  "GET of a missing file is a 404",
++  Effect.gen(function* () {
++    const { url } = yield* stack;
++    const res = yield* send(HttpClientRequest.get(`${url}/missing.txt`));
++    expect(res.status).toBe(404);
++  }),
++  { timeout: 180_000 },
++);
+```
 
-- [Network & credentials](/archil/network): lock down what the sandbox can reach.
-- [Mounting](/archil/mounting): mount disks in your own Containers.
+## Check the disk directly
+
+`test.provider` runs with your Archil credentials, so the test can read
+the disk out of band and confirm the file is really there:
+
+```diff lang="typescript"
+// test/integ.test.ts
++import * as Objects from "@distilled.cloud/archil/Objects";
+
++test.provider(
++  "PUT writes a file to the disk and GET reads it back",
++  () =>
++    Effect.gen(function* () {
++      const { url, diskId } = yield* stack;
++      const key = `notes/${crypto.randomUUID()}.txt`;
++      yield* send(
++        HttpClientRequest.put(`${url}/${key}`).pipe(HttpClientRequest.bodyText("on the disk")),
++      );
++      const text = yield* Objects.getObjectText({ disk: String(diskId) }, key).pipe(
++        Effect.provide(Objects.ObjectCredentialsFromApiKey),
++      );
++      expect(text).toBe("on the disk");
++    }),
++  { timeout: 180_000 },
++);
+```
+
+## Run the tests
+
+```sh
+ALCHEMY_PROFILE=default bun test
+```
+
+Set `NO_DESTROY=1` to keep the stack between runs while you iterate.
+
+## Recap
+
+The test deploys the real stack, calls it over HTTP, and checks Archil
+directly. In [Part 4](/archil/tutorial/part-4) you'll deploy separate
+copies with stages.

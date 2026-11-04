@@ -347,6 +347,9 @@
       "path": "./examples/archil-website-vite/tsconfig.json"
     },
     {
+      "path": "./examples/archil-service/tsconfig.json"
+    },
+    {
       "path": "./examples/archil-website-astro/tsconfig.json"
     },
     {

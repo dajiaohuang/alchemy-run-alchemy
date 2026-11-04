@@ -36,4 +36,6 @@ ARCHIL_API_KEY=... ARCHIL_REGION=aws-us-east-1 alchemy deploy
 
 ## Keys your app gets
 
-Archil keys can't be scoped, so your own key never ships to a Worker. Each host that uses Archil bindings gets its own key, created at deploy and revoked when the stack is destroyed. Hosts that only mount disks get a per-disk token instead, which Archil checks itself.
+Hosts that only touch one disk never get your API key. `ReadDisk`, `WriteDisk` and `ReadWriteDisk` give each host its own S3 user on that disk (read-only for `ReadDisk`), and `MountDisk(disk)` gives it a disk token. Archil checks both itself, and destroying the stack revokes them.
+
+Bindings that call Archil's control plane (`ExecDisk`, `CreateDisk`, `CreateSandbox`, `ConnectSandbox`) run with the key you deploy with: Archil only creates API keys from the console and can't scope them. Rotate it there and redeploy.

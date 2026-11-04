@@ -515,23 +515,30 @@ const SECTIONS: Section[] = [
     },
   },
   {
-    heading: "Archil",
+    heading: "Archil — start here",
     intro:
-      "Archil disks that mount in about 100 ms: disks per user at run time, serverless exec, branches and checkpoints, sandboxes with credential-injecting egress, and mounts in your own Containers and ECS tasks.",
-    pages: {
-      slugs: [
-        "archil/index",
-        "archil/setup",
-        "archil/concepts",
-        "archil/tutorial/part-1",
-        "archil/tutorial/part-2",
-        "archil/tutorial/part-3",
-        "archil/disks",
-        "archil/mounting",
-        "archil/sandboxes",
-        "archil/network",
-      ],
-    },
+      "Archil disks that mount in about 100 ms, services and websites in Firecracker sandboxes, serverless exec, branches, and mounts in your own Containers and ECS tasks.",
+    pages: { slugs: ["archil/index", "archil/setup"] },
+  },
+  {
+    heading: "Archil — Tutorial",
+    pages: { directory: "archil/tutorial" },
+  },
+  {
+    heading: "Archil — Compute",
+    pages: { directory: "archil/compute" },
+  },
+  {
+    heading: "Archil — Frontend",
+    pages: { directory: "archil/frontend" },
+  },
+  {
+    heading: "Archil — Storage",
+    pages: { directory: "archil/storage" },
+  },
+  {
+    heading: "Archil — Security",
+    pages: { directory: "archil/security" },
   },
   {
     heading: "Better Auth",

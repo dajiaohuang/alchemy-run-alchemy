@@ -96,6 +96,7 @@ const GROUP_ICONS: Record<string, string | undefined> = {
   Frontend: l("layout-template"),
   APIs: l("braces"),
   Data: l("database"),
+  Storage: l("hard-drive"),
   Databases: l("database"),
   Access: l("key-round"),
   Messaging: l("send"),

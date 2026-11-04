@@ -1360,23 +1360,50 @@ export default defineConfig({
           items: [
             { label: "Overview", link: "/archil" },
             { label: "Setup", link: "/archil/setup" },
-            { label: "Concepts", link: "/archil/concepts" },
             {
               label: "Tutorial",
               items: [{ autogenerate: { directory: "archil/tutorial" } }],
             },
             {
-              label: "Storage",
+              label: "Compute",
               items: [
-                { label: "Disks", link: "/archil/disks" },
-                { label: "Mounting", link: "/archil/mounting" },
+                { label: "Choosing a runtime", link: "/archil/compute/choosing-a-runtime" },
+                { label: "Services", link: "/archil/compute/services" },
+                { label: "Sandboxes", link: "/archil/compute/sandboxes" },
               ],
             },
             {
-              label: "Compute",
+              label: "Frontend",
+              items: sortFrontendItems([
+                { label: "Overview", link: "/archil/frontend/websites" },
+                { label: "Astro", link: "/archil/frontend/astro" },
+                { label: "Foldkit", link: "/archil/frontend/foldkit" },
+                { label: "Next.js", link: "/archil/frontend/nextjs" },
+                { label: "Nuxt", link: "/archil/frontend/nuxt" },
+                { label: "Octane", link: "/archil/frontend/octane" },
+                { label: "React Router", link: "/archil/frontend/react-router" },
+                { label: "SolidStart", link: "/archil/frontend/solidstart" },
+                { label: "Static sites", link: "/archil/frontend/static-site" },
+                { label: "SvelteKit", link: "/archil/frontend/sveltekit" },
+                { label: "TanStack Start", link: "/archil/frontend/tanstack-start" },
+                { label: "vinext", link: "/archil/frontend/vinext" },
+                { label: "Vite", link: "/archil/frontend/vite" },
+                { label: "Vocs", link: "/archil/frontend/vocs" },
+                { label: "Waku", link: "/archil/frontend/waku" },
+              ]),
+            },
+            {
+              label: "Storage",
               items: [
-                { label: "Sandboxes", link: "/archil/sandboxes" },
-                { label: "Network & credentials", link: "/archil/network" },
+                { label: "Disks", link: "/archil/storage/disks" },
+                { label: "Mounting", link: "/archil/storage/mounting" },
+              ],
+            },
+            {
+              label: "Security",
+              items: [
+                { label: "Credentials and bindings", link: "/archil/security/credentials" },
+                { label: "Network", link: "/archil/security/network" },
               ],
             },
             providerResourcesEntry("Archil"),

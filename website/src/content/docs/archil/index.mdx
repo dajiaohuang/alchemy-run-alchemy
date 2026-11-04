@@ -1,73 +1,77 @@
 ---
 title: Archil
-description: Durable disks that mount in about 100 ms, serverless exec, branches, and Firecracker sandboxes.
+description: Durable disks that mount in about 100 ms, services and websites in Firecracker sandboxes, serverless exec, and branches.
 ---
 
-Archil gives you disks that mount anywhere in about 100 ms. Hot data sits on SSD and the rest in object storage, either Archil's or your own bucket. Because a disk is that cheap to attach, it can belong to one user, one session, or one request.
-
-New here? [Set up credentials](/archil/setup) first, then [build the tutorial](/archil/tutorial/part-1).
-
-## A disk per user
-
-Most apps create disks at run time, by name. `Archil.CreateDisk` gives a Worker a client that does it:
+Archil gives you disks that mount anywhere in about 100 ms, and sandboxes
+to run code next to them. Hot data sits on SSD and the rest in object
+storage, either Archil's or your own bucket.
 
 ```typescript
-const disks = yield* Archil.CreateDisk();
-const home = yield* disks.create(`user-${user}`);
+// src/Api.ts
+import * as Archil from "@alchemy.run/archil";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export const Files = Archil.Disk("Files", {});
+export const Box = Archil.Sandbox("Box", {});
+
+export default class Api extends Archil.Service<Api>()(
+  "Api",
+  { sandbox: Box, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    const files = yield* Archil.ReadWriteDisk(Files);
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const key = new URL(request.url, "http://api").pathname.slice(1);
+        return HttpServerResponse.text(yield* files.getText(key));
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(Archil.ReadWriteDiskHttp)),
+) {}
 ```
 
-The same call returns the same disk every time. See [Disks](/archil/disks).
+The service runs in the sandbox at a public `https://` URL, and reads the
+disk with its own S3 user on that disk.
 
-## Run commands against a disk
+New here? [Set up credentials](/archil/setup), then
+[build the tutorial](/archil/tutorial/part-1).
 
-`exec` boots a microVM with the disk mounted, runs the command, and shuts down. Files it writes stay on the disk:
+## Compute
 
-```typescript
-const result = yield* home.exec("cd /mnt/archil && git pull && pnpm test");
-```
+- [Choosing a runtime](/archil/compute/choosing-a-runtime): services,
+  run-time sandboxes, serverless exec, and mounts
+- [Services](/archil/compute/services): your program in a sandbox, in
+  the Effect or async form
+- [Sandboxes](/archil/compute/sandboxes): microVMs per task, dev boxes,
+  ports, and images
 
-## Branch from a seeded base
+## Frontend
 
-Seed one disk at deploy time, checkpoint it, and fork a writable branch per session in about 35 ms:
+- [Websites](/archil/frontend/websites): Astro, Next.js, Nuxt,
+  SvelteKit, Vite, and nine more frameworks on Archil services
 
-```typescript
-const seeds = yield* Archil.BranchDisk(Seed);
-const branch = yield* seeds.branch({ name: "session-42", fromCheckpoint: "base" });
-```
+## Storage
 
-## Sandboxes
+- [Disks](/archil/storage/disks): disks per user at run time, exec,
+  objects, branches, and your own bucket
+- [Mounting](/archil/storage/mounting): mount disks in Cloudflare
+  Containers and ECS tasks
 
-A sandbox is a Firecracker microVM with disks mounted, public ports, and an outbound policy that can add credentials on the way out:
+## Security
 
-```typescript
-const sandboxes = yield* Archil.CreateSandbox(Agent);
-const sandbox = yield* sandboxes.create({
-  name: "task-1",
-  mounts: [{ disk: home.diskId, path: "/home/user" }],
-});
-yield* sandbox.exec("npm test", { cwd: "/home/user/app" });
-```
-
-See [Sandboxes](/archil/sandboxes) and [Network & credentials](/archil/network).
-
-## Mount on your own hosts
-
-`Archil.MountDisk` installs the Archil client into a Cloudflare Container or ECS task image and mounts disks per request:
-
-```typescript
-const dataset = yield* Archil.MountDisk(Dataset);
-const path = yield* dataset.mount({ mode: "read-only" });
-```
-
-See [Mounting](/archil/mounting).
-
-## Where next
-
-- [Concepts](/archil/concepts): deploy-time resources and run-time clients
-- [Disks](/archil/disks), [Sandboxes](/archil/sandboxes), [Mounting](/archil/mounting), [Network & credentials](/archil/network)
+- [Credentials and bindings](/archil/security/credentials): what each
+  host gets, and who owns what your app creates
+- [Network](/archil/security/network): egress policies that add
+  credentials on the way out
 
 ## Out of scope
 
-- Billing (`getBillingUsage`, `getBillingSummary`, `getBillingSubscription`): billing objects, not infrastructure.
+- Billing (`getBillingUsage`, `getBillingSummary`,
+  `getBillingSubscription`): billing objects, not infrastructure.
 - A workflow engine: Archil has no durable execution engine.
-- Websites: Archil doesn't host websites; a sandbox can serve a port.
+- Event sources: Archil has no webhooks, notifications, or streams.
+- Custom domains: every service is served from its own `archil.app`
+  hostname.

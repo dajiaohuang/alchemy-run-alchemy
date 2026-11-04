@@ -153,6 +153,12 @@ export type Disk = Resource<"Archil.Disk", DiskProps, DiskAttributes, never, Pro
  * Archil has no tags, so Alchemy owns a disk through its generated name.
  * A disk with a fixed `name` that already exists is adopted only with
  * `--adopt`.
+ *
+ * :::caution
+ * Changing `name` or `storage` replaces the disk, and destroying a disk on
+ * Archil-managed storage deletes its files. A disk on your own bucket
+ * leaves the objects in the bucket.
+ * :::
  * @see https://docs.archil.com
  *
  * ### Creating a Disk
@@ -189,13 +195,61 @@ export type Disk = Resource<"Archil.Disk", DiskProps, DiskAttributes, never, Pro
  * });
  * ```
  *
- * ### Using a Disk at Run Time
- * **Example:** Run commands and read files from a Worker
+ * ### Binding to a Runtime
+ * Object bindings give each host its own S3 user on this disk (read-only
+ * for `ReadDisk`), so the host never holds an API key.
+ *
+ * **Example:** Read and write the disk from an Archil service
+ * ```typescript
+ * export default class Api extends Archil.Service<Api>()(
+ *   "Api",
+ *   { sandbox: Box, main: import.meta.url },
+ *   Effect.gen(function* () {
+ *     const files = yield* Archil.ReadWriteDisk(Dataset);
+ *     return {
+ *       fetch: Effect.map(files.getText("README.md"), (text) => HttpServerResponse.text(text)),
+ *     };
+ *   }).pipe(Effect.provide(Archil.ReadWriteDiskHttp)),
+ * ) {}
+ * ```
+ *
+ * **Example:** Mount it in a Cloudflare Container
+ * ```typescript
+ * const dataset = yield* Archil.MountDisk(Dataset, { readOnly: true });
+ * const path = yield* dataset.mount({ mode: "read-only" });
+ * ```
+ *
+ * ### Runtime Operations
+ * **Example:** Run commands and read files
  * ```typescript
  * const dataset = yield* Archil.ExecDisk(Dataset);
  * const files = yield* Archil.ReadDisk(Dataset);
  * const result = yield* dataset.exec("wc -l /mnt/archil/*.csv");
  * const readme = yield* files.getText("README.md");
+ * ```
+ *
+ * **Example:** Upload a large file and share a link
+ * ```typescript
+ * const files = yield* Archil.ReadWriteDisk(Dataset);
+ * yield* files.upload("exports/2026-11.parquet", body);
+ * const url = yield* files.share("exports/2026-11.parquet", 3600);
+ * ```
+ *
+ * ### Branches and Checkpoints
+ * **Example:** Seed a base, then branch per session
+ * ```typescript
+ * export const Seed = Archil.Disk("Seed", {});
+ * export const SeedBase = Effect.gen(function* () {
+ *   const seed = yield* Seed;
+ *   return yield* Archil.Checkpoint("SeedBase", {
+ *     disk: seed.diskId,
+ *     name: "base",
+ *     run: ["git clone https://github.com/acme/app ."],
+ *   });
+ * });
+ * // runtime
+ * const seeds = yield* Archil.BranchDisk(Seed);
+ * const branch = yield* seeds.branch({ name: `session-${id}`, fromCheckpoint: "base" });
  * ```
  *
  * @resource

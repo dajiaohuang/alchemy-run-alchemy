@@ -1,106 +1,94 @@
 ---
-title: "Part 1: A Disk per User"
-description: Give every user their own Archil disk, created by a Worker on first use.
+title: "Part 1: Your First Stack"
+description: Install Alchemy, create a Stack with an Archil disk, and deploy it.
 sidebar:
   order: 1
 ---
 
-Build a notes API where every user gets their own disk. A Cloudflare Worker creates the disk the first time a user shows up, then appends notes to a file on it.
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-The finished code is in [`examples/cloudflare-archil-workspaces`](https://github.com/alchemy-run/alchemy/tree/main/examples/cloudflare-archil-workspaces).
+export const pkgs = `alchemy@latest @alchemy.run/archil@latest effect @effect/platform-node`;
+
+Install Alchemy, declare an Archil disk, and deploy it.
 
 ## Prerequisites
 
-Finish [Archil setup](/archil/setup) and [Cloudflare setup](/cloudflare/setup).
+- [Bun](https://bun.sh) or Node.js 24.11.1+
+- An Archil API key in an Alchemy profile ([Setup](/archil/setup))
 
-## Bind a disk client to the Worker
+## Create a project
 
-```typescript
-// src/Api.ts
-import * as Archil from "@alchemy.run/archil";
-import * as Cloudflare from "@alchemy.run/cloudflare";
-import * as Effect from "effect/Effect";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
+<PackageManagers init dir="my-app" />
 
-export default class Api extends Cloudflare.Worker<Api>()(
-  "Api",
-  { main: import.meta.url },
-  Effect.gen(function* () {
-    const disks = yield* Archil.CreateDisk();
-    return {
-      fetch: Effect.succeed(HttpServerResponse.text("ok")),
-    };
-  }).pipe(Effect.provide(Archil.CreateDiskHttp)),
-) {}
-```
+## Install dependencies
 
-`Archil.CreateDisk()` gives the Worker its own Archil key and a client that creates disks by name. Every disk it creates carries a prefix this binding owns, so `alchemy destroy` cleans them up.
+<PackageManagers add={pkgs} />
 
-## Create the user's disk
+## Create the Stack
 
-```diff lang="typescript"
-fetch: Effect.gen(function* () {
-+  const request = yield* HttpServerRequest;
-+  const [, user] = new URL(request.url, "http://api").pathname.split("/");
-+  const home = yield* disks.create(`home-${user}`);
-  return HttpServerResponse.text("ok");
-}).pipe(Effect.orDie),
-```
-
-`create` returns the disk with that name, creating it the first time. The second request for `alice` gets the same disk.
-
-## Write a note
-
-```diff lang="typescript"
-const home = yield* disks.create(`home-${user}`);
-+if (request.method === "POST") {
-+  const note = yield* request.text;
-+  yield* home.append("notes.md", `- ${note}\n`);
-+  return yield* HttpServerResponse.json({ ok: true });
-+}
-```
-
-`append` writes through Archil's object API. No machine starts; the file lands on the disk.
-
-## Read the notes back
-
-```diff lang="typescript"
-+const notes = yield* home.getText("notes.md").pipe(
-+  Effect.catchTag("NoSuchKey", () => Effect.succeed("")),
-+);
-+return HttpServerResponse.text(notes);
-```
-
-A user with no notes yet gets an empty file.
-
-## Deploy
+Every Alchemy program starts with a `Stack`:
 
 ```typescript
 // alchemy.run.ts
 import * as Archil from "@alchemy.run/archil";
-import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import Api from "./src/Api.ts";
 
 export default Alchemy.Stack(
-  "ArchilWorkspaces",
-  {
-    providers: Layer.mergeAll(Cloudflare.providers(), Archil.providers()),
-    state: Cloudflare.state(),
-  },
-  Effect.gen(function* () {
-    const api = yield* Api;
-    return { url: api.url.as<string>() };
-  }),
+  "MyApp",
+  { providers: Archil.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {}),
 );
 ```
 
-```sh
-alchemy deploy
-curl -X POST $URL/alice/notes -d "buy milk"
-curl $URL/alice/notes
+`Archil.providers()` reads your key from your Alchemy profile.
+`Alchemy.localState()` keeps deploy state in `.alchemy/` next to your
+code; [Part 5](/archil/tutorial/part-5) moves it somewhere CI can read.
+
+## Declare a disk
+
+Declare resources in their own module so services can import them:
+
+```typescript
+// src/Storage.ts
+import * as Archil from "@alchemy.run/archil";
+
+export const Files = Archil.Disk("Files", {});
 ```
 
-Next, give each session a copy of a seeded workspace.
+Alchemy names the disk from the stack, stage and logical id.
+
+## Add it to the Stack
+
+Yield the disk and return its id:
+
+```diff lang="typescript"
+// alchemy.run.ts
+import * as Archil from "@alchemy.run/archil";
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
++import { Files } from "./src/Storage.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Archil.providers(), state: Alchemy.localState() },
+-  Effect.gen(function* () {}),
++  Effect.gen(function* () {
++    const files = yield* Files;
++    return { diskId: files.diskId };
++  }),
+);
+```
+
+## Deploy
+
+<PackageManagers run="alchemy deploy" />
+
+The output prints `diskId`, a `dsk-…` id. The disk shows up under
+**Disks** in the [Archil console](https://console.archil.com).
+
+## Recap
+
+You have a Stack with one Archil disk. In
+[Part 2](/archil/tutorial/part-2) you'll run a service that reads and
+writes files on it.

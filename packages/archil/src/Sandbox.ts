@@ -112,7 +112,14 @@ export type Sandbox = Resource<"Archil.Sandbox", SandboxProps, SandboxAttributes
  * Declare a sandbox at deploy time for a dev box or a preview environment
  * that outlives deploys. Short-lived sandboxes for one user or task are
  * created at run time with {@link CreateSandbox}; act on a declared one with
- * {@link ConnectSandbox}.
+ * {@link ConnectSandbox}. Run your own program in it with
+ * {@link Service}.
+ *
+ * :::caution
+ * Changing the image, size, `env`, `mounts` or timeouts replaces the
+ * sandbox, and a new one starts with an empty root filesystem. Keep data on
+ * a mounted disk. `ports` and `network` update in place.
+ * :::
  * @see https://docs.archil.com/compute/sandboxes/introduction
  *
  * ### Creating a Sandbox
@@ -127,6 +134,53 @@ export type Sandbox = Resource<"Archil.Sandbox", SandboxProps, SandboxAttributes
  *     mounts: [{ disk: workspace.diskId, path: "/workspace" }],
  *     ports: [3000],
  *     idleTtlSeconds: 600,
+ *   });
+ * });
+ * ```
+ *
+ * **Example:** A bigger sandbox that never pauses while idle
+ * ```typescript
+ * export const Box = Archil.Sandbox("Box", {
+ *   vcpuCount: 4,
+ *   memSizeMiB: 8192,
+ *   idleTtlSeconds: 0,
+ * });
+ * ```
+ *
+ * **Example:** Boot a private image
+ * ```typescript
+ * export const AgentImage = Archil.Image("AgentImage", {
+ *   image: "ghcr.io/acme/agent:1",
+ *   registry: { server: "ghcr.io", username: "acme", password: Config.Redacted("GHCR_TOKEN") },
+ * });
+ * export const Agent = Effect.gen(function* () {
+ *   const image = yield* AgentImage;
+ *   return yield* Archil.Sandbox("Agent", { image: image.imageId });
+ * });
+ * ```
+ *
+ * ### Running Services
+ * **Example:** An Effect service at a public URL
+ * ```typescript
+ * export default class Api extends Archil.Service<Api>()(
+ *   "Api",
+ *   { sandbox: Box, main: import.meta.url, port: 3000 },
+ *   Effect.gen(function* () {
+ *     return { fetch: Effect.succeed(HttpServerResponse.text("hello")) };
+ *   }),
+ * ) {}
+ * ```
+ *
+ * ### Ports
+ * **Example:** Serve a port and hand out a token for it
+ * ```typescript
+ * export const Preview = Archil.Sandbox("Preview", { ports: [8080] });
+ * export const PreviewToken = Effect.gen(function* () {
+ *   const preview = yield* Preview;
+ *   return yield* Archil.SandboxPortToken("PreviewToken", {
+ *     sandbox: preview.sandboxId,
+ *     port: 8080,
+ *     ttl: "24h",
  *   });
  * });
  * ```

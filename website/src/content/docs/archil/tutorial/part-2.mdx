@@ -1,64 +1,163 @@
 ---
-title: "Part 2: Branch a Seeded Workspace"
-description: Seed a template disk at deploy time and fork a branch of it per session.
+title: "Part 2: Add a Service"
+description: Run an Effect HTTP service in an Archil sandbox that stores files on the disk.
 sidebar:
   order: 2
 ---
 
-A new session should start from a prepared workspace, not an empty disk. Seed one template disk at deploy time, checkpoint it, and branch it per session.
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-## Declare the template disk
+Run a service in an Archil sandbox with `PUT /:key` and `GET /:key`
+routes that store files on the disk from [Part 1](/archil/tutorial/part-1).
+The finished code is
+[`examples/archil-service`](https://github.com/alchemy-run/alchemy/tree/main/examples/archil-service).
+
+## Declare a sandbox
+
+A service runs in a sandbox. Add one next to the disk:
+
+```diff lang="typescript"
+// src/Storage.ts
+import * as Archil from "@alchemy.run/archil";
+
+export const Files = Archil.Disk("Files", {});
++
++export const Box = Archil.Sandbox("Box", {});
+```
+
+## Create the service
+
+`main: import.meta.url` makes this file both the bundle and the program.
+The service listens on port 3000:
 
 ```typescript
-// src/Workspace.ts
+// src/Api.ts
 import * as Archil from "@alchemy.run/archil";
 import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Box } from "./Storage.ts";
 
-export const Template = Archil.Disk("Template", {});
+export default class Api extends Archil.Service<Api>()(
+  "Api",
+  { sandbox: Box, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
 ```
 
-## Seed it with a checkpoint
+## Bind the disk
+
+`Archil.ReadWriteDisk(Files)` gives the service its own S3 user on that
+disk, so it can read and write that disk and nothing else:
 
 ```diff lang="typescript"
-export const Template = Archil.Disk("Template", {});
-+
-+export const Seeded = Effect.gen(function* () {
-+  const template = yield* Template;
-+  return yield* Archil.Checkpoint("Seeded", {
-+    disk: template.diskId,
-+    name: "seeded",
-+    run: ["printf '# Notes\\n' > README.md", "mkdir -p notes"],
-+  });
-+});
+// src/Api.ts
+import * as Archil from "@alchemy.run/archil";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+-import { Box } from "./Storage.ts";
++import { Box, Files } from "./Storage.ts";
+
+export default class Api extends Archil.Service<Api>()(
+  "Api",
+  { sandbox: Box, main: import.meta.url, port: 3000 },
+  Effect.gen(function* () {
++    const files = yield* Archil.ReadWriteDisk(Files);
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+-  }),
++  }).pipe(Effect.provide(Archil.ReadWriteDiskHttp)),
+) {}
 ```
 
-Alchemy runs the commands against the disk and takes a checkpoint named `seeded`. Changing `run` takes a new checkpoint.
+## Write files with `PUT /:key`
 
-## Add it to the Stack
+Read the key from the path and put the request body on the disk:
 
 ```diff lang="typescript"
-Effect.gen(function* () {
-+  yield* Seeded;
-  const api = yield* Api;
+// src/Api.ts
++import { HttpServerRequest } from "effect/http/HttpServerRequest";
+
+    return {
+-      fetch: Effect.succeed(HttpServerResponse.text("hello")),
++      fetch: Effect.gen(function* () {
++        const request = yield* HttpServerRequest;
++        const key = new URL(request.url, "http://api").pathname.slice(1);
++        if (request.method === "PUT") {
++          yield* files.put(key, yield* request.text);
++          return HttpServerResponse.empty({ status: 201 });
++        }
++        return HttpServerResponse.text(yield* files.getText(key));
++      }),
+    };
 ```
 
-## Branch per session
+## Answer 404 for missing files
+
+`head` returns `undefined` when the file doesn't exist:
 
 ```diff lang="typescript"
-const disks = yield* Archil.CreateDisk();
-+const templates = yield* Archil.BranchDisk(Template);
+// src/Api.ts
+          return HttpServerResponse.empty({ status: 201 });
+        }
++        const file = yield* files.head(key);
++        if (file === undefined) {
++          return HttpServerResponse.text("not found", { status: 404 });
++        }
+        return HttpServerResponse.text(yield* files.getText(key));
 ```
+
+## Turn other errors into 500s
 
 ```diff lang="typescript"
-+if (action === "session") {
-+  const branch = yield* templates.branch({
-+    name: `session-${user}`,
-+    fromCheckpoint: "seeded",
-+  });
-+  return yield* HttpServerResponse.json(branch);
-+}
+// src/Api.ts
+        return HttpServerResponse.text(yield* files.getText(key));
+-      }),
++      }).pipe(
++        Effect.catch((error) =>
++          Effect.succeed(HttpServerResponse.text(String(error), { status: 500 })),
++        ),
++      ),
 ```
 
-A branch is a writable copy of the checkpoint, made in about 35 ms whatever the disk's size. Its writes never reach the template.
+## Wire the service into the Stack
 
-Add `Archil.BranchDiskHttp` to the Worker's layer next to `CreateDiskHttp`.
+```diff lang="typescript"
+// alchemy.run.ts
++import Api from "./src/Api.ts";
+import { Files } from "./src/Storage.ts";
+
+  Effect.gen(function* () {
+    const files = yield* Files;
+-    return { diskId: files.diskId };
++    const api = yield* Api;
++    return { diskId: files.diskId, url: api.url };
+  }),
+```
+
+## Deploy
+
+<PackageManagers run="alchemy deploy" />
+
+`url` is `https://3000-<id>.<region>.archil.app`.
+
+## Try it out
+
+```sh
+curl -X PUT --data "hello archil" "$URL/notes/first.txt"
+curl "$URL/notes/first.txt"
+```
+
+The second command prints `hello archil`. Leave the service alone for a
+few minutes and the sandbox stops; the next request starts it again.
+
+## Recap
+
+The service runs your Effect program in a sandbox and reads and writes
+the disk through its own S3 user. In [Part 3](/archil/tutorial/part-3)
+you'll test it.
+
