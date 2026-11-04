@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { withAuthTokens } from "./Credentials.ts";
+import { isWorkerd, ModalHttpClient, socketFetch } from "./internal/SocketFetch.ts";
 import { ServiceUser } from "./ServiceUser.ts";
 
 /**
@@ -194,7 +195,7 @@ const operationContext = Effect.gen(function* () {
               apiBaseUrl: serverUrl,
             }),
           ),
-          FetchHttpClient.layer,
+          ModalHttpClient,
         ),
       ).pipe(Effect.scoped);
     }
@@ -213,7 +214,7 @@ const operationContext = Effect.gen(function* () {
       HttpClient.HttpClient,
       Option.isSome(ambientHttp)
         ? ambientHttp.value
-        : yield* HttpClient.HttpClient.pipe(Effect.provide(FetchHttpClient.layer)),
+        : yield* HttpClient.HttpClient.pipe(Effect.provide(ModalHttpClient)),
     ),
   );
 });
@@ -233,8 +234,38 @@ const operationContext = Effect.gen(function* () {
 export const withCredentials: <Op>(operation: Effect.Effect<Op, never, any>) => Effect.Effect<Op> =
   Effect.fn(function* <Op>(operation: Effect.Effect<Op, never, any>) {
     const context = yield* operationContext;
-    return yield* (operation as Effect.Effect<Op>).pipe(Effect.provide(context));
+    const resolved = yield* (operation as Effect.Effect<Op>).pipe(Effect.provide(context));
+    return isWorkerd() ? overSocket(resolved) : resolved;
   });
+
+/**
+ * On workerd, send every call of a resolved operation (or record of them)
+ * over `cloudflare:sockets`. A resolved distilled operation prefers its
+ * caller's `HttpClient` to the one it captured, and a Worker's runtime
+ * provides a `fetch` client; that client reads `FetchHttpClient.Fetch` per
+ * request, so pinning `Fetch` on the call reroutes it whichever client wins.
+ */
+const overSocket = <Op>(value: Op): Op => {
+  if (typeof value === "function") {
+    const call = value as (...args: unknown[]) => unknown;
+    return ((...args: unknown[]) => {
+      const result = call(...args);
+      return Effect.isEffect(result)
+        ? Effect.provideService(result, FetchHttpClient.Fetch, socketFetch as typeof fetch)
+        : result;
+    }) as Op;
+  }
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    Object.getPrototypeOf(value) === Object.prototype
+  ) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, overSocket(entry)]),
+    ) as Op;
+  }
+  return value;
+};
 
 /**
  * Resolve a task command router operation for one sandbox: the router runs

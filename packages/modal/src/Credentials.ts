@@ -3,10 +3,10 @@ import { withAuthToken } from "@distilled.cloud/modal/AuthToken";
 import { Credentials, DEFAULT_API_BASE_URL } from "@distilled.cloud/modal/Credentials";
 import { lazyCredentials } from "alchemy/Auth/Resolve";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { MODAL_AUTH_PROVIDER_NAME, type ModalResolvedCredentials } from "./AuthProvider.ts";
+import { ModalHttpClient } from "./internal/SocketFetch.ts";
 
 export { withAuthToken } from "@distilled.cloud/modal/AuthToken";
 export {
@@ -43,7 +43,7 @@ export const fromAuthProvider = () =>
 export const withAuthTokens = <E, R>(
   credentials: Layer.Layer<Credentials, E, R>,
 ): Layer.Layer<Credentials, E, R> =>
-  withAuthToken.pipe(Layer.provide(Layer.mergeAll(credentials, FetchHttpClient.layer)));
+  withAuthToken.pipe(Layer.provide(Layer.mergeAll(credentials, ModalHttpClient)));
 
 /**
  * Build Modal `Credentials` from an explicit token pair, e.g. in a test or a
