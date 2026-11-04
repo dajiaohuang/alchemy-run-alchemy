@@ -8,9 +8,12 @@ export type { WriteDiskClient } from "./Clients.ts";
 
 /**
  * Write a disk's files as objects over Archil's S3-compatible API: put,
- * append, copy, delete. A write that conflicts with a mounted client's
- * write delegation fails with `ObjectConflict`; `delegations` and
- * `revokeDelegation` reclaim paths a crashed client still holds.
+ * append, copy, delete, and multipart uploads of any size. The host gets
+ * its own read-write S3 user on this disk, so it can't reach any other
+ * disk and never holds an API key. A write that conflicts with a mounted
+ * client's write delegation fails with `ObjectConflict`; `ExecDisk`'s
+ * `delegations` and `revokeDelegation` reclaim paths a crashed client
+ * still holds.
  *
  * ### Writing Files
  * **Example:** Append events to a log on a disk
@@ -19,12 +22,12 @@ export type { WriteDiskClient } from "./Clients.ts";
  * yield* files.append("events.ndjson", JSON.stringify(event) + "\n");
  * ```
  *
- * ### Recovering From a Crashed Mount
- * **Example:** Revoke orphaned delegations
+ * ### Uploading Large Files
+ * **Example:** Stream a file of any size onto the disk
  * ```typescript
- * for (const d of yield* files.delegations()) {
- *   if (d.isOrphaned) yield* files.revokeDelegation(d);
- * }
+ * const files = yield* Archil.WriteDisk(Dataset);
+ * const request = yield* HttpServerRequest;
+ * yield* files.upload("uploads/video.mp4", request.stream, { contentType: "video/mp4" });
  * ```
  *
  * @binding

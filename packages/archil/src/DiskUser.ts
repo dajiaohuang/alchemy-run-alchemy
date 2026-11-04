@@ -27,13 +27,38 @@ export interface DiskUserProps {
    * instead of a token, e.g. an ECS task role. Changing it replaces the user.
    */
   principal?: string;
+  /**
+   * `token` mounts with a disk token; `s3` gets an access key pair for the
+   * disk's S3-compatible API instead. Ignored when `principal` is set (an
+   * `awssts` user). Changing it replaces the user.
+   * @default "token"
+   */
+  type?: "token" | "s3";
+  /**
+   * Mounts made with this user reject writes (`EROFS`); an `s3` user can
+   * only `GET` and `HEAD`. Changing it replaces the user.
+   * @default false
+   */
+  readOnly?: boolean;
+  /**
+   * When the user stops working, as an RFC 3339 timestamp in the future
+   * (at most 365 days away). Requests signed with an expired `s3` key,
+   * presigned URLs included, are rejected. Changing it replaces the user.
+   */
+  expiresAt?: string;
+  /**
+   * The user works for one mount only; later mounts with it are rejected.
+   * Not available for `s3` users. Changing it replaces the user.
+   * @default false
+   */
+  oneUse?: boolean;
 }
 
 export interface DiskUserAttributes {
   /** Id of the disk. */
   diskId: string;
-  /** `token`, or `awssts` for an IAM principal. */
-  type: "token" | "awssts";
+  /** `token`, `s3` for an access key pair, or `awssts` for an IAM principal. */
+  type: "token" | "awssts" | "s3";
   /** Archil's identifier for the user, used to revoke it. */
   identifier: string;
   /** Name shown in the console. */
@@ -45,6 +70,19 @@ export interface DiskUserAttributes {
    * `ARCHIL_MOUNT_TOKEN`. It works only for this disk.
    */
   token: Redacted.Redacted<string> | undefined;
+  /** The S3 access key id, for an `s3` user. */
+  accessKeyId: string | undefined;
+  /**
+   * The S3 secret access key, for an `s3` user. Sign requests to the disk's
+   * S3-compatible API with it; it works only for this disk.
+   */
+  secretAccessKey: Redacted.Redacted<string> | undefined;
+  /** Whether the user is read-only. */
+  readOnly: boolean;
+  /** When the user expires, if it does. */
+  expiresAt: string | undefined;
+  /** Whether the user works for one mount only. */
+  oneUse: boolean;
 }
 
 export type DiskUser = Resource<
@@ -56,14 +94,23 @@ export type DiskUser = Resource<
 >;
 
 /**
- * Access to mount one disk. A token user gets a disk token that only works
- * for that disk; an IAM user lets an AWS principal mount with its own
- * identity, so no token exists at all. Archil checks both itself, so a
- * host holding a disk user can't reach any other disk.
+ * Access to one disk. A token user gets a disk token for `archil mount`; an
+ * `s3` user gets an access key pair for the disk's S3-compatible API; an
+ * IAM user lets an AWS principal mount with its own identity, so no secret
+ * exists at all. Archil checks each one itself, so a host holding a disk
+ * user can't reach any other disk. `readOnly`, `expiresAt` and `oneUse`
+ * narrow it further.
  *
- * Archil only shows a token once, when it's created, so Alchemy stores it
- * in state as a `Redacted` value. Destroying the user revokes it.
- * `Archil.MountDisk(disk)` creates one per host for you.
+ * Archil only shows a token or secret key once, when it's created, so
+ * Alchemy stores it in state as a `Redacted` value. Destroying the user
+ * revokes it. `Archil.MountDisk(disk)` and the object bindings
+ * (`Archil.ReadDisk`, `Archil.WriteDisk`, `Archil.ReadWriteDisk`) create
+ * one per host for you.
+ *
+ * :::caution
+ * Archil can't change a user, so changing any prop replaces it: the old
+ * token or key stops working once the new one exists.
+ * :::
  * @see https://docs.archil.com/concepts/sharing-disks
  *
  * ### Creating a Disk User
@@ -79,6 +126,27 @@ export type DiskUser = Resource<
  *   disk: dataset.diskId,
  *   principal: taskRole.roleArn,
  * });
+ * ```
+ *
+ * **Example:** A read-only token that expires
+ * ```typescript
+ * const user = yield* Archil.DiskUser("Viewer", {
+ *   disk: dataset.diskId,
+ *   readOnly: true,
+ *   expiresAt: "2027-01-01T00:00:00Z",
+ * });
+ * ```
+ *
+ * ### S3 Keys
+ * **Example:** A read-only access key pair for one disk
+ * ```typescript
+ * const reader = yield* Archil.DiskUser("Reader", {
+ *   disk: dataset.diskId,
+ *   type: "s3",
+ *   readOnly: true,
+ * });
+ * // reader.accessKeyId, reader.secretAccessKey sign requests to
+ * // https://s3.green.us-east-1.aws.prod.archil.com/<disk id>/<key>
  * ```
  *
  * @resource
@@ -104,38 +172,65 @@ export const findDiskUser = Effect.fn(function* (
   );
 });
 
-/** Add a token or IAM user to a disk. */
-export const addDiskUser = Effect.fn(function* (
-  diskId: string,
-  user: { nickname: string; principal?: string },
-) {
+/** What a disk user is created with. */
+export interface DiskUserSpec {
+  readonly nickname: string;
+  readonly principal?: string;
+  readonly type?: "token" | "s3";
+  readonly readOnly?: boolean;
+  readonly expiresAt?: string;
+  readonly oneUse?: boolean;
+}
+
+const userType = (user: Pick<DiskUserSpec, "principal" | "type">) =>
+  user.principal !== undefined ? ("awssts" as const) : (user.type ?? "token");
+
+const redacted = (value: string | Redacted.Redacted<string> | undefined) =>
+  value === undefined ? undefined : typeof value === "string" ? Redacted.make(value) : value;
+
+/** Add a token, S3, or IAM user to a disk. */
+export const addDiskUser = Effect.fn(function* (diskId: string, user: DiskUserSpec) {
+  const type = userType(user);
+  const limits = { readOnly: user.readOnly, expiresAt: user.expiresAt };
   const { data } = yield* archil.addDiskUser({
     id: diskId,
-    body: user.principal
-      ? { type: "awssts", principal: user.principal }
-      : { type: "token", nickname: user.nickname },
+    body:
+      type === "awssts"
+        ? { type, principal: user.principal!, ...limits, oneUse: user.oneUse }
+        : type === "s3"
+          ? { type, nickname: user.nickname, ...limits }
+          : { type, nickname: user.nickname, ...limits, oneUse: user.oneUse },
   });
-  if (!user.principal && (!data.token || !data.identifier)) {
+  const missing =
+    type === "token"
+      ? !data.token || !data.identifier
+      : type === "s3"
+        ? !data.s3AccessKeyId || !data.s3SecretKey
+        : false;
+  if (missing) {
     return yield* new DiskUserUnexpectedResponse({
-      message: `Archil returned no token for disk user ${user.nickname} on ${diskId}`,
+      message: `Archil returned no ${type === "s3" ? "S3 keys" : "token"} for disk user ${user.nickname} on ${diskId}`,
     });
   }
-  const token = data.token;
   return {
     diskId,
-    type: user.principal ? ("awssts" as const) : ("token" as const),
-    identifier: data.identifier ?? user.principal ?? "",
+    type,
+    identifier: data.identifier ?? data.s3AccessKeyId ?? user.principal ?? "",
     nickname: data.nickname ?? user.nickname,
     principal: user.principal,
-    token:
-      token === undefined ? undefined : typeof token === "string" ? Redacted.make(token) : token,
+    token: redacted(data.token),
+    accessKeyId: data.s3AccessKeyId,
+    secretAccessKey: redacted(data.s3SecretKey),
+    readOnly: data.readOnly ?? user.readOnly ?? false,
+    expiresAt: data.expiresAt ?? user.expiresAt,
+    oneUse: data.oneUse ?? user.oneUse ?? false,
   } satisfies DiskUserAttributes;
 });
 
 /** Revoke a disk user. Revoking a missing user (or one on a deleted disk) succeeds. */
 export const removeDiskUser = Effect.fn(function* (attrs: {
   diskId: string;
-  type: "token" | "awssts";
+  type: "token" | "awssts" | "s3";
   identifier: string;
   principal?: string;
 }) {
@@ -143,7 +238,7 @@ export const removeDiskUser = Effect.fn(function* (attrs: {
     .removeDiskUser({
       id: attrs.diskId,
       userType: attrs.type,
-      identifier: attrs.type === "token" ? attrs.identifier : undefined,
+      identifier: attrs.type === "awssts" ? undefined : attrs.identifier,
       principal: attrs.type === "awssts" ? attrs.principal : undefined,
     })
     .pipe(Effect.catchTag("DiskNotFound", () => Effect.void));
@@ -154,14 +249,30 @@ export const DiskUserProvider = () =>
     DiskUser,
     Effect.gen(function* () {
       return {
-        stables: ["diskId", "type", "identifier", "nickname", "principal", "token"],
+        stables: [
+          "diskId",
+          "type",
+          "identifier",
+          "nickname",
+          "principal",
+          "token",
+          "accessKeyId",
+          "secretAccessKey",
+          "readOnly",
+          "expiresAt",
+          "oneUse",
+        ],
         diff: Effect.fn(function* ({ id, olds, news, output }) {
           if (!isResolved(news)) return undefined;
           const nickname = output?.nickname ?? (yield* userNickname(id, olds?.nickname));
           if (
             news.disk !== (output?.diskId ?? olds?.disk) ||
             (news.nickname !== undefined && news.nickname !== nickname) ||
-            news.principal !== (output?.principal ?? olds?.principal)
+            news.principal !== (output?.principal ?? olds?.principal) ||
+            userType(news) !== (output?.type ?? (olds ? userType(olds) : userType(news))) ||
+            (news.readOnly ?? false) !== (output?.readOnly ?? olds?.readOnly ?? false) ||
+            news.expiresAt !== (output?.expiresAt ?? olds?.expiresAt) ||
+            (news.oneUse ?? false) !== (output?.oneUse ?? olds?.oneUse ?? false)
           ) {
             return { action: "replace" } as const;
           }
@@ -180,12 +291,17 @@ export const DiskUserProvider = () =>
           return (
             output ?? {
               diskId,
-              type: (observed.type ?? "token") as "token" | "awssts",
+              type: observed.type ?? "token",
               identifier: observed.identifier ?? observed.principal ?? "",
               nickname: observed.nickname ?? nickname,
               principal: observed.principal,
-              // The token is only shown at creation; reconcile re-mints.
+              // Secrets are only shown at creation; reconcile re-creates.
               token: undefined,
+              accessKeyId: observed.s3AccessKeyId,
+              secretAccessKey: undefined,
+              readOnly: observed.readOnly ?? false,
+              expiresAt: observed.expiresAt,
+              oneUse: observed.oneUse ?? false,
             }
           );
         }),
@@ -197,20 +313,30 @@ export const DiskUserProvider = () =>
             principal: news.principal,
             nickname,
           });
-          const hasSecret = news.principal !== undefined || output?.token !== undefined;
+          const type = userType(news);
+          const hasSecret =
+            type === "awssts" ||
+            (type === "s3" ? output?.secretAccessKey !== undefined : output?.token !== undefined);
           if (observed && output && hasSecret) return output;
-          // Ensure — a token we hold no secret for (a lost create, or an
-          // adoption) is revoked and re-minted.
+          // Ensure — a user we hold no secret for (a lost create, or an
+          // adoption) is revoked and created again.
           if (observed) {
-            yield* session.note(`Re-minting disk user ${nickname}...`);
+            yield* session.note(`Re-creating disk user ${nickname}...`);
             yield* removeDiskUser({
               diskId: news.disk,
-              type: (observed.type ?? "token") as "token" | "awssts",
+              type: observed.type ?? "token",
               identifier: observed.identifier ?? "",
               principal: observed.principal,
             });
           }
-          return yield* addDiskUser(news.disk, { nickname, principal: news.principal });
+          return yield* addDiskUser(news.disk, {
+            nickname,
+            principal: news.principal,
+            type: news.type,
+            readOnly: news.readOnly,
+            expiresAt: news.expiresAt,
+            oneUse: news.oneUse,
+          });
         }),
         delete: Effect.fn(function* ({ output }) {
           yield* removeDiskUser(output);

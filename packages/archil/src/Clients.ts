@@ -9,16 +9,22 @@ import * as Objects from "@distilled.cloud/archil/Objects";
 import * as Process from "@distilled.cloud/archil/Process";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 import * as StreamM from "effect/Stream";
-import type { Authorize } from "./ArchilBindings.ts";
+import type { Authorize, ObjectsRunner } from "./ArchilBindings.ts";
 import type { BranchAttributes } from "./Branch.ts";
 import { toBranchAttributes } from "./Branch.ts";
 import type { DiskAttributes } from "./Disk.ts";
 import type { DiskUserAttributes } from "./DiskUser.ts";
-import { addDiskUser, removeDiskUser, type DiskUserUnexpectedResponse } from "./DiskUser.ts";
+import {
+  addDiskUser,
+  removeDiskUser,
+  type DiskUserSpec,
+  type DiskUserUnexpectedResponse,
+} from "./DiskUser.ts";
 import { deleteSandbox, observeSandbox, type SandboxAttributes } from "./Sandbox.ts";
 import { toEgressPolicy, type SandboxEgress } from "./SandboxOptions.ts";
 import type { SandboxPortTokenAttributes } from "./SandboxPortToken.ts";
@@ -71,6 +77,10 @@ export interface ReadDiskClient {
   ): Effect.Effect<Uint8Array, Objects.ObjectsFailure | ObjectsTransportError, R>;
   /** A file as UTF-8 text. */
   getText(key: string): Effect.Effect<string, Objects.ObjectsFailure | ObjectsTransportError, R>;
+  /** A file's bytes as a stream, for files too big to hold in memory. */
+  getStream(
+    key: string,
+  ): Stream.Stream<Uint8Array, Objects.ObjectsFailure | ObjectsTransportError, R>;
   /** A file's metadata, or `undefined` when it doesn't exist. */
   head(
     key: string,
@@ -86,13 +96,18 @@ export interface ReadDiskClient {
   ): Stream.Stream<Objects.ObjectSummary, Objects.ObjectsFailure | ObjectsTransportError, R>;
   /**
    * A signed URL anyone can download one file from, valid for
-   * `expiresInSeconds` (1 to 604800; default one day).
+   * `expiresInSeconds` (1 to 604800; default one hour).
    */
   share(
     key: string,
     expiresInSeconds?: number,
-  ): Effect.Effect<Redacted.Redacted<string>, archil.CreateShareUrlError, R>;
+  ): Effect.Effect<Redacted.Redacted<string>, ShareError, R>;
 }
+
+/** What creating a share URL can fail with. */
+export type ShareError =
+  | archil.CreateShareUrlError
+  | Effect.Error<ReturnType<typeof Objects.presignGetObject>>;
 
 /** Write the disk's files as objects. */
 export interface WriteDiskClient {
@@ -123,6 +138,23 @@ export interface WriteDiskClient {
     sourceKey: string,
     key: string,
   ): Effect.Effect<{ etag: string | undefined }, Objects.ObjectsFailure | ObjectsTransportError, R>;
+  /**
+   * Write a file of any size from a stream, as a multipart upload in
+   * 8 MiB parts. A failed upload is aborted, so no parts are left behind.
+   */
+  upload<E>(
+    key: string,
+    body: Stream.Stream<Uint8Array, E>,
+    options?: { readonly contentType?: string } & Objects.PosixAttributes,
+  ): Effect.Effect<
+    { etag: string | undefined },
+    Objects.ObjectsFailure | ObjectsTransportError | E,
+    R
+  >;
+}
+
+/** Write delegations on a disk: the paths a mounted client holds for writing. */
+export interface DiskDelegationsClient {
   /** Write delegations held on the disk, e.g. by a crashed mount. */
   delegations(): Effect.Effect<archil.DelegationEntry[], archil.ListDelegationsError, R>;
   /** Reclaim write access from a client that is gone. */
@@ -155,15 +187,18 @@ export interface BranchDiskClient {
 }
 
 /** One disk, with everything a run-time client can do to it. */
-export interface DiskHandle extends ExecDiskClient, ReadWriteDiskClient, BranchDiskClient {
+export interface DiskHandle
+  extends ExecDiskClient, ReadWriteDiskClient, BranchDiskClient, DiskDelegationsClient {
   readonly diskId: string;
   readonly name: string;
   /**
    * A disk token for mounting this disk only, e.g. to hand to a machine
-   * that mounts with `MountDisk()`. Revoke it with `removeToken`.
+   * that mounts with `MountDisk()`. `readOnly`, `expiresAt` and `oneUse`
+   * narrow it. Revoke it with `removeToken`.
    */
   createToken(
     nickname: string,
+    options?: Pick<DiskUserSpec, "readOnly" | "expiresAt" | "oneUse">,
   ): Effect.Effect<DiskUserAttributes, archil.AddDiskUserError | DiskUserUnexpectedResponse, R>;
   /** Revoke a disk token. */
   removeToken(identifier: string): Effect.Effect<void, archil.RemoveDiskUserError, R>;
@@ -256,6 +291,11 @@ export interface SandboxHandle {
   ): Effect.Effect<SandboxPortTokenAttributes, archil.CreateSandboxPortTokenError, R>;
   /** Revoke a port token. */
   revokePortToken(tokenId: string): Effect.Effect<void, archil.DeleteSandboxPortTokenError, R>;
+  /**
+   * The sandbox's port tokens, without their secret values (Archil only
+   * shows a token when it's created).
+   */
+  listPortTokens(): Stream.Stream<archil.SandboxPortToken, archil.ListSandboxPortTokensError, R>;
   /** Replace the outbound network policy. Applies at once. */
   setEgress(egress: SandboxEgress): Effect.Effect<void, archil.UpdateSandboxNetworkError, R>;
   /**
@@ -306,50 +346,122 @@ export const makeExecDiskClient = (
     ),
 });
 
-/** Object reads on a disk (or branch) whose id resolves at run time. */
-export const makeReadDiskClient = (
-  ref: Effect.Effect<Objects.DiskRef, never, R>,
-  authorize: Authorize,
-): ReadDiskClient => ({
-  get: (key, options) => authorize(Effect.flatMap(ref, (r) => Objects.getObject(r, key, options))),
-  getText: (key) => authorize(Effect.flatMap(ref, (r) => Objects.getObjectText(r, key))),
-  head: (key) => authorize(Effect.flatMap(ref, (r) => Objects.headObject(r, key))),
-  list: (prefix, options) =>
-    authorize.stream(
-      StreamM.unwrap(
-        Effect.map(ref, (r) => Objects.listObjects(r, prefix, { recursive: options?.recursive })),
-      ),
-    ),
-  share: (key, expiresInSeconds) =>
+/** How a read client makes share URLs. */
+export type ShareStrategy = (
+  ref: Objects.DiskRef,
+  key: string,
+  expiresInSeconds: number,
+) => Effect.Effect<Redacted.Redacted<string>, ShareError, R>;
+
+/** Share URLs presigned with the client's own S3 user keys. */
+export const presignedShare =
+  (run: ObjectsRunner): ShareStrategy =>
+  (ref, key, expiresInSeconds) =>
+    run(Objects.presignGetObject(ref, key, expiresInSeconds)).pipe(Effect.map(Redacted.make));
+
+/** Share URLs from Archil's control plane (needs the API key). */
+export const controlPlaneShare =
+  (authorize: Authorize): ShareStrategy =>
+  (ref, key, expiresInSeconds) =>
     authorize(
       Effect.gen(function* () {
-        const { disk } = yield* ref;
         const { data } = yield* archil.createShareUrl({
-          id: disk,
+          id: ref.disk,
           key,
           expiresIn: expiresInSeconds,
         });
         return unwrapToken(data.url);
       }),
+    );
+
+/** Object reads on a disk (or branch) whose id resolves at run time. */
+export const makeReadDiskClient = (
+  ref: Effect.Effect<Objects.DiskRef, never, R>,
+  run: ObjectsRunner,
+  share: ShareStrategy,
+): ReadDiskClient => ({
+  get: (key, options) => run(Effect.flatMap(ref, (r) => Objects.getObject(r, key, options))),
+  getText: (key) => run(Effect.flatMap(ref, (r) => Objects.getObjectText(r, key))),
+  getStream: (key) =>
+    run.stream(StreamM.unwrap(Effect.map(ref, (r) => Objects.getObjectStream(r, key)))),
+  head: (key) => run(Effect.flatMap(ref, (r) => Objects.headObject(r, key))),
+  list: (prefix, options) =>
+    run.stream(
+      StreamM.unwrap(
+        Effect.map(ref, (r) => Objects.listObjects(r, prefix, { recursive: options?.recursive })),
+      ),
     ),
+  share: (key, expiresInSeconds = 3600) =>
+    Effect.flatMap(ref, (r) => share(r, key, expiresInSeconds)),
 });
+
+const PART_SIZE = 8 * 1024 * 1024;
+
+const concatBytes = (chunks: ReadonlyArray<Uint8Array>) => {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+};
 
 /** Object writes on a disk (or branch) whose id resolves at run time. */
 export const makeWriteDiskClient = (
   ref: Effect.Effect<Objects.DiskRef, never, R>,
-  authorize: Authorize,
+  run: ObjectsRunner,
 ): WriteDiskClient => ({
   put: (key, body, options) =>
-    authorize(Effect.flatMap(ref, (r) => Objects.putObject(r, key, body, options))),
-  append: (key, body) => authorize(Effect.flatMap(ref, (r) => Objects.appendObject(r, key, body))),
-  delete: (key) => authorize(Effect.flatMap(ref, (r) => Objects.deleteObject(r, key))),
-  deleteMany: (keys) => authorize(Effect.flatMap(ref, (r) => Objects.deleteObjects(r, keys))),
+    run(Effect.flatMap(ref, (r) => Objects.putObject(r, key, body, options))),
+  append: (key, body) => run(Effect.flatMap(ref, (r) => Objects.appendObject(r, key, body))),
+  delete: (key) => run(Effect.flatMap(ref, (r) => Objects.deleteObject(r, key))),
+  deleteMany: (keys) => run(Effect.flatMap(ref, (r) => Objects.deleteObjects(r, keys))),
   copy: (sourceKey, key) =>
-    authorize(
+    run(
       Effect.flatMap(ref, (r) => Objects.copyObject(r, sourceKey, key)).pipe(
         Effect.map(({ etag }) => ({ etag })),
       ),
     ),
+  upload: (key, body, options) =>
+    run(
+      Effect.gen(function* () {
+        const r = yield* ref;
+        const { uploadId } = yield* Objects.createMultipartUpload(r, key, options);
+        const parts: Array<{ readonly partNumber: number; readonly etag: string }> = [];
+        const sendPart = (bytes: Uint8Array) =>
+          Objects.uploadPart(r, key, uploadId, parts.length + 1, bytes).pipe(
+            Effect.map((part) => void parts.push(part)),
+          );
+        return yield* Effect.gen(function* () {
+          const rest = yield* StreamM.runFoldEffect(
+            body,
+            (): ReadonlyArray<Uint8Array> => [],
+            (pending, chunk) => {
+              const next = [...pending, chunk];
+              const size = next.reduce((n, c) => n + c.byteLength, 0);
+              if (size < PART_SIZE) return Effect.succeed(next);
+              const bytes = concatBytes(next);
+              return Effect.as(sendPart(bytes.subarray(0, PART_SIZE)), [bytes.subarray(PART_SIZE)]);
+            },
+          );
+          const last = concatBytes(rest);
+          // S3 needs at least one part; an empty body is one empty part.
+          if (last.byteLength > 0 || parts.length === 0) yield* sendPart(last);
+          return yield* Objects.completeMultipartUpload(r, key, uploadId, parts);
+        }).pipe(
+          Effect.onError(() => Objects.abortMultipartUpload(r, key, uploadId).pipe(Effect.ignore)),
+          Effect.map(({ etag }) => ({ etag })),
+        );
+      }),
+    ),
+});
+
+/** Write delegations on a disk whose id resolves at run time (needs the API key). */
+export const makeDiskDelegationsClient = (
+  ref: Effect.Effect<Objects.DiskRef, never, R>,
+  authorize: Authorize,
+): DiskDelegationsClient => ({
   delegations: () =>
     authorize(
       Effect.gen(function* () {
@@ -425,10 +537,12 @@ export const makeDiskHandle = (
     diskId: disk.diskId,
     name: disk.name,
     ...makeExecDiskClient(diskId, authorize),
-    ...makeReadDiskClient(ref, authorize),
-    ...makeWriteDiskClient(ref, authorize),
+    ...makeReadDiskClient(ref, authorize.objects, controlPlaneShare(authorize)),
+    ...makeWriteDiskClient(ref, authorize.objects),
+    ...makeDiskDelegationsClient(ref, authorize),
     ...makeBranchDiskClient(diskId, authorize),
-    createToken: (nickname) => authorize(addDiskUser(disk.diskId, { nickname })),
+    createToken: (nickname, options) =>
+      authorize(addDiskUser(disk.diskId, { nickname, ...options })),
     removeToken: (identifier) =>
       authorize(removeDiskUser({ diskId: disk.diskId, type: "token", identifier })),
   };
@@ -513,6 +627,18 @@ export const makeSandboxHandle = (
       ),
     createPortToken: (port, ttl) => authorize(createPortToken(sid, port, ttl)),
     revokePortToken: (tokenId) => authorize(revokePortToken(sid, tokenId)),
+    listPortTokens: () =>
+      authorize.stream(
+        StreamM.paginate(undefined as string | undefined, (cursor) =>
+          archil
+            .listSandboxPortTokens({ sid, cursor })
+            .pipe(
+              Effect.map(
+                ({ data, nextCursor }) => [data.tokens, Option.fromNullishOr(nextCursor)] as const,
+              ),
+            ),
+        ),
+      ),
     setEgress: (egress) =>
       authorize(archil.updateSandboxNetwork({ sid, egress: toEgressPolicy(egress) })).pipe(
         Effect.asVoid,

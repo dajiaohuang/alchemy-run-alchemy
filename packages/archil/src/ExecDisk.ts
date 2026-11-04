@@ -1,9 +1,9 @@
 import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
-import type { ExecDiskClient } from "./Clients.ts";
+import type { DiskDelegationsClient, ExecDiskClient } from "./Clients.ts";
 import type { Disk } from "./Disk.ts";
 
-export type { ExecDiskClient, ExecResult, GrepOptions } from "./Clients.ts";
+export type { DiskDelegationsClient, ExecDiskClient, ExecResult, GrepOptions } from "./Clients.ts";
 
 /**
  * Run serverless commands against one disk, and search it, from a Worker,
@@ -12,8 +12,8 @@ export type { ExecDiskClient, ExecResult, GrepOptions } from "./Clients.ts";
  * minutes), and shuts down, so you pay only for the call. Files the command
  * writes stay on the disk.
  *
- * The host gets its own Archil API key, created at deploy time and
- * revoked when the stack is destroyed.
+ * The host calls Archil with the API key you deploy with: Archil only
+ * creates API keys from the console and can't scope them to one disk.
  *
  * ### Running Commands
  * **Example:** Count rows in a dataset from a Worker
@@ -39,13 +39,24 @@ export type { ExecDiskClient, ExecResult, GrepOptions } from "./Clients.ts";
  * const hits = yield* dataset.grep({ pattern: "TODO", directory: "src", recursive: true });
  * ```
  *
+ * ### Recovering From a Crashed Mount
+ * A mounted client holds write delegations on the paths it writes. When it
+ * crashes without unmounting, reclaim them so other clients can write.
+ *
+ * **Example:** Revoke orphaned delegations
+ * ```typescript
+ * for (const d of yield* dataset.delegations()) {
+ *   if (d.isOrphaned) yield* dataset.revokeDelegation(d);
+ * }
+ * ```
+ *
  * @binding
  * @product Disk
  */
 export interface ExecDisk extends Binding.Service<
   ExecDisk,
   "Archil.ExecDisk",
-  (disk: Disk) => Effect.Effect<ExecDiskClient>
+  (disk: Disk) => Effect.Effect<ExecDiskClient & DiskDelegationsClient>
 > {}
 
 export const ExecDisk = Binding.Service<ExecDisk>("Archil.ExecDisk");

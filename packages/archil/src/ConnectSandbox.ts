@@ -2,6 +2,7 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { ApiAccess } from "./ArchilBindings.ts";
 import { makeSandboxHandle, type SandboxHandle } from "./Clients.ts";
 import type { Sandbox } from "./Sandbox.ts";
@@ -88,6 +89,7 @@ export const ConnectSandboxHttp = Layer.effect(
         ports: via("ports"),
         createPortToken: via("createPortToken"),
         revokePortToken: via("revokePortToken"),
+        listPortTokens: () => Stream.unwrap(Effect.map(handle, (h) => h.listPortTokens())),
         setEgress: via("setEgress"),
         delete: via("delete"),
       } satisfies ConnectSandboxClient;

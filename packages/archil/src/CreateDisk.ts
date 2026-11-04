@@ -3,11 +3,12 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { ApiAccess, RuntimePrefix } from "./ArchilBindings.ts";
 import { makeDiskHandle, type DiskHandle } from "./Clients.ts";
 import { deleteDisk, ensureDisk, type DiskStorage } from "./Disk.ts";
 import type { ArchilFailed, ArchilNotReady } from "./internal/archil.ts";
-import { findDiskByName } from "./internal/archil.ts";
+import { findDiskByName, listAllDisks } from "./internal/archil.ts";
 import { runtimeName, type OnDestroy } from "./RuntimeObjects.ts";
 
 export interface CreateDiskOptions {
@@ -140,8 +141,8 @@ export const CreateDiskHttp = Layer.effect(
           authorize(
             Effect.gen(function* () {
               const p = yield* prefix;
-              const { data } = yield* archil.listDisks({ limit: 1000 });
-              return data
+              const disks = yield* Stream.runCollect(listAllDisks());
+              return disks
                 .filter((d) => d.name.startsWith(`${p}-`) && d.status !== "deleted")
                 .map(handle);
             }),

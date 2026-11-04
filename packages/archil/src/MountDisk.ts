@@ -294,6 +294,12 @@ export interface MountDiskOptions {
    * @default "aws-us-east-1"
    */
   region?: string;
+  /**
+   * Give the host a read-only disk user, so its mounts reject writes
+   * (`EROFS`) whatever `mode` they ask for. Only for `MountDisk(disk)`.
+   * @default false
+   */
+  readOnly?: boolean;
 }
 
 /**
@@ -334,6 +340,12 @@ export interface MountDiskOptions {
  * ) {}
  * ```
  *
+ * **Example:** A host that can only read the disk
+ * ```typescript
+ * const dataset = yield* Archil.MountDisk(Dataset, { readOnly: true });
+ * const path = yield* dataset.mount({ mode: "read-only" });
+ * ```
+ *
  * ### Mounting Disks Named at Run Time
  * **Example:** Mount the disk a job names, with its token
  * ```typescript
@@ -348,7 +360,7 @@ export interface MountDisk extends Binding.Service<
   MountDisk,
   "Archil.MountDisk",
   {
-    (disk: Disk): Effect.Effect<MountDiskClient>;
+    (disk: Disk, options?: Pick<MountDiskOptions, "readOnly">): Effect.Effect<MountDiskClient>;
     (disk?: undefined, options?: MountDiskOptions): Effect.Effect<MountAnyDiskClient>;
   } & ((
     disk?: Disk,
@@ -382,6 +394,7 @@ export const MountDiskLive = Layer.effect(
       const host = yield* Binding.Host;
       const user = yield* Users(`${host?.LogicalId ?? "Script"}${disk.LogicalId}DiskUser`, {
         disk: disk.diskId,
+        readOnly: options?.readOnly,
       });
       const token = yield* user.token;
       const diskId = yield* disk.diskId;

@@ -82,6 +82,40 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
                 Stream.runCollect,
               ),
             );
+          case "/upload": {
+            // Three 4 MiB chunks: one full 8 MiB part plus a 4 MiB tail.
+            const chunk = new Uint8Array(4 * 1024 * 1024).fill(97);
+            const { etag } = yield* write.upload(q("key"), Stream.make(chunk, chunk, chunk));
+            const head = yield* read.head(q("key"));
+            const streamed = yield* read.getStream(q("key")).pipe(
+              Stream.runFold(
+                () => 0,
+                (n, bytes) => n + bytes.byteLength,
+              ),
+            );
+            return yield* HttpServerResponse.json({ etag, size: head?.size ?? null, streamed });
+          }
+          case "/delegations": {
+            // A sandbox that mounts a disk and writes holds a write delegation.
+            const disk = yield* disks.create(q("name"));
+            const holder = yield* sandboxes.create({
+              name: q("name"),
+              mounts: [{ disk: disk.diskId }],
+            });
+            yield* holder.exec("echo held > /mnt/archil/held.txt && sync");
+            const held = yield* disk.delegations();
+            yield* Effect.forEach(held, (d) => disk.revokeDelegation(d), { discard: true });
+            const after = yield* disk.delegations();
+            yield* holder.delete();
+            yield* disks.delete(q("name"));
+            // ExecDisk exposes the same call for deploy-time disks.
+            const dataset = yield* exec.delegations();
+            return yield* HttpServerResponse.json({
+              held: held.length,
+              after: after.length,
+              dataset: Array.isArray(dataset),
+            });
+          }
           case "/share":
             return yield* HttpServerResponse.json({
               url: Redacted.value(yield* read.share(q("key"), 600)),
@@ -137,6 +171,21 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
             const port = yield* preview.exposePort(8080);
             yield* preview.unexposePort(8080);
             return yield* HttpServerResponse.json({ stdout: out.stdout, hostname: port.hostname });
+          }
+          case "/port-tokens": {
+            yield* preview.exposePort(8081);
+            const token = yield* preview.createPortToken(8081, "1h");
+            const listed = yield* preview.listPortTokens().pipe(
+              Stream.map((t) => t.id),
+              Stream.runCollect,
+            );
+            yield* preview.revokePortToken(token.tokenId);
+            const after = yield* preview.listPortTokens().pipe(
+              Stream.map((t) => t.id),
+              Stream.runCollect,
+            );
+            yield* preview.unexposePort(8081);
+            return yield* HttpServerResponse.json({ id: token.tokenId, listed, after });
           }
           case "/mount": {
             const result = yield* mounts.getByName("default").read(q("key"));

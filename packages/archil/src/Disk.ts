@@ -5,6 +5,7 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import {
   diskName,
   findDiskByName,
@@ -12,6 +13,7 @@ import {
   isAlchemyName,
   waitForDisk,
   waitForDiskGone,
+  listAllDisks,
 } from "./internal/archil.ts";
 import type { Providers } from "./Providers.ts";
 
@@ -332,9 +334,9 @@ export const DiskProvider = () =>
       return {
         stables: ["diskId", "name", "organization", "region", "storageType"],
         list: Effect.fn(function* () {
-          const { data } = yield* archil.listDisks({ limit: 1000 });
+          const disks = yield* Stream.runCollect(listAllDisks());
           return yield* Effect.forEach(
-            data.filter((disk) => isAlchemyName(disk.name) && disk.status !== "deleted"),
+            disks.filter((disk) => isAlchemyName(disk.name) && disk.status !== "deleted"),
             (disk) => readDiskSettings(disk.id).pipe(Effect.map((s) => toDiskAttributes(disk, s))),
             { concurrency: 4 },
           );

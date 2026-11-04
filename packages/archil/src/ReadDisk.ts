@@ -13,8 +13,12 @@ export interface DiskObjectsOptions {
 
 /**
  * Read a disk's files as objects over Archil's S3-compatible API, with no
- * machine and no mount: get, head, list, and signed share URLs. Reads see
- * what mounted clients have written.
+ * machine and no mount: get, stream, head, list, and presigned share URLs.
+ * Reads see what mounted clients have written.
+ *
+ * The host gets its own read-only S3 user on this disk: its keys can only
+ * `GET` and `HEAD` this disk's files, and the host never holds an API key.
+ * Destroying the stack revokes the user.
  *
  * ### Reading Files
  * **Example:** Serve files from a disk in a Worker
@@ -34,6 +38,12 @@ export interface DiskObjectsOptions {
  * ) {}
  * ```
  *
+ * **Example:** Stream a large file to the response
+ * ```typescript
+ * return HttpServerResponse.stream(files.getStream("exports/data.parquet"));
+ * ```
+ *
+ * ### Sharing Files
  * **Example:** A one-hour download link
  * ```typescript
  * const url = yield* files.share("reports/2026-11.pdf", 3600);

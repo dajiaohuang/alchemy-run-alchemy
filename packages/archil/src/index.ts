@@ -4,10 +4,12 @@ export * from "./Branch.ts";
 export * from "./BranchDisk.ts";
 export * from "./Checkpoint.ts";
 export type {
+  DiskDelegationsClient,
   DiskHandle,
   ObjectsTransportError,
   ReadWriteDiskClient,
   RunOptions,
+  ShareError,
   SandboxHandle,
 } from "./Clients.ts";
 export * from "./ConnectSandbox.ts";

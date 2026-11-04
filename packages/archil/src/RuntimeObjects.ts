@@ -4,8 +4,9 @@ import { createPhysicalName } from "alchemy/PhysicalName";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { deleteDisk } from "./Disk.ts";
-import { listSandboxes, toDnsLabel } from "./internal/archil.ts";
+import { listAllDisks, listSandboxes, toDnsLabel } from "./internal/archil.ts";
 import type { Providers } from "./Providers.ts";
 import { deleteSandbox } from "./Sandbox.ts";
 
@@ -87,8 +88,8 @@ export const sweep = Effect.fn(function* (
     }
   }
   if (kinds.includes("disk")) {
-    const { data } = yield* archil.listDisks({ limit: 1000 });
-    const disks = data.filter((d) => owned(d.name) && d.status !== "deleted");
+    const all = yield* Stream.runCollect(listAllDisks());
+    const disks = all.filter((d) => owned(d.name) && d.status !== "deleted");
     yield* Effect.forEach(disks, (d) => deleteDisk(d.id), { concurrency: 4 });
   }
 });

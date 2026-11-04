@@ -8,7 +8,9 @@ import { createPhysicalName } from "alchemy/PhysicalName";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 /** Disk names: letters, digits, `-` and `_`, at most 100 characters. */
 export const diskName = (id: string, name: string | undefined) =>
@@ -81,10 +83,24 @@ export const pollUntil = <A, B, E extends { readonly _tag: string }, R>(
     }),
   );
 
+/** Every disk (or every disk with this exact name), following `nextCursor`. */
+export const listAllDisks = (name?: string) =>
+  Stream.paginate(undefined as string | undefined, (cursor) =>
+    archil
+      .listDisks({ name, cursor, limit: 1000 })
+      .pipe(
+        Effect.map(({ data, nextCursor }) => [data, Option.fromNullishOr(nextCursor)] as const),
+      ),
+  );
+
 /** Find a disk by exact name. */
 export const findDiskByName = Effect.fn(function* (name: string) {
-  const { data } = yield* archil.listDisks({ name, limit: 100 });
-  return data.find((disk) => disk.name === name);
+  return Option.getOrUndefined(
+    yield* listAllDisks(name).pipe(
+      Stream.filter((disk) => disk.name === name),
+      Stream.runHead,
+    ),
+  );
 });
 
 /** Get a disk by id; `undefined` when it doesn't exist. */

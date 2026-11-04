@@ -2,6 +2,7 @@ import * as Archil from "@alchemy.run/archil";
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { describe, expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
+import * as archil from "@distilled.cloud/archil";
 import * as Alchemy from "alchemy";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -10,7 +11,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import MountContainerLive from "./fixtures/mount-container.ts";
-import { Preview, SeedBase } from "./fixtures/resources.ts";
+import { Dataset, Preview, SeedBase } from "./fixtures/resources.ts";
 import ArchilWorker from "./fixtures/worker.ts";
 
 const providers = Layer.mergeAll(Archil.providers(), Cloudflare.providers());
@@ -22,8 +23,9 @@ const Stack = Alchemy.Stack(
   Effect.gen(function* () {
     yield* SeedBase;
     const preview = yield* Preview;
+    const dataset = yield* Dataset;
     const worker = yield* ArchilWorker;
-    return { url: worker.url.as<string>(), preview: preview.sandboxId };
+    return { url: worker.url.as<string>(), preview: preview.sandboxId, dataset: dataset.diskId };
   }).pipe(Effect.provide(MountContainerLive)),
 );
 
@@ -62,6 +64,68 @@ describe("WriteDisk + ReadDisk", () => {
       const client = yield* HttpClient.HttpClient;
       const shared = yield* client.get(url).pipe(Effect.flatMap((r) => r.text));
       expect(shared).toBe("hello archil");
+    }),
+    { tags, timeout: 180_000 },
+  );
+});
+
+describe("Least privilege", () => {
+  test.provider(
+    "object bindings hold S3 users on the bound disk only, read-only for ReadDisk",
+    () =>
+      Effect.gen(function* () {
+        const { dataset } = yield* stack;
+        const { data } = yield* archil.getDisk({ id: dataset });
+        const s3 = (data.authorizedUsers ?? []).filter((u) => u.type === "s3");
+        // ReadDisk → one read-only user; WriteDisk and ReadWriteDisk share one read-write user.
+        expect(s3.map((u) => u.readOnly ?? false).sort()).toEqual([false, true]);
+        // MountDisk(Dataset, { readOnly: true }) → the Container's one read-only token user.
+        const readOnlyTokens = (data.authorizedUsers ?? []).filter(
+          (u) => u.type === "token" && u.readOnly === true,
+        );
+        expect(readOnlyTokens.length).toBe(1);
+      }),
+    { tags, timeout: 60_000 },
+  );
+});
+
+describe("WriteDisk.upload + ReadDisk.getStream", () => {
+  test(
+    "a 12 MiB file uploads in parts and streams back whole",
+    Effect.gen(function* () {
+      const body = yield* json<{ etag: string; size: number; streamed: number }>(
+        "/upload?key=big.bin",
+      );
+      expect(body.size).toBe(12 * 1024 * 1024);
+      expect(body.streamed).toBe(12 * 1024 * 1024);
+      expect(body.etag).toMatch(/-2"?$/);
+    }),
+    { tags, timeout: 180_000 },
+  );
+});
+
+describe("delegations", () => {
+  test(
+    "a mounted writer's delegation is listed and revoked",
+    Effect.gen(function* () {
+      const body = yield* json<{ held: number; after: number; dataset: boolean }>(
+        "/delegations?name=delegated",
+      );
+      expect(body.held).toBeGreaterThan(0);
+      expect(body.after).toBe(0);
+      expect(body.dataset).toBe(true);
+    }),
+    { tags, timeout: 180_000 },
+  );
+});
+
+describe("ConnectSandbox.listPortTokens", () => {
+  test(
+    "a created port token is listed until it's revoked",
+    Effect.gen(function* () {
+      const body = yield* json<{ id: string; listed: string[]; after: string[] }>("/port-tokens");
+      expect(body.listed).toContain(body.id);
+      expect(body.after).not.toContain(body.id);
     }),
     { tags, timeout: 180_000 },
   );

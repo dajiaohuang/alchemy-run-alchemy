@@ -18,7 +18,7 @@ export default MountContainer.make(
     observability: { logs: { enabled: true } },
   },
   Effect.gen(function* () {
-    const dataset = yield* Archil.MountDisk(Dataset);
+    const dataset = yield* Archil.MountDisk(Dataset, { readOnly: true });
     const fs = yield* FileSystem.FileSystem;
     return {
       fetch: Effect.scoped(

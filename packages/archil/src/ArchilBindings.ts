@@ -1,13 +1,16 @@
 /**
- * How Archil bindings reach the control plane from any host.
+ * How Archil bindings reach Archil from any host.
  *
  * Archil only mints API keys from a console session and can't scope them,
  * so a host's control-plane clients use the key the stack deploys with,
- * recorded per host and read back at run time. A host that only mounts
- * disks never holds an API key at all; it gets a per-disk `Archil.DiskUser`
- * instead (see `MountDisk`).
+ * recorded per host and read back at run time. Hosts that only touch one
+ * disk never hold an API key: the object bindings get a per-host S3
+ * `Archil.DiskUser` (read-only for `ReadDisk`), and `MountDisk` a per-host
+ * token user.
  */
 import { controlPlaneUrl, Credentials, DEFAULT_REGION } from "@distilled.cloud/archil/Credentials";
+import * as Objects from "@distilled.cloud/archil/Objects";
+import { ConfigError } from "@distilled.cloud/core/errors";
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
@@ -15,8 +18,28 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import type { Disk } from "./Disk.ts";
+import { DiskUser } from "./DiskUser.ts";
 import { DeployerKey } from "./internal/DeployerKey.ts";
 import { RuntimeObjects, type OnDestroy } from "./RuntimeObjects.ts";
+
+/** Runs disk object effects and streams with one set of object credentials. */
+export interface ObjectsRunner {
+  <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<
+    A,
+    E,
+    Exclude<R, Objects.ObjectCredentials | HttpClient.HttpClient> | RuntimeContext
+  >;
+  stream<A, E, R>(
+    stream: Stream.Stream<A, E, R>,
+  ): Stream.Stream<
+    A,
+    E,
+    Exclude<R, Objects.ObjectCredentials | HttpClient.HttpClient> | RuntimeContext
+  >;
+}
 
 /** Runs Archil SDK effects and streams with the host's own API key. */
 export interface Authorize {
@@ -26,7 +49,16 @@ export interface Authorize {
   stream<A, E, R>(
     stream: Stream.Stream<A, E, R>,
   ): Stream.Stream<A, E, Exclude<R, Credentials | HttpClient.HttpClient> | RuntimeContext>;
+  /** Disk object calls with the same API key. */
+  readonly objects: ObjectsRunner;
 }
+
+// TypeScript can't infer a generic call signature whose requirement is
+// `Exclude<R, …>` from `Effect.provide`, so runners assert their shape.
+const runnerOf = <Rm>(layer: Layer.Layer<Rm>) => ({
+  run: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(layer)),
+  stream: <A, E, R>(stream: Stream.Stream<A, E, R>) => stream.pipe(Stream.provide(layer)),
+});
 
 /**
  * Record (at deploy) and read back (at run time) the API key a host's
@@ -47,16 +79,53 @@ export const ApiAccess = Effect.gen(function* () {
         region: r,
       })),
     );
-    const layer = Layer.mergeAll(Layer.succeed(Credentials, credentials), FetchHttpClient.layer);
-    const authorize = Object.assign(
-      <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(layer)),
-      {
-        stream: <A, E, R>(stream: Stream.Stream<A, E, R>) => stream.pipe(Stream.provide(layer)),
-      },
-      // TypeScript can't infer a generic call signature whose requirement is
-      // `Exclude<R, …>` from `Effect.provide`, so the shape is asserted.
-    ) as unknown as Authorize;
-    return authorize;
+    const layer = Layer.mergeAll(Objects.ObjectCredentialsFromApiKey, FetchHttpClient.layer).pipe(
+      Layer.provideMerge(Layer.succeed(Credentials, credentials)),
+    );
+    const { run, stream } = runnerOf(layer);
+    const objects = Object.assign(run, { stream }) as unknown as ObjectsRunner;
+    return Object.assign(run, { stream, objects }) as unknown as Authorize;
+  });
+});
+
+/**
+ * Create (at deploy) and read back (at run time) a per-host S3 user on one
+ * disk, and run object calls signed with its keys. The keys reach only
+ * that disk, and only `GET`/`HEAD` when `readOnly`. Every object binding
+ * of one kind on one host shares one user (the engine de-duplicates the
+ * declaration).
+ */
+export const DiskKeyAccess = Effect.gen(function* () {
+  const Users = yield* DiskUser;
+  return Effect.fn(function* (disk: Disk, access: "read" | "write") {
+    const host = yield* Binding.Host;
+    const user = yield* Users(
+      `${host?.LogicalId ?? "Script"}${disk.LogicalId}${access === "read" ? "Reader" : "Writer"}`,
+      { disk: disk.diskId, type: "s3", readOnly: access === "read" },
+    );
+    const accessKeyId = yield* user.accessKeyId;
+    const secretAccessKey = yield* user.secretAccessKey;
+    const region = yield* disk.region;
+    const auth = Effect.gen(function* () {
+      const keyId = yield* accessKeyId;
+      const secret = yield* secretAccessKey;
+      if (keyId === undefined || secret === undefined) {
+        return yield* new ConfigError({
+          message: `The S3 user for ${disk.LogicalId} has no keys; redeploy to create them again.`,
+        });
+      }
+      return yield* Objects.diskKeysAuth({
+        region: yield* region,
+        accessKeyId: keyId,
+        secretAccessKey: secret,
+      });
+    });
+    const layer = Layer.mergeAll(
+      Layer.succeed(Objects.ObjectCredentials, auth),
+      FetchHttpClient.layer,
+    );
+    const { run, stream } = runnerOf(layer);
+    return Object.assign(run, { stream }) as unknown as ObjectsRunner;
   });
 });
 

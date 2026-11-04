@@ -8,7 +8,8 @@ export type { ReadWriteDiskClient } from "./Clients.ts";
 
 /**
  * Read and write a disk's files as objects: everything {@link ReadDisk}
- * and {@link WriteDisk} do, in one client.
+ * and {@link WriteDisk} do, in one client. The host gets its own
+ * read-write S3 user on this disk, and never holds an API key.
  *
  * ### Reading and Writing
  * **Example:** Upload, then hand out a link
