@@ -34,11 +34,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
         if (url.pathname === "/run") {
           const home = yield* volumes.getOrCreate(`home-${user}`);
           const sandbox = yield* sandboxes.create({
-            volumes: { "/home/user": home.attributes },
+            mounts: [{ volume: home, path: "/home/user" }],
             timeout: "5 minutes",
           });
           const result = yield* sandbox
-            .exec(["sh", "-c", "ls /work && cat /home/user/notes.txt"])
+            .exec("ls /work && cat /home/user/notes.txt")
             .pipe(Effect.ensuring(Effect.ignore(sandbox.terminate())));
           return yield* HttpServerResponse.json(result);
         }

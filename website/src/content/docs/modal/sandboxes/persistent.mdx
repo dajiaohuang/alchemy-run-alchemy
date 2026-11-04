@@ -19,12 +19,13 @@ export const DevBox = Modal.PersistentSandbox("DevBox", { app: Coder, image: War
 
 ```typescript
 // construction phase
-const sandboxes = yield* Modal.CreateSandbox(Coder);
-const devBoxId = yield* (yield* DevBox).persistentSandboxId;
+const box = yield* Modal.ConnectSandbox(DevBox);
 // in fetch:
-const session = yield* (yield* sandboxes.persistent(yield* devBoxId)).session();
-const status = yield* session.exec(["git", "status"]);
+const session = yield* box.session();
+const status = yield* session.exec("git status");
 ```
+
+`session()` returns the running session, or resumes the box from its last session's files.
 
 ## One per user, at runtime
 

@@ -228,7 +228,7 @@ export type FunctionRuntimeContext = HostRuntimeContext;
  *     main: import.meta.url,
  *     app: Inference,
  *     gpu: "L4",
- *     volumes: { "/models": Weights },
+ *     mounts: [{ volume: Weights, path: "/models" }],
  *     minContainers: 1,
  *     scaledownWindow: 300,
  *     maxConcurrentInputs: 8,

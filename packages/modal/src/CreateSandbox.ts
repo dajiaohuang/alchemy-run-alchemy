@@ -135,7 +135,7 @@ export interface SandboxesClient {
  *           sandboxes.create({ timeout: "10 minutes" }),
  *           (sandbox) => Effect.ignore(sandbox.terminate()),
  *         );
- *         const test = yield* sandbox.exec(["pnpm", "test"], { workdir: "/work" });
+ *         const test = yield* sandbox.exec(["pnpm", "test"], { cwd: "/work" });
  *         return yield* HttpServerResponse.json(test);
  *       }).pipe(Effect.scoped, Effect.orDie),
  *     };
@@ -178,7 +178,7 @@ export interface SandboxesClient {
  * ```typescript
  * const box = yield* sandboxes.createPersistent({ image: "node:22-bookworm" });
  * const session = yield* box.session();
- * yield* session.exec(["sh", "-c", "echo hi >> /root/notes.txt"]);
+ * yield* session.exec("echo hi >> /root/notes.txt");
  * // later, from any request: resumes the box if it paused
  * const again = yield* (yield* sandboxes.persistent(box.persistentSandboxId)).session();
  * ```
@@ -186,7 +186,7 @@ export interface SandboxesClient {
  * ### Snapshots
  * **Example:** Save a warmed sandbox and boot the next one from it
  * ```typescript
- * yield* sandbox.exec(["pnpm", "install"], { workdir: "/work" });
+ * yield* sandbox.exec(["pnpm", "install"], { cwd: "/work" });
  * const image = yield* sandbox.snapshotFilesystem();
  * const next = yield* sandboxes.create({ image });
  * ```

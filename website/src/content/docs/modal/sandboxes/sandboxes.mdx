@@ -37,17 +37,23 @@ A name is unique among an app's running sandboxes. `idleTimeout` stops it once n
 ## Run a command
 
 ```typescript
-const result = yield* sandbox.exec(["pnpm", "test"], { workdir: "/work" });
+const result = yield* sandbox.exec(["pnpm", "test"], { cwd: "/work" });
 ```
 
-`result` has `exitCode`, `stdout` and `stderr`.
+`result` has `exitCode`, `stdout` and `stderr`; a non-zero exit is returned, not failed. A string runs with `sh -c`:
+
+```typescript
+const result = yield* sandbox.exec("pnpm install && pnpm test", { cwd: "/work" });
+```
 
 ## Read and write files
 
 ```typescript
-yield* sandbox.writeFile("/tmp/task.json", JSON.stringify(task));
-const report = yield* sandbox.readFileString("/tmp/report.json");
+yield* sandbox.files.write("/tmp/task.json", JSON.stringify(task));
+const report = yield* sandbox.files.readText("/tmp/report.json");
 ```
+
+`files` also has `read` (bytes), `list`, `stat`, `remove` and `makeDir`.
 
 ## Reach a port
 

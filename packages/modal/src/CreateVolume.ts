@@ -71,7 +71,7 @@ export type VolumesClient = VolumesClientOf<RuntimeContext>;
  *         const user = request.headers["x-user"] ?? "anonymous";
  *         const home = yield* volumes.getOrCreate(`user-${user}`);
  *         yield* home.writeFile("/notes.md", "hello");
- *         const sandbox = yield* sandboxes.create({ volumes: { "/home/user": home.attributes } });
+ *         const sandbox = yield* sandboxes.create({ mounts: [{ volume: home, path: "/home/user" }] });
  *         return HttpServerResponse.text("ok");
  *       }).pipe(Effect.orDie),
  *     };

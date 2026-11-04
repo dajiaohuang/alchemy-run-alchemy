@@ -105,6 +105,26 @@ export const bindingRoutes = Effect.gen(function* () {
           }).pipe(Effect.ensuring(Effect.ignore(sandbox.terminate())));
           return yield* HttpServerResponse.json(out);
         }
+        case "/mount": {
+          // A runtime volume handle and a `MountVolume` reference, mounted
+          // into a sandbox created per request.
+          const home = yield* volumes.getOrCreate(`mount-${key}`);
+          yield* home.writeFile("/hello.txt", `hello ${key}`);
+          const sandbox = yield* appSandboxes.create({
+            image: "debian:bookworm-slim",
+            timeout: "5 minutes",
+            mounts: [{ volume: home, path: "/home/user" }, mountedWorkspace],
+          });
+          const out = yield* Effect.gen(function* () {
+            const run = yield* sandbox.exec(
+              "cat /home/user/hello.txt && test -d /workspace && echo mounted",
+            );
+            const stat = yield* sandbox.files.stat("/home/user/hello.txt");
+            return { stdout: run.stdout, exitCode: run.exitCode, size: stat.size, type: stat.type };
+          }).pipe(Effect.ensuring(Effect.ignore(sandbox.terminate())));
+          yield* volumes.delete(`mount-${key}`);
+          return yield* HttpServerResponse.json(out);
+        }
         case "/sandbox-named": {
           const name = `named-${key}`;
           const created = yield* appSandboxes.create({

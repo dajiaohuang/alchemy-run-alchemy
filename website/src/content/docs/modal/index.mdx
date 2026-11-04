@@ -57,7 +57,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         const user = new URL(request.url, "http://api").searchParams.get("user") ?? "anonymous";
         const home = yield* volumes.getOrCreate(`home-${user}`);
         const sandbox = yield* sandboxes.create({
-          volumes: { "/home/user": home.attributes },
+          mounts: [{ volume: home, path: "/home/user" }],
           timeout: "5 minutes",
         });
         const result = yield* sandbox

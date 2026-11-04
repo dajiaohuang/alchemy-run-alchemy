@@ -6,7 +6,7 @@ description: Save a sandbox's files or memory and start new sandboxes from it.
 ## Save the filesystem
 
 ```typescript
-yield* sandbox.exec(["pnpm", "install"], { workdir: "/work" });
+yield* sandbox.exec(["pnpm", "install"], { cwd: "/work" });
 const image = yield* sandbox.snapshotFilesystem();
 ```
 

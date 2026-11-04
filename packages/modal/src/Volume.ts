@@ -86,9 +86,11 @@ export interface VolumeAttributes {
  * ### Mounting in a Sandbox
  * **Example:** Mount at `/cache`
  * ```typescript
- * const sandbox = yield* sandboxes.create({
- *   volumes: { "/cache": cache },
- * });
+ * // construction phase
+ * const cache = yield* Modal.MountVolume(Cache, { path: "/cache" });
+ * const sandboxes = yield* Modal.CreateSandbox(Coder);
+ * // per request
+ * const sandbox = yield* sandboxes.create({ mounts: [cache] });
  * ```
  *
  * ### Reading files from a Worker
