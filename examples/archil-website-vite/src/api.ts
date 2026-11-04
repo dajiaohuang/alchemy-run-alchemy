@@ -36,13 +36,18 @@ export default class Api extends Archil.Service<Api>()(
         if (request.method === "OPTIONS") return yield* json({}, 204);
         if (path === "/health") return yield* json({ ok: true });
         if (path === "/notes" && request.method === "GET") {
+          // The listing includes the `notes/` directory itself; read only the files.
           const keys = yield* notes.list("notes/").pipe(
             Stream.map((o) => o.key),
+            Stream.filter((key) => key.endsWith(".json")),
             Stream.runCollect,
           );
           const all = yield* Effect.forEach(
             keys,
-            (key) => Effect.map(notes.getText(key), (text) => JSON.parse(text) as Note),
+            (key) =>
+              notes
+                .getText(key)
+                .pipe(Effect.flatMap((text) => Effect.try(() => JSON.parse(text) as Note))),
             { concurrency: 8 },
           );
           return yield* json({ notes: all.sort((a, b) => b.id - a.id) });
