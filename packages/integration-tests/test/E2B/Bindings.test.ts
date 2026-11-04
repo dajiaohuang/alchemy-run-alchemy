@@ -150,7 +150,9 @@ describe("CreateSandbox", () => {
       expect(body.resumedState).toBe("running");
       expect(body.state).toBe("kept");
       expect(body.metadata.task).toBe(task);
-      expect(body.metadata["alchemy::host"]).toBe("E2BWorker");
+      // Stamped by the Worker's E2B.RuntimeObjects for sandboxes.
+      expect(body.metadata["alchemy::runtime"]).toBe("sandboxes");
+      expect(body.metadata["alchemy::id"]).toContain("E2BSandboxes");
       expect(body.killedAgain).toBe("ok");
       const gone = yield* distilled(
         sandboxes.getSandbox({ sandboxID: body.sandboxId }).pipe(
