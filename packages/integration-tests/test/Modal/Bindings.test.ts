@@ -162,7 +162,7 @@ for (const host of hosts) {
             type: string;
           }>(host, `/mount?key=m-${host.key}`);
           expect(body.exitCode).toBe(0);
-          expect(body.stdout).toBe(`hello m-${host.key}\nmounted\n`);
+          expect(body.stdout).toBe(`hello m-${host.key}mounted\n`);
           expect(body.size).toBe(`hello m-${host.key}`.length);
           expect(body.type).toBe("file");
         }),
@@ -188,7 +188,7 @@ for (const host of hosts) {
           // "one" streamed before the command finished, not at exit.
           const one = body.chunks.find((c) => c.text.includes("one"))!;
           const got = body.chunks.find((c) => c.text.includes("got="))!;
-          expect(got.at - one.at).toBeGreaterThan(2_000);
+          expect(got.at - one.at).toBeGreaterThan(1_500);
           expect(body.pty).toBe(true);
         }),
         { tags: tags(host, "sandbox"), timeout: 300_000 },

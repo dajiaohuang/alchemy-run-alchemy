@@ -618,7 +618,7 @@ export const SandboxOps = operations({
 export type SandboxOps = Effect.Success<typeof SandboxOps>;
 
 /** How long one read of a running command's output waits for more. */
-const FOLLOW_DEADLINE_MS = 2_000;
+const FOLLOW_DEADLINE_MS = 1_000;
 
 /** Task command router operations, resolved per sandbox with its router access. */
 const routerOps = {
