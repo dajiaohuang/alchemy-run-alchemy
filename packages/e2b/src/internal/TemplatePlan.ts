@@ -34,6 +34,10 @@ export const E2BCapabilities: BuildPlan.Capabilities = {
   runMounts: false,
   remoteAdd: false,
   platforms: ["linux/amd64"],
+  // E2B's builder takes no build args or build secrets: arg values are
+  // written into the steps, and secret mounts fail at plan.
+  buildArgs: false,
+  secrets: false,
   instructions: {
     SHELL: "unsupported",
     EXPOSE: "ignored",
@@ -206,6 +210,8 @@ export interface PlanSourceOptions {
   readonly bootstrap?: (importPath: string) => string;
   /** `ARG` values. */
   readonly args?: Readonly<Record<string, string>>;
+  /** Install lines from the program's mount capabilities (`alchemy/Mount`). */
+  readonly install?: ReadonlyArray<string>;
 }
 
 /** Plans an image source with E2B's capabilities and lowers it to E2B steps. */
@@ -215,6 +221,9 @@ export const planSource = (source: ImageSourceProps, options: PlanSourceOptions 
       capabilities: E2BCapabilities,
       ...(options.port !== undefined ? { port: options.port } : {}),
       ...(options.bootstrap !== undefined ? { bootstrap: options.bootstrap } : {}),
+      ...(options.install !== undefined && options.install.length > 0
+        ? { install: options.install }
+        : {}),
     });
     for (const warning of plan.warnings) yield* Effect.logDebug(warning);
     return yield* lowerPlan(plan, { ...plan.args, ...options.args });

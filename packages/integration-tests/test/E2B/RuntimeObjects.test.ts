@@ -82,8 +82,13 @@ test.provider(
       );
       expect(usedAt.some((stamp) => stamp !== undefined)).toBe(true);
 
+      // Stamped with the host's RuntimeObjects: its tags plus the kind.
       const alive = yield* sandboxes.getSandbox({ sandboxID: left.sandboxId });
-      expect(alive.metadata?.["alchemy::host"]).toBe("E2BWorker");
+      expect(alive.metadata?.["alchemy::runtime"]).toBe("sandboxes");
+      expect(alive.metadata?.["alchemy::id"]).toContain("E2BSandboxes");
+      const stored = yield* secrets.getSecret({ secretID: left.secretId });
+      expect(stored.metadata["alchemy::runtime"]).toBe("secrets");
+      expect(stored.metadata["alchemy::id"]).toContain("E2BSecrets");
 
       yield* stack.destroy();
 
@@ -102,7 +107,7 @@ test.provider(
       expect(minted.filter((id) => after.has(id))).toEqual([]);
     }),
   {
-    tags: ["provider:e2b", "provider:e2b:sweep", "provider:cloudflare", "live"],
+    tags: ["provider:e2b", "provider:e2b:runtime-objects", "provider:cloudflare", "live"],
     timeout: 600_000,
   },
 );
@@ -112,23 +117,23 @@ test.provider(
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      yield* stack.deploy(
+      const objects = yield* stack.deploy(
         Effect.gen(function* () {
-          // A sweep declared directly, as CreateSandbox({ onDestroy: "retain" }) declares it.
-          const sweep = yield* E2B.Sweep("RetainSweep", {
-            stamp: { "alchemy::host": "RetainProbe" },
+          // Declared directly, as CreateSandbox({ onDestroy: "retain" }) declares it.
+          return yield* E2B.RuntimeObjects("Retained", {
             kinds: ["sandboxes"],
             onDestroy: "retain",
           });
-          return { sweep };
         }),
       );
+      expect(objects.onDestroy).toBe("retain");
+      expect(objects.tags["alchemy::id"]).toBe("Retained");
       // On a public template: E2B refuses to delete a template while a
       // sandbox runs on it, and this one is kept.
       const kept = yield* sandboxes.createSandbox({
         templateID: "base",
         timeout: 120,
-        metadata: { "alchemy::host": "RetainProbe" },
+        metadata: { ...objects.tags, "alchemy::runtime": "sandboxes" },
       });
       yield* stack.destroy();
       const state = yield* sandboxes.getSandbox({ sandboxID: kept.sandboxID }).pipe(
@@ -138,5 +143,5 @@ test.provider(
       yield* sandboxes.deleteSandbox({ sandboxID: kept.sandboxID }).pipe(Effect.ignore);
       expect(state).toBe("running");
     }),
-  { tags: ["provider:e2b", "provider:e2b:sweep", "live"], timeout: 600_000 },
+  { tags: ["provider:e2b", "provider:e2b:runtime-objects", "live"], timeout: 600_000 },
 );

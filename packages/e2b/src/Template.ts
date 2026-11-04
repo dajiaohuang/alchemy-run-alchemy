@@ -4,6 +4,13 @@ import * as templates from "@distilled.cloud/e2b/templates";
 import { Unowned } from "alchemy/AdoptPolicy";
 import type * as Bundle from "alchemy/Bundle/Bundle";
 import { isResolved } from "alchemy/Diff";
+import {
+  checkMountSupport,
+  collectMountCapabilities,
+  type MountCapability,
+  mountEnv,
+  mountInstallLines,
+} from "alchemy/Mount";
 import { Platform, type Main, type PlatformProps } from "alchemy/Platform";
 import * as Provider from "alchemy/Provider";
 import type { Resource, ResourceBinding } from "alchemy/Resource";
@@ -135,10 +142,17 @@ export interface TemplateAttributes {
   mounts: VolumeMount[];
 }
 
-/** What bindings attach to a template program: its environment and volume mounts. */
+/** What bindings attach to a template program. */
 export interface TemplateBinding {
+  /** The program's environment. */
   env?: Record<string, any>;
-  mounts?: VolumeMount[];
+  /**
+   * Mount clients (`alchemy/Mount`) the program needs, installed into the
+   * template. E2B sandboxes have FUSE and NFS.
+   */
+  mounts?: ReadonlyArray<MountCapability>;
+  /** E2B volumes every sandbox from the template mounts (`E2B.MountVolume`). */
+  volumes?: VolumeMount[];
 }
 
 export interface Template extends Resource<
@@ -350,12 +364,28 @@ const boundMounts = (
         (binding: ResourceBinding<TemplateBinding> & { action?: string }) =>
           binding.action !== "delete",
       )
-      .flatMap((binding) => binding.data?.mounts ?? [])
+      .flatMap((binding) => binding.data?.volumes ?? [])
       .map(
         (mount) => [mount.path, { volume: { name: mount.volume.name }, path: mount.path }] as const,
       ),
   ).values(),
 ];
+
+/** The mount clients the template's bindings need. */
+const boundCapabilities = (
+  bindings: ReadonlyArray<ResourceBinding<TemplateBinding>> | undefined,
+): ReadonlyArray<MountCapability> =>
+  collectMountCapabilities(
+    (bindings ?? [])
+      .filter(
+        (binding: ResourceBinding<TemplateBinding> & { action?: string }) =>
+          binding.action !== "delete",
+      )
+      .map((binding) => ({ data: { mounts: binding.data?.mounts ?? [] } })),
+  );
+
+/** What an E2B sandbox's kernel offers mount clients (checked live: `/dev/fuse`, nfs/nfs4, CAP_SYS_ADMIN). */
+const E2B_MOUNT_SUPPORT = { fuse: true, nfs: true } as const;
 
 const boundEnv = (bindings: ReadonlyArray<ResourceBinding<TemplateBinding>> | undefined) =>
   (bindings ?? [])
@@ -378,6 +408,9 @@ const planOf = Effect.fn(function* (
   const programPort = port ?? DEFAULT_PORT;
   const { args, ...bundle } = build ?? {};
   let lowered: LoweredSource | undefined;
+  const capabilities = boundCapabilities(bindings);
+  const unsupported = checkMountSupport("E2B.Template", capabilities, E2B_MOUNT_SUPPORT);
+  if (unsupported !== undefined) return yield* unsupported;
   if (main !== undefined) {
     // The program, on `image` / `dockerfile` as its environment.
     lowered = yield* planSource(
@@ -392,6 +425,7 @@ const planOf = Effect.fn(function* (
       {
         port: programPort,
         ...(args !== undefined ? { args } : {}),
+        install: mountInstallLines(capabilities),
         ...((news as { isExternal?: boolean }).isExternal
           ? {}
           : { bootstrap: makeBootstrap(handler ?? "default") }),
@@ -419,7 +453,7 @@ const planOf = Effect.fn(function* (
     env:
       main === undefined
         ? yield* plainEnv(env)
-        : yield* programEnv(programPort, boundEnv(bindings), env),
+        : yield* programEnv(programPort, { ...mountEnv(capabilities), ...boundEnv(bindings) }, env),
     ...(main !== undefined ? { readyCmd: steps.readyCmd ?? programReadyCmd(programPort) } : {}),
   } satisfies TemplateBuildSpec;
   return { spec, plan: yield* planTemplateBuild(spec, lowered) };

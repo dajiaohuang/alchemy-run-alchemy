@@ -36,7 +36,7 @@ export const MountVolumeLive = Layer.succeed(
       // hence the cast once the type is checked.
       if (host?.Type === "E2B.Template") {
         yield* (host as unknown as Template).bind`${volume}`({
-          mounts: [{ volume: { name: volume.name }, path: options.path }],
+          volumes: [{ volume: { name: volume.name }, path: options.path }],
         });
       }
     }

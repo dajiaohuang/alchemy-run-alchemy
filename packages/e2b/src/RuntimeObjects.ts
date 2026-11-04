@@ -89,13 +89,4 @@ const sweep = Effect.fn("E2B.RuntimeObjects.sweep")(function* (
 });
 
 export const RuntimeObjectsProvider = () =>
-  Provider.effect(
-    RuntimeObjects,
-    Effect.succeed({
-      ...Shared.lifecycle(sweep),
-      // `lifecycle`'s `stables` is a readonly tuple, which `ProviderService`'s
-      // mutable `stables` array rejects (reported on #2928); drop this line
-      // once it accepts it.
-      stables: ["tags", "owner", "prefix"],
-    }),
-  );
+  Provider.effect(RuntimeObjects, Effect.succeed(Shared.lifecycle(sweep)));

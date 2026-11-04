@@ -122,8 +122,8 @@ describe("CreateSandbox", () => {
       expect(body.listed).toContain("a.txt");
       expect(body.movedExists).toBe(true);
       expect(body.removedExists).toBe(false);
-      expect(body.streamed.output).toContain("Stdout");
-      expect(body.streamed.output).toContain("Stderr");
+      expect(body.streamed.output).toContain("stdout");
+      expect(body.streamed.output).toContain("stderr");
       expect(body.streamed.stdout).toBe("streamed\n");
       expect(body.streamed.exitCode).toBe(0);
     }),

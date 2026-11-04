@@ -70,7 +70,7 @@ A non-zero exit code is returned, not failed. `exec(["node", "--version"])` runs
 
 ```typescript
 const build = yield* sandbox.start("npm run build");
-yield* build.output.pipe(Stream.runForEach((chunk) => Effect.log(chunk._tag)));
+yield* build.output.pipe(Stream.runForEach((chunk) => Effect.log(chunk.fd, chunk.data.length)));
 const { exitCode } = yield* build.wait;
 ```
 

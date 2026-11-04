@@ -73,7 +73,7 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               Effect.gen(function* () {
                 const proc = yield* sandbox.start("echo streamed; echo oops >&2");
                 const output = yield* proc.output.pipe(
-                  Stream.map((chunk) => chunk._tag),
+                  Stream.map((chunk) => chunk.fd),
                   Stream.runCollect,
                 );
                 const result = yield* proc.wait;
