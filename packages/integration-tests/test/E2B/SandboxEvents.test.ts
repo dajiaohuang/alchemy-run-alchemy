@@ -62,6 +62,8 @@ test.provider(
         const sandbox = yield* sandboxes.createSandbox({ templateID: "base", timeout: 60 });
         yield* sandboxes.deleteSandbox({ sandboxID: sandbox.sandboxID });
         return yield* client.get(`${url}/?sandbox=${sandbox.sandboxID}`).pipe(
+          // The Worker's URL can still 404 on a cold edge node.
+          Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }),
           Effect.flatMap((res) => res.json),
           Effect.map((body) => body as { created: boolean; killed: boolean }),
           Effect.repeat({
