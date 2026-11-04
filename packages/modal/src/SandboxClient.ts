@@ -2,13 +2,17 @@ import * as persistent from "@distilled.cloud/modal/persistent";
 import * as sandbox from "@distilled.cloud/modal/sandbox";
 import * as router from "@distilled.cloud/modal/task_command_router";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
+import type * as Sandbox from "alchemy/Sandbox";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { buildImage, gpuConfig, ImageBuildOps, type ImageBuildSpec } from "./ImageBuild.ts";
 import { environmentOf, type ErrorOf, operations, seconds } from "./internal.ts";
 import { withRouter } from "./ModalBindings.ts";
@@ -179,7 +183,7 @@ export interface ExecResult {
 }
 
 /** A command: a shell string (run with `sh -c`), or an argument vector (no shell). */
-export type Command = string | ReadonlyArray<string>;
+export type Command = Sandbox.Command;
 
 /** Options for {@link SandboxHandleOf.exec}. */
 export interface ExecOptions {
@@ -238,6 +242,28 @@ export type SandboxExecError =
   | RouterOpError<"execStdioRead">
   | RouterOpError<"execWait">;
 
+/** A started process: running it, following its output, writing its stdin, signalling it. */
+export type SandboxProcessError =
+  | SandboxExecError
+  | RouterOpError<"execPoll">
+  | RouterOpError<"execStdioFollow">;
+
+/** Modal's task command router has no call to resize a running PTY. */
+export class SandboxPtyResizeUnsupported extends Data.TaggedError(
+  "Modal.SandboxPtyResizeUnsupported",
+)<{
+  readonly message: string;
+}> {}
+
+/** A terminal session's errors. */
+export type SandboxPtyError = SandboxProcessError | SandboxPtyResizeUnsupported;
+
+/** Options for `pty.open`: the terminal size, and what runs in it. */
+export interface SandboxPtyOptions extends Sandbox.PtyOptions {
+  /** Secrets whose variables the session sees. */
+  readonly secrets?: ReadonlyArray<{ readonly secretId: string }>;
+}
+
 /** A file operation inside a sandbox (it runs as a command). */
 export type SandboxFilesError = SandboxExecError | SandboxFilesystemError;
 
@@ -275,6 +301,21 @@ export interface SandboxHandleOf<R> {
    * vector runs without a shell. A non-zero exit code is returned, not failed.
    */
   exec(command: Command, options?: ExecOptions): Effect.Effect<ExecResult, SandboxExecError, R>;
+  /**
+   * Start a command and follow it: its output streams as it runs, `write`
+   * feeds its stdin, `kill` signals it. Closing the scope detaches; the
+   * command keeps running.
+   */
+  start(
+    command: Command,
+    options?: ExecOptions,
+  ): Effect.Effect<Sandbox.Process<SandboxProcessError>, SandboxProcessError, R | Scope.Scope>;
+  /**
+   * Terminals: `open` starts a login shell (or `command`) on a PTY of the
+   * given size. Modal can't resize a running PTY, so `resize` fails with
+   * {@link SandboxPtyResizeUnsupported}.
+   */
+  readonly pty: Sandbox.Pty<SandboxPtyError, SandboxPtyOptions>;
   /** The sandbox's files. */
   readonly files: SandboxFilesOf<R>;
   /** Tunnels to the sandbox's open ports, by container port. */
@@ -357,10 +398,10 @@ export interface SandboxHandleOf<R> {
    * the host is the tunnel's. Without a port, the `Modal.Sandbox` program's.
    */
   fetch(
+    port: number,
     request: HttpClientRequest.HttpClientRequest,
   ): Effect.Effect<HttpClientResponse.HttpClientResponse, SandboxFetchError, R>;
   fetch(
-    port: number,
     request: HttpClientRequest.HttpClientRequest,
   ): Effect.Effect<HttpClientResponse.HttpClientResponse, SandboxFetchError, R>;
 }
@@ -371,8 +412,27 @@ export type SandboxFetchError =
   | SandboxUnexpectedResponse
   | HttpClientError.HttpClientError;
 
-/** A sandbox handle as bindings return it: calls run inside a deployed runtime. */
-export type SandboxHandle = SandboxHandleOf<RuntimeContext>;
+/**
+ * A sandbox handle as bindings return it: calls run inside a deployed
+ * runtime. It has the shared `alchemy/Sandbox` shape plus Modal's own calls.
+ */
+export interface SandboxHandle
+  extends
+    SandboxHandleOf<RuntimeContext>,
+    Sandbox.SandboxExec<SandboxExecError, ExecResult, ExecOptions>,
+    Sandbox.SandboxProcesses<SandboxProcessError, ExecOptions>,
+    Sandbox.SandboxFiles<SandboxFilesError, SandboxFileEntry>,
+    Sandbox.SandboxPty<SandboxPtyError, SandboxPtyOptions>,
+    Sandbox.SandboxFetch<SandboxFetchError> {
+  readonly files: SandboxFilesOf<RuntimeContext>;
+  fetch(
+    port: number,
+    request: HttpClientRequest.HttpClientRequest,
+  ): Effect.Effect<HttpClientResponse.HttpClientResponse, SandboxFetchError, RuntimeContext>;
+  fetch(
+    request: HttpClientRequest.HttpClientRequest,
+  ): Effect.Effect<HttpClientResponse.HttpClientResponse, SandboxFetchError, RuntimeContext>;
+}
 
 /** A sandbox handle whose calls need Modal credentials and an HTTP client. */
 export type RawSandboxHandle = SandboxHandleOf<never>;
@@ -557,12 +617,19 @@ export const SandboxOps = operations({
 
 export type SandboxOps = Effect.Success<typeof SandboxOps>;
 
+/** How long one read of a running command's output waits for more. */
+const FOLLOW_DEADLINE_MS = 2_000;
+
 /** Task command router operations, resolved per sandbox with its router access. */
 const routerOps = {
   execStart: withRouter(router.taskExecStart),
   execStdinWrite: withRouter(router.taskExecStdinWrite),
   execStdioRead: withRouter(router.taskExecStdioRead),
   execWait: withRouter(router.taskExecWait),
+  execPoll: withRouter(router.taskExecPoll),
+  // Reads of a running command's output, ended by a deadline so each read
+  // returns what arrived and the next continues from its offset.
+  execStdioFollow: withRouter(router.taskExecStdioRead, { deadline: FOLLOW_DEADLINE_MS }),
   snapshotFilesystem: withRouter(router.taskSnapshotFilesystem),
   snapshotMemory: withRouter(router.taskSnapshotMemory),
   snapshotDirectory: withRouter(router.taskSnapshotDirectory),
@@ -710,6 +777,162 @@ export const sandboxHandle = (
     };
   });
 
+  /** The task and its router access, for the router calls of one command. */
+  const routerAccess = Effect.gen(function* () {
+    const id = yield* taskId;
+    const access = yield* ops.getCommandRouterAccess({ sandboxId, taskId: id });
+    if (!access.url || !access.jwt) {
+      return yield* new SandboxUnexpectedResponse({
+        message: `Modal returned no command router for sandbox ${sandboxId}`,
+      });
+    }
+    return { taskId: id, at: { url: access.url, jwt: access.jwt } };
+  });
+
+  /**
+   * Start a command (on a PTY with `pty`) and return how to follow it: a
+   * stream per output, stdin writes from a running offset, and its exit.
+   */
+  const startExec = Effect.fn(function* (
+    commandArgs: ReadonlyArray<string>,
+    options: ExecOptions,
+    pty?: router.PTYInfo,
+  ) {
+    const { taskId: id, at } = yield* routerAccess;
+    const begin = yield* routerOps.execStart(at);
+    const stdinWrite = yield* routerOps.execStdinWrite(at);
+    const follow = yield* routerOps.execStdioFollow(at);
+    const poll = yield* routerOps.execPoll(at);
+    const wait = yield* routerOps.execWait(at);
+    const execId = yield* Effect.sync(() => crypto.randomUUID());
+    yield* begin({
+      taskId: id,
+      execId,
+      commandArgs: [...commandArgs],
+      workdir: options.cwd,
+      timeoutSecs: seconds(options.timeout),
+      secretIds: options.secrets?.map((s) => s.secretId),
+      env: options.env,
+      stdoutConfig: "TASK_EXEC_STDOUT_CONFIG_PIPE",
+      stderrConfig: pty ? "TASK_EXEC_STDERR_CONFIG_STDOUT" : "TASK_EXEC_STDERR_CONFIG_PIPE",
+      ptyInfo: pty,
+    });
+    let stdinOffset = 0;
+    const write = (data: string | Uint8Array, eof = false) =>
+      Effect.gen(function* () {
+        const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+        const offset = stdinOffset;
+        stdinOffset += bytes.length;
+        yield* stdinWrite({
+          taskId: id,
+          execId,
+          offset: String(offset),
+          data: yield* encodeBase64(bytes),
+          eof,
+        });
+      });
+    const exited = Effect.map(
+      poll({ taskId: id, execId }),
+      (status) => status.code !== undefined || status.signal !== undefined,
+    );
+    /**
+     * Follow one output: each read waits up to the deadline for more from
+     * its offset. Once the command has exited, one last read drains it.
+     */
+    const output = (fileDescriptor: router.TaskExecStdioFileDescriptor) =>
+      Stream.paginate(
+        { offset: 0, draining: false },
+        Effect.fnUntraced(function* (state) {
+          const { items } = yield* follow({
+            taskId: id,
+            execId,
+            offset: String(state.offset),
+            fileDescriptor,
+          });
+          const bytes = new Uint8Array(
+            Buffer.concat(items.map((item) => Buffer.from(item.data ?? "", "base64"))),
+          );
+          const chunks = bytes.length > 0 ? [bytes] : [];
+          const next = { offset: state.offset + bytes.length, draining: false };
+          if (state.draining) return [chunks, Option.none()] as const;
+          if (bytes.length > 0) return [chunks, Option.some(next)] as const;
+          const done = yield* exited;
+          return [chunks, Option.some({ ...next, draining: done })] as const;
+        }),
+      );
+    if (options.stdin !== undefined) yield* write(options.stdin, true);
+    return {
+      execId,
+      write,
+      output,
+      wait: Effect.map(wait({ taskId: id, execId }), (exit) => ({
+        exitCode: exit.code ?? (exit.signal !== undefined ? 128 + exit.signal : -1),
+      })),
+    };
+  });
+
+  const argvOf = (command: Command): ReadonlyArray<string> =>
+    typeof command === "string" ? ["sh", "-c", command] : command;
+
+  const start = (command: Command, options: ExecOptions = {}) =>
+    Effect.gen(function* () {
+      // The router has no signal call: the command records its pid, and
+      // `kill` signals it with a second command.
+      const pidFile = `/tmp/.alchemy-exec-${yield* Effect.sync(() => crypto.randomUUID())}.pid`;
+      const running = yield* startExec(
+        ["sh", "-c", 'echo $$ > "$0"; exec "$@"', pidFile, ...argvOf(command)],
+        options,
+      );
+      return {
+        id: running.execId,
+        output: Stream.merge(
+          Stream.map(running.output("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDOUT"), (data) => ({
+            fd: "stdout" as const,
+            data,
+          })),
+          Stream.map(running.output("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDERR"), (data) => ({
+            fd: "stderr" as const,
+            data,
+          })),
+        ),
+        write: (data: string | Uint8Array) => running.write(data),
+        kill: (signal: "SIGTERM" | "SIGKILL" = "SIGTERM") =>
+          Effect.asVoid(exec(["sh", "-c", `kill -s ${signal.slice(3)} "$(cat "$0")"`, pidFile])),
+        wait: running.wait,
+      } satisfies Sandbox.Process<SandboxProcessError>;
+    });
+
+  const pty: Sandbox.Pty<SandboxPtyError, SandboxPtyOptions> = {
+    open: (options) =>
+      Effect.gen(function* () {
+        const running = yield* startExec(
+          options.command
+            ? ["sh", "-c", options.command]
+            : ["sh", "-c", "exec bash -l 2>/dev/null || exec sh -l"],
+          { cwd: options.cwd, env: options.env, secrets: options.secrets },
+          {
+            enabled: true,
+            winszRows: options.rows,
+            winszCols: options.cols,
+            envTerm: "xterm-256color",
+            ptyType: "PTY_TYPE_SHELL",
+            noTerminateOnIdleStdin: true,
+          },
+        );
+        return {
+          id: running.execId,
+          output: running.output("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDOUT"),
+          write: (data: string | Uint8Array) => running.write(data),
+          resize: () =>
+            Effect.fail(
+              new SandboxPtyResizeUnsupported({
+                message: "Modal's task command router can't resize a running PTY",
+              }),
+            ),
+        } satisfies Sandbox.PtyConnection<SandboxPtyError>;
+      }),
+  };
+
   const read = Effect.fn(function* (path: string) {
     // base64 keeps binary content intact through the text output stream.
     const encoded = yield* fsExec(path, 'base64 < "$1" | tr -d "\\n"');
@@ -811,6 +1034,8 @@ export const sandboxHandle = (
   const handle: RawSandboxHandle = {
     sandboxId,
     exec,
+    start,
+    pty,
     files,
     tunnels: tunnelsOf,
     connectToken: Effect.fn(function* (options = {}) {

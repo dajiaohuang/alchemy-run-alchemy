@@ -280,11 +280,14 @@ const overSocket = <Op>(value: Op): Op => {
  * client the router requires.
  */
 export const withRouter =
-  <I, O, E>(operation: (input: I) => Effect.Effect<O, E, OperationServices>) =>
+  <I, O, E>(
+    operation: (input: I) => Effect.Effect<O, E, OperationServices>,
+    options: { readonly deadline?: number } = {},
+  ) =>
   (access: {
     readonly url: string;
     readonly jwt: string;
   }): Effect.Effect<(input: I) => Effect.Effect<O, E>> =>
     Effect.succeed((input: I) =>
-      (operation(input) as Effect.Effect<O, E>).pipe(withTaskCommandRouter(access)),
+      (operation(input) as Effect.Effect<O, E>).pipe(withTaskCommandRouter(access, options)),
     );
