@@ -9,10 +9,8 @@ export default Alchemy.Stack(
   "E2BProgramAsyncExample",
   { providers: E2B.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
-    const greeter = yield* Greeter;
     const sandbox = yield* E2B.Sandbox("GreeterSandbox", {
-      template: greeter.templateId,
-      build: greeter.buildId,
+      template: Greeter,
       network: { allowPublicTraffic: true },
     });
     return {

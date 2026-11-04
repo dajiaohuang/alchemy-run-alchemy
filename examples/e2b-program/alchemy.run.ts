@@ -9,12 +9,10 @@ export default Alchemy.Stack(
   "E2BProgramExample",
   { providers: E2B.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
-    const api = yield* Api;
     // One long-lived sandbox serves the program. It pauses when idle and a
-    // request to its URL resumes it; a new build replaces it.
+    // request to its URL resumes it; a new build of the program replaces it.
     const sandbox = yield* E2B.Sandbox("ApiSandbox", {
-      template: api.templateId,
-      build: api.buildId,
+      template: Api,
       network: { allowPublicTraffic: true },
     });
     return {

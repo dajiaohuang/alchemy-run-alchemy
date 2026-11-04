@@ -21,7 +21,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         (sandbox) => Effect.ignore(sandbox.kill()),
       );
       yield* sandbox.files.write("main.mjs", code);
-      return yield* sandbox.commands.run("node main.mjs");
+      return yield* sandbox.exec("node main.mjs");
     });
 
     /** The user's sandbox: found by metadata, resumed if paused, created with their volume. */
@@ -37,7 +37,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             metadata: { user },
             timeout: 600,
             autoPause: true,
-            volumeMounts: [{ name: home.name, path: "/home/user/work" }],
+            mounts: [{ volume: home, path: "/home/user/work" }],
           });
     });
 
@@ -69,7 +69,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
             const content = yield* request.text;
             yield* sandbox.files.write(`/home/user/work/${file}`, content);
           }
-          const listing = yield* sandbox.commands.run("ls -1 /home/user/work");
+          const listing = yield* sandbox.exec(["ls", "-1", "/home/user/work"]);
           const content = yield* sandbox.files.readText(`/home/user/work/${file}`);
           yield* sandbox.pause();
           return yield* HttpServerResponse.json({
