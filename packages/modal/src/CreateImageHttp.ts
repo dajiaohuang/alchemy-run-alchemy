@@ -80,8 +80,10 @@ export const makeImagesClient = (
   unpublish: (tag) =>
     Effect.gen(function* () {
       const env = yield* environment;
+      // Modal deletes only an explicit `name:tag`; a bare name is `name:latest`.
+      const named = /:[^/]*$/.test(tag) ? tag : `${tag}:latest`;
       yield* ops
-        .deleteName({ tag: env ? `${env}/${tag}` : tag })
+        .deleteName({ tag: env ? `${env}/${named}` : named })
         .pipe(Effect.catchTag("ImageNotFound", () => Effect.void));
     }),
   build: (options) => Effect.flatMap(appId, (id) => buildFromOptions(ops.build, id, options)),

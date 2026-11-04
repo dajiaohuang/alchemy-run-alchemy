@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import * as image from "@distilled.cloud/modal/image";
+import * as mount from "@distilled.cloud/modal/mount";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import { BlobOps, MAX_INLINE_BYTES, uploadBlob } from "./Blob.ts";
 import { operations } from "./internal.ts";
 
 /** Modal's builder finished the image build with a failure. */
@@ -29,8 +32,21 @@ export interface ImageBuildSpec {
    * generated `FROM`; otherwise they are a whole Dockerfile.
    */
   readonly commands: ReadonlyArray<string>;
-  readonly contextFiles?: ReadonlyArray<{ readonly filename: string; readonly data: Uint8Array }>;
-  /** A mount whose files the commands `COPY` (e.g. Modal's standalone Python). */
+  /**
+   * Files the commands `COPY`, by context-relative path. They are uploaded
+   * as a mount owned by the app, so their size isn't limited by Modal's
+   * 2 MB cap on an image definition.
+   */
+  readonly contextFiles?: ReadonlyArray<{
+    readonly filename: string;
+    readonly data: Uint8Array;
+    /** Permission bits. @default 0o644 */
+    readonly mode?: number;
+  }>;
+  /**
+   * A mount whose files the commands `COPY` (e.g. Modal's standalone
+   * Python). Not combined with {@link contextFiles}.
+   */
   readonly contextMountId?: string;
   /** Build arguments (`ARG` values). */
   readonly buildArgs?: Readonly<Record<string, string>>;
@@ -64,9 +80,67 @@ export const gpuConfig = (gpu: string | undefined): image.GPUConfig | undefined 
 export const ImageBuildOps = operations({
   getOrCreate: image.imageGetOrCreate,
   joinStreaming: image.imageJoinStreaming,
+  putFile: mount.mountPutFile,
+  getOrCreateMount: mount.mountGetOrCreate,
+  blobs: BlobOps,
 });
 
 export type ImageBuildOps = Effect.Success<typeof ImageBuildOps>;
+
+/** Modal returned a response without a field the build needs. */
+export class ImageBuildUnexpectedResponse extends Data.TaggedError(
+  "Modal.ImageBuildUnexpectedResponse",
+)<{
+  readonly message: string;
+}> {}
+
+/**
+ * Upload build context files as a mount owned by the app, the way Modal's
+ * clients send `COPY` sources. Modal stores files by content hash, so
+ * unchanged files are not sent again.
+ */
+const contextMount = Effect.fn(function* (
+  ops: ImageBuildOps,
+  appId: string,
+  files: NonNullable<ImageBuildSpec["contextFiles"]>,
+) {
+  const entries = [];
+  for (const file of files) {
+    const sha256Hex = yield* Effect.sync(() =>
+      createHash("sha256").update(file.data).digest("hex"),
+    );
+    const known = yield* ops.putFile({ sha256Hex });
+    if (!known.exists) {
+      const upload =
+        file.data.length > MAX_INLINE_BYTES
+          ? { dataBlobId: yield* uploadBlob(ops.blobs, file.data) }
+          : { data: yield* Effect.sync(() => Buffer.from(file.data).toString("base64")) };
+      const put = yield* ops.putFile({ sha256Hex, ...upload });
+      if (!put.exists) {
+        return yield* new ImageBuildUnexpectedResponse({
+          message: `Modal didn't store build context file ${file.filename}`,
+        });
+      }
+    }
+    entries.push({
+      filename: `/${file.filename.replace(/^\/+/, "")}`,
+      sha256Hex,
+      size: String(file.data.length),
+      mode: 0o100000 | ((file.mode ?? 0o644) & 0o7777),
+    });
+  }
+  const { mountId } = yield* ops.getOrCreateMount({
+    objectCreationType: "OBJECT_CREATION_TYPE_ANONYMOUS_OWNED_BY_APP",
+    appId,
+    files: entries,
+  });
+  if (!mountId) {
+    return yield* new ImageBuildUnexpectedResponse({
+      message: "Modal returned no id for the build context mount",
+    });
+  }
+  return mountId;
+});
 
 const FINISHED = (status: string | undefined) =>
   status !== undefined && status !== "GENERIC_STATUS_UNSPECIFIED";
@@ -87,19 +161,16 @@ export const buildImage = Effect.fn(function* (
     : spec.dockerTag
       ? { baseImages: [], first: [`FROM ${spec.dockerTag}`] }
       : { baseImages: [], first: [] as string[] };
-  const contextFiles = yield* Effect.sync(() =>
-    (spec.contextFiles ?? []).map((file) => ({
-      filename: file.filename,
-      data: Buffer.from(file.data).toString("base64"),
-    })),
-  );
+  const contextMountId =
+    spec.contextFiles !== undefined && spec.contextFiles.length > 0
+      ? yield* contextMount(ops, appId, spec.contextFiles)
+      : spec.contextMountId;
   const created = yield* ops.getOrCreate({
     appId,
     image: {
       baseImages: from.baseImages,
       dockerfileCommands: [...from.first, ...spec.commands],
-      contextFiles,
-      contextMountId: spec.contextMountId,
+      contextMountId,
       secretIds: spec.secretIds ? [...spec.secretIds] : undefined,
       imageRegistryConfig: spec.registry
         ? { registryAuthType: AUTH_TYPE[spec.registry.authType], secretId: spec.registry.secretId }

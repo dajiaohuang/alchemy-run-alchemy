@@ -19,7 +19,6 @@ const InvokeOps = operations({
   map: functions.functionMap,
   putInputs: functions.functionPutInputs,
   getOutputs: functions.getFunctionOutputs,
-  invokeAsync: functions.invokeFunctionAsync,
   cancel: functions.cancelFunctionCall,
   blobs: BlobOps,
 });
@@ -32,8 +31,6 @@ const encodeInput = Effect.fn(function* (
   args: ReadonlyArray<unknown>,
   kwargs: Record<string, unknown>,
   method: string | undefined,
-  final: boolean,
-  forceBlob = false,
 ) {
   const bytes = yield* Effect.try({
     try: () => encodeCbor([args, kwargs]),
@@ -44,14 +41,13 @@ const encodeInput = Effect.fn(function* (
       }),
   });
   const payload =
-    forceBlob || bytes.length > MAX_INLINE_BYTES
+    bytes.length > MAX_INLINE_BYTES
       ? { argsBlobId: yield* uploadBlob(blobs, bytes) }
       : { args: yield* Effect.sync(() => Buffer.from(bytes).toString("base64")) };
   return {
     ...payload,
     dataFormat: "DATA_FORMAT_CBOR",
     methodName: method,
-    finalInput: final,
   } satisfies functions.FunctionInput;
 });
 
@@ -85,7 +81,7 @@ const decodeOutput = Effect.fn(function* (
   });
 });
 
-/** Inputs per `FunctionMap`/`FunctionPutInputs` request. */
+/** Inputs per `FunctionPutInputs` request. */
 const BATCH = 49;
 
 /** A client for a resolved function. */
@@ -108,7 +104,8 @@ export const makeFunctionClient = (resolved: ResolvedFunction, ops: InvokeOps): 
         maxValues: Math.min(1000, count - values.size),
         timeout: Math.min(55, budget),
         lastEntryId,
-        clearOnSuccess: true,
+        // A map's outputs stay until all are read; a single output is popped.
+        clearOnSuccess: count === 1,
       });
       if (response.lastEntryId) lastEntryId = response.lastEntryId;
       for (const output of response.outputs ?? []) {
@@ -125,29 +122,32 @@ export const makeFunctionClient = (resolved: ResolvedFunction, ops: InvokeOps): 
     return Array.from({ length: count }, (_, idx) => values.get(idx));
   });
 
+  /**
+   * Start a function call the way Modal's clients do: a unary call sends its
+   * input with `FunctionMap` (or with `FunctionPutInputs` when Modal doesn't
+   * take it there); a map creates the call, then sends every input with
+   * `FunctionPutInputs`.
+   */
   const start = Effect.fn(function* (
     inputs: ReadonlyArray<readonly [ReadonlyArray<unknown>, Record<string, unknown>]>,
     type: "FUNCTION_CALL_TYPE_UNARY" | "FUNCTION_CALL_TYPE_MAP",
+    invocation: "FUNCTION_CALL_INVOCATION_TYPE_SYNC" | "FUNCTION_CALL_INVOCATION_TYPE_ASYNC",
   ) {
     const id = yield* functionId;
     const items = yield* Effect.forEach(inputs, ([args, kwargs], idx) =>
-      Effect.map(
-        encodeInput(ops.blobs, args, kwargs, method, idx === inputs.length - 1),
-        (input) => ({
-          idx,
-          input,
-        }),
-      ),
+      Effect.map(encodeInput(ops.blobs, args, kwargs, method), (input) => ({ idx, input })),
     );
+    const unary = type === "FUNCTION_CALL_TYPE_UNARY";
     const response = yield* ops.map({
       functionId: id,
       functionCallType: type,
-      functionCallInvocationType: "FUNCTION_CALL_INVOCATION_TYPE_SYNC",
+      functionCallInvocationType: invocation,
       returnExceptions: false,
-      pipelinedInputs: items.slice(0, BATCH),
+      pipelinedInputs: unary ? items : undefined,
     });
     const functionCallId = response.functionCallId ?? "";
-    for (let offset = BATCH; offset < items.length; offset += BATCH) {
+    const sent = unary && (response.pipelinedInputs ?? []).length > 0 ? items.length : 0;
+    for (let offset = sent; offset < items.length; offset += BATCH) {
       yield* ops.putInputs({
         functionId: id,
         functionCallId,
@@ -163,7 +163,11 @@ export const makeFunctionClient = (resolved: ResolvedFunction, ops: InvokeOps): 
       kwargs: Record<string, unknown> = {},
       options: CallOptions = {},
     ) =>
-      start([[args, kwargs]], "FUNCTION_CALL_TYPE_UNARY").pipe(
+      start(
+        [[args, kwargs]],
+        "FUNCTION_CALL_TYPE_UNARY",
+        "FUNCTION_CALL_INVOCATION_TYPE_SYNC",
+      ).pipe(
         Effect.flatMap((id) => collect(id, 1, options.timeout)),
         // CBOR results are untyped; the caller names the shape it expects.
         Effect.map(([value]) => value as A),
@@ -174,22 +178,17 @@ export const makeFunctionClient = (resolved: ResolvedFunction, ops: InvokeOps): 
         : start(
             inputs.map((args) => [args, {}] as const),
             "FUNCTION_CALL_TYPE_MAP",
+            "FUNCTION_CALL_INVOCATION_TYPE_SYNC",
           ).pipe(
             Effect.flatMap((id) => collect(id, inputs.length, options.timeout)),
             Effect.map((values) => values as A[]),
           ),
     spawn: (args = [], kwargs = {}) =>
-      Effect.gen(function* () {
-        const id = yield* functionId;
-        const input = yield* encodeInput(ops.blobs, args, kwargs, method, true);
-        let response = yield* ops.invokeAsync({ functionId: id, input });
-        // Modal asks for the input as a blob when it's over the function's inline limit.
-        if (response.retryWithBlobUpload) {
-          const blobInput = yield* encodeInput(ops.blobs, args, kwargs, method, true, true);
-          response = yield* ops.invokeAsync({ functionId: id, input: blobInput });
-        }
-        return { functionCallId: response.functionCallId ?? "" };
-      }),
+      start(
+        [[args, kwargs]],
+        "FUNCTION_CALL_TYPE_UNARY",
+        "FUNCTION_CALL_INVOCATION_TYPE_ASYNC",
+      ).pipe(Effect.map((functionCallId) => ({ functionCallId }))),
     result: <A>(call: { readonly functionCallId: string }, options: CallOptions = {}) =>
       collect(call.functionCallId, 1, options.timeout).pipe(Effect.map(([value]) => value as A)),
     cancel: (call) =>

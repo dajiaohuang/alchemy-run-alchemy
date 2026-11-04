@@ -43,7 +43,11 @@ export const lowerPlan = Effect.fn(function* (
   extra: ReadonlyArray<string> = [],
 ) {
   const contextFiles = yield* Effect.forEach(plan.files, (file) =>
-    Effect.map(BuildPlan.readContextFile(file), (data) => ({ filename: file.path, data })),
+    Effect.map(BuildPlan.readContextFile(file), (data) => ({
+      filename: file.path,
+      data,
+      mode: file.mode,
+    })),
   );
   return {
     commands: [...BuildPlan.renderLines(plan), ...extra],

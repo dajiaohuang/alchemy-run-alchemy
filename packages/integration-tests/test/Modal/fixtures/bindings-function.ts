@@ -1,5 +1,6 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as AWS from "@alchemy.run/aws";
 import * as Modal from "@alchemy.run/modal";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -25,10 +26,10 @@ const BindingsLive = Layer.mergeAll(
   Modal.CreateSecretHttp,
 );
 
-/** A Cloudflare Worker (a host outside Modal) driving every Modal binding. */
-export default class ModalWorker extends Cloudflare.Worker<ModalWorker>()(
-  "ModalWorker",
-  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
+/** A Lambda function (a host outside Modal) driving every Modal binding. */
+export default class ModalBindingsFunction extends AWS.Lambda.Function<ModalBindingsFunction>()(
+  "ModalBindingsFunction",
+  { main: import.meta.url, timeout: Duration.minutes(14), memorySize: 1024 },
   Effect.gen(function* () {
     const volume = yield* Modal.ReadWriteVolume(Workspace);
     const readVolume = yield* Modal.ReadVolume(Workspace);
@@ -51,7 +52,7 @@ export default class ModalWorker extends Cloudflare.Worker<ModalWorker>()(
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
-        const url = new URL(request.url, "http://worker");
+        const url = new URL(request.url, "http://host");
         const key = url.searchParams.get("key") ?? "k";
         switch (url.pathname) {
           case "/volume": {

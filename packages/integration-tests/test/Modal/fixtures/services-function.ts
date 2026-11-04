@@ -1,7 +1,9 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as AWS from "@alchemy.run/aws";
 import * as Modal from "@alchemy.run/modal";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
@@ -21,10 +23,18 @@ const BindingsLive = Layer.mergeAll(
   Modal.WriteAppHttp,
 );
 
-/** A Cloudflare Worker calling Modal Functions and Servers through their bindings. */
-export default class ServicesWorker extends Cloudflare.Worker<ServicesWorker>()(
-  "ModalServicesWorker",
-  { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
+/**
+ * Answer with the upstream's status and body, so a cold Server's
+ * `no upstreams available` reaches the test as a retryable failure.
+ */
+const relay = Effect.fn(function* (response: HttpClientResponse.HttpClientResponse) {
+  return yield* HttpServerResponse.json(yield* response.json, { status: response.status });
+});
+
+/** A Lambda function calling Modal Functions and Servers through their bindings. */
+export default class ServicesFunction extends AWS.Lambda.Function<ServicesFunction>()(
+  "ModalServicesFunction",
+  { main: import.meta.url, timeout: Duration.minutes(14), memorySize: 1024 },
   Effect.gen(function* () {
     const embed = yield* Modal.InvokeFunction(Embed);
     const asyncEmbed = yield* Modal.InvokeFunction(AsyncEmbed);
@@ -39,7 +49,7 @@ export default class ServicesWorker extends Cloudflare.Worker<ServicesWorker>()(
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
-        const url = new URL(request.url, "http://worker");
+        const url = new URL(request.url, "http://host");
         switch (url.pathname) {
           case "/call":
             return yield* HttpServerResponse.json(
@@ -58,18 +68,15 @@ export default class ServicesWorker extends Cloudflare.Worker<ServicesWorker>()(
           case "/call-async":
             return yield* HttpServerResponse.json(yield* asyncEmbed.call(["ping"]));
           case "/server":
-            return yield* HttpServerResponse.json(
-              yield* (yield* api.fetch(HttpClientRequest.get("/hello"))).json,
-            );
+            return yield* relay(yield* api.fetch(HttpClientRequest.get("/hello")));
           case "/web":
-            return yield* HttpServerResponse.json(
-              yield* (yield* web.fetch(HttpClientRequest.get("/hello"))).json,
-            );
+            return yield* relay(yield* web.fetch(HttpClientRequest.get("/hello")));
           case "/read-function": {
             const stats = yield* readEmbed.stats();
-            const calls = yield* readEmbed.calls();
+            const { buckets } = yield* readEmbed.callCount({ since: Date.now() - 3_600_000 });
+            const calls = (buckets ?? []).reduce((sum, b) => sum + Number(b.count ?? 0), 0);
             const autoscaler = yield* readEmbed.autoscaler();
-            return yield* HttpServerResponse.json({ stats, calls: calls.length, autoscaler });
+            return yield* HttpServerResponse.json({ stats, calls, autoscaler });
           }
           case "/scale": {
             const settings = yield* scaleEmbed.update({ scaledownWindow: 120 });

@@ -11,7 +11,7 @@ export interface TimeRange {
   readonly until?: Date | string | number;
 }
 
-/** Observe a function: load, call history and metrics. */
+/** Observe a function: load, call counts and metrics. */
 export interface FunctionReader {
   /** Inputs waiting and running, and the containers serving them, right now. */
   stats(): Effect.Effect<
@@ -30,13 +30,18 @@ export interface FunctionReader {
   ): Effect.Effect<functions.FunctionGetTimeRangeStatsResponse, any, RuntimeContext>;
   /** Metric series (`containers`, `calls`) over a time range. */
   metrics(
-    range: TimeRange & { readonly bucketSecs?: number; readonly groups?: ReadonlyArray<string> },
+    range: TimeRange & {
+      /** Seconds per bucket. @default 3600 */
+      readonly bucketSecs?: number;
+      readonly groups?: ReadonlyArray<string>;
+    },
   ): Effect.Effect<functions.FunctionGetMetricsResponse, any, RuntimeContext>;
-  /** Recent calls with their input counts by outcome. */
-  calls(): Effect.Effect<ReadonlyArray<functions.FunctionCallInfo>, any, RuntimeContext>;
   /** Calls started per time bucket. */
   callCount(
-    range: TimeRange & { readonly bucketSecs?: number },
+    range: TimeRange & {
+      /** Seconds per bucket. @default 3600 */
+      readonly bucketSecs?: number;
+    },
   ): Effect.Effect<functions.FunctionCallCountResponse, any, RuntimeContext>;
   /** The inputs of one call, by outcome. */
   callInfo(call: {
@@ -48,7 +53,7 @@ export interface FunctionReader {
 
 /**
  * Read a Modal Function's (or Server's) live state from any runtime:
- * backlog and running inputs, call history, outcome counts, latency
+ * backlog and running inputs, call counts, outcome counts, latency
  * percentiles and metric series. Bind a resource of the Stack, or a function
  * deployed with `modal deploy` by name.
  *

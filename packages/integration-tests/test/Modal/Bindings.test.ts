@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as AWS from "@alchemy.run/aws";
 import * as Modal from "@alchemy.run/modal";
 import { describe, expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
@@ -8,20 +8,20 @@ import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import ModalBindingsFunction from "./fixtures/bindings-function.ts";
 import { Token } from "./fixtures/resources.ts";
-import ModalWorker from "./fixtures/worker.ts";
 import { hostIdentity } from "./hostIdentity.ts";
 
-const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers(), hostIdentity);
+const providers = Layer.mergeAll(Modal.providers(), AWS.providers(), hostIdentity);
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers });
 
 const Stack = Alchemy.Stack(
   "ModalBindingsStack",
-  { providers, state: Cloudflare.state() },
+  { providers, state: AWS.state() },
   Effect.gen(function* () {
     const token = yield* Token;
-    const worker = yield* ModalWorker;
-    return { url: worker.url.as<string>(), secretId: token.secretId };
+    const host = yield* ModalBindingsFunction;
+    return { url: host.functionUrl.as<string>(), secretId: token.secretId };
   }),
 );
 
@@ -38,16 +38,11 @@ const get = <A>(path: string) =>
     return (yield* res.json) as A;
   });
 
-const tags = (kind: string) => [
-  "provider:modal",
-  `provider:modal:${kind}`,
-  "provider:cloudflare",
-  "live",
-];
+const tags = (kind: string) => ["provider:modal", `provider:modal:${kind}`, "provider:aws", "live"];
 
 describe("ReadVolume / WriteVolume / ReadWriteVolume", () => {
   test(
-    "write, read, copy, list and remove volume files from a Worker",
+    "write, read, copy, list and remove volume files from a Lambda function",
     Effect.gen(function* () {
       const body = yield* get<{ text: string; files: string[] }>("/volume?key=v1");
       expect(body.text).toBe("hello v1");
@@ -60,7 +55,7 @@ describe("ReadVolume / WriteVolume / ReadWriteVolume", () => {
 
 describe("ReadDict / WriteDict / ReadWriteDict", () => {
   test(
-    "put, get, contains and pop from a Worker",
+    "put, get, contains and pop from a Lambda function",
     Effect.gen(function* () {
       const body = yield* get<Record<string, unknown>>("/dict?key=d1");
       expect(body).toEqual({ value: { n: 1 }, contains: true, popped: { n: 1 }, after: false });
@@ -83,7 +78,7 @@ describe("ReadQueue / WriteQueue / ReadWriteQueue", () => {
 
 describe("WriteSecret", () => {
   test.provider(
-    "rotate a secret from a Worker",
+    "rotate a secret from a Lambda function",
     () =>
       Effect.gen(function* () {
         yield* get("/secret?key=s1");
@@ -127,7 +122,9 @@ describe("CreateSandbox", () => {
 });
 
 describe("CreateSandbox persistent", () => {
-  test(
+  // Persistent sandboxes are in beta; set MODAL_TEST_PERSISTENT_SANDBOX=1 on
+  // an entitled workspace (PersistentSandbox.test.ts probes the rejection).
+  test.skipIf(!process.env.MODAL_TEST_PERSISTENT_SANDBOX)(
     "create a persistent sandbox and reach its session by id",
     Effect.gen(function* () {
       const body = yield* get<{ read: string }>("/sandbox-persistent?key=p1");

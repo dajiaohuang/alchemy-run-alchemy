@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as AWS from "@alchemy.run/aws";
 import * as Modal from "@alchemy.run/modal";
 import { describe, expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
@@ -10,25 +10,25 @@ import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import Api from "./fixtures/api-server.ts";
 import { AsyncApi } from "./fixtures/async-server.ts";
-import ServicesWorker from "./fixtures/services-worker.ts";
+import ServicesFunction from "./fixtures/services-function.ts";
 import { Services } from "./fixtures/services.ts";
 import Web from "./fixtures/web-function.ts";
 import { hostIdentity } from "./hostIdentity.ts";
 
-const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers(), hostIdentity);
+const providers = Layer.mergeAll(Modal.providers(), AWS.providers(), hostIdentity);
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers });
 
 const Stack = Alchemy.Stack(
   "ModalServicesStack",
-  { providers, state: Cloudflare.state() },
+  { providers, state: AWS.state() },
   Effect.gen(function* () {
     const services = yield* Services;
-    const worker = yield* ServicesWorker;
+    const host = yield* ServicesFunction;
     const web = yield* Web;
     const api = yield* Api;
     const asyncApi = yield* AsyncApi;
     return {
-      url: worker.url.as<string>(),
+      url: host.functionUrl.as<string>(),
       appId: services.appId,
       webUrl: web.url,
       apiUrl: api.url,
@@ -56,12 +56,7 @@ const worker = <A>(path: string) =>
     return yield* getJson<A>(`${url}${path}`);
   });
 
-const tags = (kind: string) => [
-  "provider:modal",
-  `provider:modal:${kind}`,
-  "provider:cloudflare",
-  "live",
-];
+const tags = (kind: string) => ["provider:modal", `provider:modal:${kind}`, "provider:aws", "live"];
 
 describe("Modal.Function", () => {
   test.provider(
@@ -163,7 +158,7 @@ describe("InvokeFunction", () => {
 
 describe("FetchServer", () => {
   test(
-    "reach a proxy-auth server from a Worker",
+    "reach a proxy-auth server from a Lambda function",
     Effect.gen(function* () {
       const body = yield* worker<{ kind: string; path: string }>("/server");
       expect(body).toEqual({ kind: "server", path: "/hello" });
@@ -172,7 +167,7 @@ describe("FetchServer", () => {
   );
 
   test(
-    "reach a web function from a Worker",
+    "reach a web function from a Lambda function",
     Effect.gen(function* () {
       const body = yield* worker<{ kind: string; path: string }>("/web");
       expect(body).toEqual({ kind: "web", path: "/hello" });

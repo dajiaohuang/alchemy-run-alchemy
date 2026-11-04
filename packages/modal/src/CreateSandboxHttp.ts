@@ -18,6 +18,12 @@ import {
   type SandboxTarget,
 } from "./SandboxClient.ts";
 
+const HOUR_MS = 3_600_000;
+
+/** A time rounded to an hour boundary, as Modal's usage query wants it. */
+const hourOf = (value: Date | string | number, round: (n: number) => number): string =>
+  timestampOf(round(new Date(value).getTime() / HOUR_MS) * HOUR_MS);
+
 /** A sandboxes client over a target resolved per call. */
 export const makeSandboxesClient = (
   target: Effect.Effect<SandboxTarget>,
@@ -36,8 +42,9 @@ export const makeSandboxesClient = (
       for (let page = 0; page < 100; page++) {
         const response = yield* ops.usage({
           appId: t.appId,
-          since: timestampOf(query.since),
-          until: timestampOf(query.until ?? Date.now()),
+          // Modal reports usage by whole hours.
+          since: hourOf(query.since, Math.floor),
+          until: query.until === undefined ? undefined : hourOf(query.until, Math.ceil),
           groupByTags: query.groupByTags ? [...query.groupByTags] : undefined,
           tags: query.tags,
           pageToken,

@@ -70,7 +70,9 @@ export interface SandboxesClient {
   ): Effect.Effect<PersistentSandboxHandle>;
   /**
    * What the App's sandboxes cost over a time range, grouped by tag values
-   * (`groupByTags: ["user"]` gives one group per user).
+   * (`groupByTags: ["user"]` gives one group per user). Modal reports
+   * whole hours: `since` rounds down and `until` (default now) up to the
+   * hour.
    */
   usage(query: {
     readonly since: Date | string | number;

@@ -7,12 +7,14 @@ import type { FunctionTarget } from "./InvokeFunction.ts";
 import { ReadFunction, type FunctionReader } from "./ReadFunction.ts";
 import type { Server } from "./Server.ts";
 
+/** Bucket width when a query doesn't set one: Modal requires a positive one. */
+const DEFAULT_BUCKET_SECS = 3600;
+
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
 const ReadFunctionOps = operations({
   currentStats: functions.functionGetCurrentStats,
   timeRangeStats: functions.functionGetTimeRangeStats,
   metrics: functions.functionGetMetrics,
-  listCalls: functions.listFunctionCall,
   callCount: functions.functionCallCount,
   callInfo: functions.functionCallGetInfo,
   schedulingParams: functions.functionGetSchedulingParams,
@@ -60,13 +62,9 @@ export const ReadFunctionHttp = Layer.effect(
               functionId: id,
               since: timestampOf(range.since),
               until: timestampOf(range.until ?? Date.now()),
-              bucketSecs: range.bucketSecs,
+              bucketSecs: range.bucketSecs ?? DEFAULT_BUCKET_SECS,
               groups: range.groups ? [...range.groups] : undefined,
             }),
-          ),
-        calls: () =>
-          Effect.flatMap(functionId, (id) => ops.listCalls({ functionId: id })).pipe(
-            Effect.map((response) => response.functionCalls ?? []),
           ),
         callCount: (range) =>
           Effect.flatMap(functionId, (id) =>
@@ -74,7 +72,7 @@ export const ReadFunctionHttp = Layer.effect(
               functionId: id,
               since: timestampOf(range.since),
               until: timestampOf(range.until ?? Date.now()),
-              bucketSecs: range.bucketSecs,
+              bucketSecs: range.bucketSecs ?? DEFAULT_BUCKET_SECS,
             }),
           ),
         callInfo: (call) =>

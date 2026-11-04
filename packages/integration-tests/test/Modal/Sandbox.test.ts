@@ -1,4 +1,4 @@
-import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as AWS from "@alchemy.run/aws";
 import * as Modal from "@alchemy.run/modal";
 import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
@@ -7,18 +7,18 @@ import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import RuntimeWorker from "./fixtures/runtime-worker.ts";
+import RuntimeFunction from "./fixtures/runtime-function.ts";
 import { hostIdentity } from "./hostIdentity.ts";
 
-const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers(), hostIdentity);
+const providers = Layer.mergeAll(Modal.providers(), AWS.providers(), hostIdentity);
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers });
 
 const Stack = Alchemy.Stack(
   "ModalRuntimeStack",
-  { providers, state: Cloudflare.state() },
+  { providers, state: AWS.state() },
   Effect.gen(function* () {
-    const worker = yield* RuntimeWorker;
-    return { url: worker.url.as<string>() };
+    const host = yield* RuntimeFunction;
+    return { url: host.functionUrl.as<string>() };
   }),
 );
 
@@ -35,7 +35,7 @@ const get = <A>(path: string) =>
     return (yield* res.json) as A;
   });
 
-const tags = ["provider:modal", "provider:modal:sandbox", "provider:cloudflare", "live"];
+const tags = ["provider:modal", "provider:modal:sandbox", "provider:aws", "live"];
 
 test(
   "an Effect program runs in a sandbox and uses its bindings",
