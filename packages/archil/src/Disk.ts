@@ -199,11 +199,11 @@ export type Disk = Resource<"Archil.Disk", DiskProps, DiskAttributes, never, Pro
  * Object bindings give each host its own S3 user on this disk (read-only
  * for `ReadDisk`), so the host never holds an API key.
  *
- * **Example:** Read and write the disk from an Archil service
+ * **Example:** Read and write the disk from a program sandbox
  * ```typescript
- * export default class Api extends Archil.Service<Api>()(
+ * export default class Api extends Archil.Sandbox<Api>()(
  *   "Api",
- *   { sandbox: Box, main: import.meta.url },
+ *   { main: import.meta.url },
  *   Effect.gen(function* () {
  *     const files = yield* Archil.ReadWriteDisk(Dataset);
  *     return {
@@ -213,10 +213,17 @@ export type Disk = Resource<"Archil.Disk", DiskProps, DiskAttributes, never, Pro
  * ) {}
  * ```
  *
+ * **Example:** Mount it into a sandbox
+ * ```typescript
+ * export const Box = Archil.Sandbox("Box", {
+ *   mounts: [{ disk: Dataset, path: "/data", mode: "read-only" }],
+ * });
+ * ```
+ *
  * **Example:** Mount it in a Cloudflare Container
  * ```typescript
- * const dataset = yield* Archil.MountDisk(Dataset, { readOnly: true });
- * const path = yield* dataset.mount({ mode: "read-only" });
+ * const dataset = yield* Archil.MountDisk(Dataset, { path: "/data", mode: "read-only" });
+ * const path = yield* dataset.mount();
  * ```
  *
  * ### Runtime Operations

@@ -25,8 +25,8 @@ export interface SolidStartProps extends FrameworkSiteProps {
 
 /**
  * Deploy a [SolidStart](https://start.solidjs.com) application to an Archil
- * sandbox: the SSR server as an Archil service on port 3000,
- * static assets (prerendered pages included) uploaded with the service.
+ * sandbox: the SSR server as the sandbox's program on port 3000,
+ * static assets (prerendered pages included) uploaded with the program.
  *
  * The build runs through `@alchemy.run/frontend-frameworks/solidstart` with
  * the `@alchemy.run/frontend-frameworks/solidstart/node` deploy target —
@@ -61,7 +61,7 @@ export interface SolidStartProps extends FrameworkSiteProps {
  * The integration owns the nitro plugin instance (a `nitroV2Plugin()` in
  * your `vite.config.*` is rejected), so nitro options — prerendering
  * included — go on the `nitro` prop. Prerendered pages are uploaded with the
- * service and served as static assets.
+ * program and served as static assets.
  *
  * **Example:** Prerender Routes
  * ```typescript

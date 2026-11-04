@@ -11,16 +11,16 @@ export interface VinextProps extends FrameworkSiteProps {}
 
 /**
  * Deploy a [vinext](https://vinext.dev) application to an Archil sandbox:
- * vinext's Vite build then a long-running `startProdServer` Archil service
+ * vinext's Vite build then a long-running `startProdServer` program
  * on port 3000. Does **not** use the Cloudflare Worker entry
  * (`vinext/server/fetch-handler`).
  *
- * The `dist/` output is packed into the service's files. `vinext`,
- * `react`, `react-dom`, and `react-server-dom-webpack` are installed in the
- * service with `npm install` rather than bundled.
+ * The `dist/` output is packed into the program's files. `vinext`,
+ * `react`, `react-dom`, and `react-server-dom-webpack` are installed next to the
+ * program with `npm install` rather than bundled.
  *
  * During `alchemy dev` the site is `vinext dev` and no cloud resources
- * are declared; `Alchemy.remote()` opts back into the live Service.
+ * are declared; `Alchemy.remote()` opts back into the live sandbox.
  *
  * ### Creating vinext Sites
  * **Example:** Basic vinext App

@@ -37,7 +37,6 @@ describe(
 
           const url = deployed.site.url;
           expect(url).toMatch(/^http:\/\/(localhost|127\.0\.0\.1):\d+\/?$/);
-          expect(deployed.site.service).toBeUndefined();
           expect(deployed.site.sandbox).toBeUndefined();
 
           yield* expectUrlContains(`${url}/`, "NUXT_AWS_PAGE_MARKER", {

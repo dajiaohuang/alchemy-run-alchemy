@@ -79,7 +79,7 @@ describe("Least privilege", () => {
         const s3 = (data.authorizedUsers ?? []).filter((u) => u.type === "s3");
         // ReadDisk → one read-only user; WriteDisk and ReadWriteDisk share one read-write user.
         expect(s3.map((u) => u.readOnly ?? false).sort()).toEqual([false, true]);
-        // MountDisk(Dataset, { readOnly: true }) → the Container's one read-only token user.
+        // MountDisk(Dataset, { mode: "read-only" }) → the Container's one read-only token user.
         const readOnlyTokens = (data.authorizedUsers ?? []).filter(
           (u) => u.type === "token" && u.readOnly === true,
         );
@@ -215,11 +215,26 @@ describe("CreateImage", () => {
 
 describe("CreateSandbox", () => {
   test(
-    "a sandbox runs a command, forks with its files, and is deleted",
+    "a sandbox runs commands, a background process and a terminal, forks with its files, and is deleted",
     Effect.gen(function* () {
-      const body = yield* json<{ stdout: string; fork: string }>("/sandbox?name=task-1");
-      expect(body.stdout).toBe("hi from worker");
-      expect(body.fork).toBe("hi from worker");
+      const body = yield* json<{
+        stdout: string;
+        text: string;
+        piped: string;
+        failed: number;
+        started: { output: string; exitCode: number };
+        size: string;
+        fork: string;
+      }>("/sandbox?name=task-1");
+      expect(body).toEqual({
+        stdout: "hi from worker",
+        text: "hi from worker",
+        piped: "PIPED IN",
+        failed: 3,
+        started: { output: "started", exitCode: 0 },
+        size: "30 100",
+        fork: "hi from worker",
+      });
     }),
     { tags, timeout: 300_000 },
   );

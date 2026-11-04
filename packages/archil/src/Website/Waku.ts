@@ -24,8 +24,8 @@ export interface WakuProps extends FrameworkSiteProps {
 
 /**
  * Deploy a [Waku](https://waku.gg) application to an Archil sandbox:
- * the RSC server as an Archil service on port 3000, static assets (SSG
- * pages included) uploaded with the service. Prerendered pages are served
+ * the RSC server as the sandbox's program on port 3000, static assets (SSG
+ * pages included) uploaded with the program. Prerendered pages are served
  * extensionless (`/about` not `/about/`).
  *
  *

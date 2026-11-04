@@ -11,8 +11,8 @@ export interface OctaneProps extends FrameworkSiteProps {}
 
 /**
  * Deploy an [OctaneJS](https://octanejs.dev) application to an Archil sandbox:
- * Octane's SSR server as an Archil service on port 3000,
- * static assets uploaded with the service.
+ * Octane's SSR server as the sandbox's program on port 3000,
+ * static assets uploaded with the program.
  *
  * `Archil.Website.Octane` selects hosting and automatically wraps Octane's
  * default native Node output. Keep compiler and route settings in

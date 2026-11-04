@@ -18,7 +18,7 @@ export default MountContainer.make(
     observability: { logs: { enabled: true } },
   },
   Effect.gen(function* () {
-    const dataset = yield* Archil.MountDisk(Dataset, { readOnly: true });
+    const dataset = yield* Archil.MountDisk(Dataset, { path: "/mnt/dataset", mode: "read-only" });
     const fs = yield* FileSystem.FileSystem;
     return {
       fetch: Effect.scoped(
@@ -26,7 +26,7 @@ export default MountContainer.make(
           const request = yield* HttpServerRequest;
           const key = new URL(request.url, "http://container").searchParams.get("key") ?? "";
           yield* Effect.log(`mount: request for ${key}`);
-          const path = yield* dataset.mount({ path: "/mnt/dataset", mode: "read-only" }).pipe(
+          const path = yield* dataset.mount().pipe(
             Effect.timeoutOrElse({
               duration: "90 seconds",
               orElse: () => Effect.die("mount did not finish in 90s"),

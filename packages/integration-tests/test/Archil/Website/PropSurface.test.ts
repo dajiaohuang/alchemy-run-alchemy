@@ -13,7 +13,7 @@ describe(
           memo: { lockfile: true },
           assets: { notFoundHandling: "404-page" },
           dev: {},
-          sandbox: Archil.Sandbox("Box", { vcpuCount: 2 }),
+          sandbox: { vcpuCount: 2, idleTtlSeconds: 0 },
         }),
       () =>
         Archil.Website.Vite("V", {

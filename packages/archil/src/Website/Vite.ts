@@ -28,7 +28,7 @@ export interface ViteProps extends FrameworkSiteProps {
 
 /**
  * Deploy a plain [Vite](https://vite.dev) application to an Archil sandbox:
- * `vite build` output served by a static-file Archil service on port 3000. For
+ * `vite build` output served by a static-file program on port 3000. For
  * client-only projects — React/Vue/Solid SPAs,
  * `index.html` multi-page apps — whose entire deployable output is
  * static assets.
@@ -79,7 +79,7 @@ export interface ViteProps extends FrameworkSiteProps {
  * **Example:** Vite Dev Server Under `alchemy dev`
  * ```typescript
  * // `alchemy dev` starts `vite` programmatically: site.url is the local
- * // dev server (HMR included); no Sandbox or Service is created.
+ * // dev server (HMR included); no sandbox is created.
  * const site = yield* Archil.Website.Vite("Web");
  * ```
  *

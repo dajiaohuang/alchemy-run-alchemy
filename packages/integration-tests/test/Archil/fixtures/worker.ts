@@ -100,7 +100,7 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
             const disk = yield* disks.create(q("name"));
             const holder = yield* sandboxes.create({
               name: q("name"),
-              mounts: [{ disk: disk.diskId }],
+              mounts: [{ disk, path: "/mnt/archil" }],
             });
             yield* holder.exec("echo held > /mnt/archil/held.txt && sync");
             const held = yield* disk.delegations();
@@ -158,13 +158,49 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
           }
           case "/sandbox": {
             const sandbox = yield* sandboxes.create({ name: q("name") });
-            yield* sandbox.writeFile("/tmp/note.txt", "hi from worker");
+            yield* sandbox.files.write("/tmp/note.txt", "hi from worker");
             const out = yield* sandbox.exec("cat /tmp/note.txt");
+            const text = yield* sandbox.files.readText("/tmp/note.txt");
+            // An argument list is quoted; stdin is written, then closed.
+            const piped = yield* sandbox.exec(["sh", "-c", "tr a-z A-Z"], { stdin: "piped in" });
+            const failed = yield* sandbox.exec("exit 3");
+            // A background process, attached until it exits.
+            const started = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const process = yield* sandbox.start("echo -n started", { cwd: "/tmp" });
+                const output = yield* process.output.pipe(
+                  Stream.map((chunk) => new TextDecoder().decode(chunk.data)),
+                  Stream.mkString,
+                );
+                const exit = yield* process.wait();
+                return { output, exitCode: exit.exitCode };
+              }),
+            );
+            // A terminal of 100 x 30.
+            const size = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const pty = yield* sandbox.pty.open({ cols: 100, rows: 30, command: "stty size" });
+                const output = yield* pty.output.pipe(
+                  Stream.map((bytes) => new TextDecoder().decode(bytes)),
+                  Stream.mkString,
+                );
+                yield* pty.wait();
+                return output.trim();
+              }),
+            );
             const forked = yield* sandbox.fork({ name: `${q("name")}-fork` });
             const forkOut = yield* forked.exec("cat /tmp/note.txt");
             yield* forked.delete();
             yield* sandbox.delete();
-            return yield* HttpServerResponse.json({ stdout: out.stdout, fork: forkOut.stdout });
+            return yield* HttpServerResponse.json({
+              stdout: out.stdout,
+              text,
+              piped: piped.stdout,
+              failed: failed.exitCode,
+              started,
+              size,
+              fork: forkOut.stdout,
+            });
           }
           case "/preview": {
             const out = yield* preview.exec("echo -n preview-ok");

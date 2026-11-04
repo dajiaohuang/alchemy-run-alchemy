@@ -18,8 +18,8 @@ export interface SvelteKitProps extends FrameworkSiteProps {
 
 /**
  * Deploy a SvelteKit application to an Archil sandbox: kit's SSR
- * server as an Archil service on port 3000, static assets (prerendered
- * pages included) uploaded with the service.
+ * server as the sandbox's program on port 3000, static assets (prerendered
+ * pages included) uploaded with the program.
  *
  * The build runs through `@alchemy.run/frontend-frameworks/sveltekit` with
  * the `@alchemy.run/frontend-frameworks/sveltekit/node` deploy target.

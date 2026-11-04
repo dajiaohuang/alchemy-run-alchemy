@@ -12,8 +12,8 @@ export interface TanStackStartProps extends FrameworkSiteProps {}
 
 /**
  * Deploy a [TanStack Start](https://tanstack.com/start) application to an
- * Archil sandbox: the SSR server as an Archil service on port 3000,
- * static assets uploaded with the service.
+ * Archil sandbox: the SSR server as the sandbox's program on port 3000,
+ * static assets uploaded with the program.
  *
  * The build runs through
  * `@alchemy.run/frontend-frameworks/tanstack-start` with the

@@ -8,12 +8,13 @@ import * as archil from "@distilled.cloud/archil";
 import * as Objects from "@distilled.cloud/archil/Objects";
 import * as Process from "@distilled.cloud/archil/Process";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
+import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
-import type * as Stream from "effect/Stream";
-import * as StreamM from "effect/Stream";
+import * as Stream from "effect/Stream";
 import type { Authorize, ObjectsRunner } from "./ArchilBindings.ts";
 import type { BranchAttributes } from "./Branch.ts";
 import { toBranchAttributes } from "./Branch.ts";
@@ -204,10 +205,24 @@ export interface DiskHandle
   removeToken(identifier: string): Effect.Effect<void, archil.RemoveDiskUserError, R>;
 }
 
-/** Options for a sandbox process. */
-export type RunOptions = Process.RunOptions;
+/** Options for a command run in a sandbox. */
+export interface ExecOptions {
+  /** Working directory inside the sandbox. */
+  readonly cwd?: string;
+  /** Environment for the process. */
+  readonly env?: Record<string, string>;
+  /** Kill the process after this long (rounded up to whole seconds). */
+  readonly timeout?: Duration.Input;
+  /** Written to the process's stdin, which is then closed. */
+  readonly stdin?: string | Uint8Array;
+}
 
-/** One sandbox, with everything a run-time client can do to it. */
+/** Options for a process started in the background. */
+export type StartOptions = Omit<ExecOptions, "stdin">;
+
+/** A command: one shell string, or an argument list (quoted for you). */
+export type Command = string | ReadonlyArray<string>;
+
 /**
  * What a process call on a sandbox handle can fail with. A paused sandbox
  * is resumed first, so resuming can fail too.
@@ -218,48 +233,136 @@ export type ProcessCallError =
   | archil.GetSandboxError
   | archil.ResumeSandboxError;
 
-export interface SandboxHandle {
-  readonly sandboxId: string;
-  readonly name: string;
-  /** The sandbox's current attributes. */
-  refresh(): Effect.Effect<SandboxAttributes, archil.GetSandboxError, R>;
-  /** Run a command to completion and collect its output. */
-  exec(
-    command: string,
-    options?: RunOptions,
-  ): Effect.Effect<Process.ProcessResult, ProcessCallError, R>;
-  /**
-   * Start a command and attach to its output. Closing the scope detaches;
-   * the process keeps running and can be re-attached by id.
-   */
-  run(
-    command: string,
-    options?: RunOptions,
-  ): Effect.Effect<Process.Process, ProcessCallError, R | Scope.Scope>;
-  /** Re-attach to a running process, resuming its output at `offset`. */
-  attach(
-    processId: string,
-    offset?: number,
-  ): Effect.Effect<Process.Process, ProcessCallError, R | Scope.Scope>;
-  /** Kill a running process. */
-  kill(processId: string): Effect.Effect<void, ProcessCallError, R>;
-  /** Write a file in the sandbox. */
-  writeFile(
+/**
+ * A process running in a sandbox, attached over one connection. Closing
+ * the scope that started it detaches; the process keeps running and can be
+ * re-attached by `id`.
+ */
+export interface SandboxProcess {
+  readonly id: string;
+  /** stdout and stderr chunks, at their offsets in the combined output. Consume once. */
+  readonly output: Stream.Stream<Process.ProcessOutput, Process.ProcessError>;
+  /** Write to stdin. Strings are UTF-8 encoded. */
+  write(data: string | Uint8Array): Effect.Effect<void, Process.ProcessError>;
+  /** Close stdin. */
+  closeStdin(): Effect.Effect<void, Process.ProcessError>;
+  /** Kill the process. */
+  kill(): Effect.Effect<void, ProcessCallError, R>;
+  /** Wait for the process to exit. */
+  wait(): Effect.Effect<Process.ProcessExit, Process.ProcessError>;
+}
+
+/** A shell (or command) on a pseudo-terminal. */
+export interface PtyConnection {
+  readonly id: string;
+  /** What the terminal prints. Consume once. */
+  readonly output: Stream.Stream<Uint8Array, Process.ProcessError>;
+  /** Type into the terminal. */
+  write(data: string | Uint8Array): Effect.Effect<void, Process.ProcessError>;
+  /** Resize the terminal. */
+  resize(size: {
+    readonly cols: number;
+    readonly rows: number;
+  }): Effect.Effect<void, ProcessCallError, R>;
+  /** Kill the terminal's process. */
+  kill(): Effect.Effect<void, ProcessCallError, R>;
+  /** Wait for the terminal's process to exit. */
+  wait(): Effect.Effect<Process.ProcessExit, Process.ProcessError>;
+}
+
+/** Options for a pseudo-terminal. */
+export interface PtyOptions {
+  readonly cols: number;
+  readonly rows: number;
+  /** @default "bash" */
+  readonly command?: Command;
+  readonly cwd?: string;
+  readonly env?: Record<string, string>;
+}
+
+/**
+ * Files in the sandbox. Archil's process protocol transfers whole files;
+ * it has no listing, stat, remove or mkdir, so run those with `exec`.
+ */
+export interface SandboxFiles {
+  /** Read a file. */
+  read(path: string): Effect.Effect<Uint8Array, ProcessCallError, R>;
+  /** Read a file as UTF-8 text. */
+  readText(path: string): Effect.Effect<string, ProcessCallError, R>;
+  /** Write a file (atomically: a temp file, then a rename), creating its directory. */
+  write(
     path: string,
     data: string | Uint8Array,
     options?: { readonly mode?: number },
   ): Effect.Effect<void, ProcessCallError, R>;
-  /** Read a file from the sandbox. */
-  readFile(path: string): Effect.Effect<Uint8Array, ProcessCallError, R>;
-  /** Start a stopped sandbox. */
-  start(): Effect.Effect<SandboxAttributes, archil.StartSandboxError, R>;
+}
+
+/** The sandbox doesn't serve this port publicly (`exposePort` it first). */
+export class SandboxPortNotExposed extends Data.TaggedError("Archil.SandboxPortNotExposed")<{
+  readonly port: number;
+  readonly message: string;
+}> {}
+
+/** A request to a sandbox port failed before it got a response. */
+export class SandboxFetchFailed extends Data.TaggedError("Archil.SandboxFetchFailed")<{
+  readonly port: number;
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+/** Everything a run-time client can do to one sandbox. */
+export interface SandboxOps {
+  /** The sandbox's current attributes. */
+  refresh(): Effect.Effect<SandboxAttributes, archil.GetSandboxError, R>;
+  /**
+   * Run a command to completion and collect its output. A non-zero exit is
+   * returned in `exitCode`, not failed.
+   */
+  exec(
+    command: Command,
+    options?: ExecOptions,
+  ): Effect.Effect<Process.ProcessResult, ProcessCallError, R>;
+  /**
+   * Start a command in the background and attach to it. Closing the scope
+   * detaches; the process keeps running and can be re-attached by id.
+   */
+  start(
+    command: Command,
+    options?: StartOptions,
+  ): Effect.Effect<SandboxProcess, ProcessCallError, R | Scope.Scope>;
+  /** Re-attach to a running process, resuming its output at `offset`. */
+  attach(
+    processId: string,
+    offset?: number,
+  ): Effect.Effect<SandboxProcess, ProcessCallError, R | Scope.Scope>;
+  /** Files in the sandbox. */
+  readonly files: SandboxFiles;
+  /** Pseudo-terminals. */
+  readonly pty: {
+    /** Open a shell (or `command`) on a terminal of `cols` × `rows`. */
+    open(options: PtyOptions): Effect.Effect<PtyConnection, ProcessCallError, R | Scope.Scope>;
+  };
+  /** Send a request to a port the sandbox serves publicly. */
+  fetch(
+    port: number,
+    request: Request,
+  ): Effect.Effect<
+    Response,
+    SandboxPortNotExposed | SandboxFetchFailed | archil.ListSandboxPortsError,
+    R
+  >;
+  /** Start a stopped sandbox (Archil's `start`). */
+  boot(): Effect.Effect<SandboxAttributes, archil.StartSandboxError, R>;
   /** Stop the sandbox (its disk survives; memory doesn't). */
   stop(): Effect.Effect<SandboxAttributes, archil.StopSandboxError, R>;
   /** Pause the sandbox, keeping its memory. */
   pause(): Effect.Effect<SandboxAttributes, archil.PauseSandboxError, R>;
   /** Resume a paused sandbox. */
   resume(): Effect.Effect<SandboxAttributes, archil.ResumeSandboxError, R>;
-  /** Fork the sandbox (memory and disk) into a new one. */
+  /**
+   * Fork the sandbox (memory and disk) into a new one. Archil only forks a
+   * sandbox with mounts while it is stopped.
+   */
   fork(options?: {
     readonly name?: string;
     readonly checkpoint?: string;
@@ -299,11 +402,16 @@ export interface SandboxHandle {
   /** Replace the outbound network policy. Applies at once. */
   setEgress(egress: SandboxEgress): Effect.Effect<void, archil.UpdateSandboxNetworkError, R>;
   /**
-   * Stop (if it's live) and delete the sandbox. Delete forks first: Archil
-   * won't delete a sandbox that has forks. Deleting a missing sandbox
+   * Stop (if it's live) and delete the sandbox. Deleting a missing sandbox
    * succeeds.
    */
   delete(): Effect.Effect<void, Effect.Error<ReturnType<typeof deleteSandbox>>, R>;
+}
+
+/** One sandbox known by id and name, with everything a run-time client can do to it. */
+export interface SandboxHandle extends SandboxOps {
+  readonly sandboxId: string;
+  readonly name: string;
 }
 
 const toExecResult = (data: archil.ExecDiskResult): ExecResult => ({
@@ -383,11 +491,11 @@ export const makeReadDiskClient = (
   get: (key, options) => run(Effect.flatMap(ref, (r) => Objects.getObject(r, key, options))),
   getText: (key) => run(Effect.flatMap(ref, (r) => Objects.getObjectText(r, key))),
   getStream: (key) =>
-    run.stream(StreamM.unwrap(Effect.map(ref, (r) => Objects.getObjectStream(r, key)))),
+    run.stream(Stream.unwrap(Effect.map(ref, (r) => Objects.getObjectStream(r, key)))),
   head: (key) => run(Effect.flatMap(ref, (r) => Objects.headObject(r, key))),
   list: (prefix, options) =>
     run.stream(
-      StreamM.unwrap(
+      Stream.unwrap(
         Effect.map(ref, (r) => Objects.listObjects(r, prefix, { recursive: options?.recursive })),
       ),
     ),
@@ -434,7 +542,7 @@ export const makeWriteDiskClient = (
             Effect.map((part) => void parts.push(part)),
           );
         return yield* Effect.gen(function* () {
-          const rest = yield* StreamM.runFoldEffect(
+          const rest = yield* Stream.runFoldEffect(
             body,
             (): ReadonlyArray<Uint8Array> => [],
             (pending, chunk) => {
@@ -548,57 +656,168 @@ export const makeDiskHandle = (
   };
 };
 
+/** Single-quote a value for `sh`. */
+const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
+
+const commandLine = (command: Command) =>
+  typeof command === "string" ? command : command.map(shellQuote).join(" ");
+
+const runOptions = (options: StartOptions | undefined): Process.RunOptions => ({
+  cwd: options?.cwd,
+  env: options?.env,
+  timeoutSeconds:
+    options?.timeout === undefined ? undefined : Math.ceil(Duration.toSeconds(options.timeout)),
+});
+
+const utf8 = new TextDecoder();
+
 /**
- * A full handle on a sandbox known by id and name. `forkName` maps a fork's
- * name (a binding stamps its prefix on it so destroy can sweep forks too).
+ * Everything a run-time client can do to the sandbox `sid` resolves to.
+ * `forkName` maps a fork's name (a binding stamps its prefix on it so
+ * destroy can sweep forks too).
  */
-export const makeSandboxHandle = (
-  sandbox: { readonly sandboxId: string; readonly name: string },
+export const makeSandboxOps = (
+  sid: Effect.Effect<string, never, R>,
   authorize: Authorize,
   forkName: (name: string | undefined) => Effect.Effect<string | undefined> = Effect.succeed,
-): SandboxHandle => {
-  const sid = sandbox.sandboxId;
+): SandboxOps => {
   // A paused sandbox (idle TTL) refuses process connections; resume it and
   // try once more.
-  const awake = <A, E extends { readonly _tag: string }, R2>(effect: Effect.Effect<A, E, R2>) =>
+  const awake = <A, E extends { readonly _tag: string }, R2>(
+    use: (sid: string) => Effect.Effect<A, E, R2>,
+  ) =>
     authorize(
-      effect.pipe(
-        Effect.catchIf(
-          (e) => e._tag === "SandboxStateConflict",
-          (e) =>
-            archil
-              .getSandbox({ sid })
-              .pipe(
-                Effect.flatMap(({ data }) =>
-                  data.status === "paused"
-                    ? archil.resumeSandbox({ sid, wait: true }).pipe(Effect.andThen(effect))
-                    : Effect.fail(e),
+      Effect.flatMap(sid, (id) =>
+        use(id).pipe(
+          Effect.catchIf(
+            (e) => e._tag === "SandboxStateConflict",
+            (e) =>
+              archil
+                .getSandbox({ sid: id })
+                .pipe(
+                  Effect.flatMap(({ data }) =>
+                    data.status === "paused"
+                      ? archil.resumeSandbox({ sid: id, wait: true }).pipe(Effect.andThen(use(id)))
+                      : Effect.fail(e),
+                  ),
                 ),
-              ),
+          ),
         ),
       ),
     );
-  const attrs = <E>(effect: Effect.Effect<{ data: archil.Sandbox }, E, any>) =>
-    authorize(effect.pipe(Effect.flatMap(({ data }) => observeSandbox(data))));
-  const handle: SandboxHandle = {
-    sandboxId: sid,
-    name: sandbox.name,
-    refresh: () => attrs(archil.getSandbox({ sid })),
-    exec: (command, options) => awake(Process.exec(sid, command, options)),
-    run: (command, options) => awake(Process.run(sid, command, options)),
-    attach: (processId, offset) => awake(Process.attach(sid, processId, offset)),
-    kill: (processId) => awake(Process.kill(sid, processId)),
-    writeFile: (path, data, options) => awake(Process.uploadFile(sid, path, data, options)),
-    readFile: (path) => awake(Process.downloadFile(sid, path)),
-    start: () => attrs(archil.startSandbox({ sid, wait: true })),
-    stop: () => attrs(archil.stopSandbox({ sid })),
-    pause: () => attrs(archil.pauseSandbox({ sid })),
-    resume: () => attrs(archil.resumeSandbox({ sid })),
+  const call = <A, E, R2>(use: (sid: string) => Effect.Effect<A, E, R2>) =>
+    authorize(Effect.flatMap(sid, use));
+  const attrs = <E, R2>(use: (sid: string) => Effect.Effect<{ data: archil.Sandbox }, E, R2>) =>
+    call((id) => use(id).pipe(Effect.flatMap(({ data }) => observeSandbox(data))));
+  const toProcess = (process: Process.Process): SandboxProcess => ({
+    id: process.id,
+    output: process.output,
+    write: (data) => process.write(data),
+    closeStdin: () => process.closeStdin,
+    kill: () => awake((id) => Process.kill(id, process.id)),
+    wait: () => process.exit,
+  });
+  const files: SandboxFiles = {
+    read: (path) => awake((id) => Process.downloadFile(id, path)),
+    readText: (path) =>
+      awake((id) => Process.downloadFile(id, path)).pipe(Effect.map((bytes) => utf8.decode(bytes))),
+    write: (path, data, options) => awake((id) => Process.uploadFile(id, path, data, options)),
+  };
+  const ops: SandboxOps = {
+    refresh: () => attrs((id) => archil.getSandbox({ sid: id })),
+    exec: (command, options) =>
+      options?.stdin === undefined
+        ? awake((id) => Process.exec(id, commandLine(command), runOptions(options)))
+        : awake((id) =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const process = yield* Process.run(id, commandLine(command), runOptions(options));
+                yield* process.write(options.stdin!);
+                yield* process.closeStdin;
+                const out = new TextDecoder();
+                const err = new TextDecoder();
+                let stdout = "";
+                let stderr = "";
+                yield* process.output.pipe(
+                  Stream.runForEach((chunk) =>
+                    Effect.sync(() => {
+                      if (chunk.stream === "stdout")
+                        stdout += out.decode(chunk.data, { stream: true });
+                      else stderr += err.decode(chunk.data, { stream: true });
+                    }),
+                  ),
+                );
+                const exit = yield* process.exit;
+                return {
+                  ...exit,
+                  stdout: stdout + out.decode(),
+                  stderr: stderr + err.decode(),
+                } satisfies Process.ProcessResult;
+              }),
+            ),
+          ),
+    start: (command, options) =>
+      awake((id) => Process.run(id, commandLine(command), runOptions(options))).pipe(
+        Effect.map(toProcess),
+      ),
+    attach: (processId, offset) =>
+      awake((id) => Process.attach(id, processId, offset)).pipe(Effect.map(toProcess)),
+    files,
+    pty: {
+      open: (options) =>
+        awake((id) =>
+          Process.run(id, commandLine(options.command ?? "bash"), {
+            cwd: options.cwd,
+            env: options.env,
+            terminal: { cols: options.cols, rows: options.rows },
+          }),
+        ).pipe(
+          Effect.map((process): PtyConnection => ({
+            id: process.id,
+            output: process.output.pipe(Stream.map((chunk) => chunk.data)),
+            write: (data) => process.write(data),
+            resize: (size) => awake((id) => Process.resize(id, process.id, size)),
+            kill: () => awake((id) => Process.kill(id, process.id)),
+            wait: () => process.exit,
+          })),
+        ),
+    },
+    fetch: (port, request) =>
+      call((id) =>
+        Effect.gen(function* () {
+          const { data } = yield* archil.listSandboxPorts({ sid: id });
+          const endpoint = (data.ports ?? []).find((p) => p.port === port);
+          if (endpoint === undefined) {
+            return yield* new SandboxPortNotExposed({
+              port,
+              message: `Port ${port} isn't served publicly; call exposePort(${port}) first.`,
+            });
+          }
+          const source = new URL(request.url);
+          const target = new URL(
+            `${source.pathname}${source.search}`,
+            `https://${endpoint.hostname}`,
+          );
+          return yield* Effect.tryPromise({
+            try: () => globalThis.fetch(new Request(target, request)),
+            catch: (cause) =>
+              new SandboxFetchFailed({
+                port,
+                message: `Request to port ${port} failed: ${String(cause)}`,
+                cause,
+              }),
+          });
+        }),
+      ),
+    boot: () => attrs((id) => archil.startSandbox({ sid: id, wait: true })),
+    stop: () => attrs((id) => archil.stopSandbox({ sid: id })),
+    pause: () => attrs((id) => archil.pauseSandbox({ sid: id })),
+    resume: () => attrs((id) => archil.resumeSandbox({ sid: id })),
     fork: (options) =>
-      authorize(
+      call((id) =>
         forkName(options?.name).pipe(
           Effect.flatMap((name) =>
-            archil.forkSandbox({ sid, wait: true, name, checkpoint: options?.checkpoint }),
+            archil.forkSandbox({ sid: id, wait: true, name, checkpoint: options?.checkpoint }),
           ),
         ),
       ).pipe(
@@ -607,43 +826,60 @@ export const makeSandboxHandle = (
         ),
       ),
     setTimeout: (options) =>
-      attrs(
+      attrs((id) =>
         archil.setSandboxTimeout({
-          sid,
+          sid: id,
           timeout: options.timeoutSeconds,
           idle_ttl_seconds: options.idleTtlSeconds,
         }),
       ),
     exposePort: (port) =>
-      authorize(archil.exposeSandboxPort({ sid, port })).pipe(
+      call((id) => archil.exposeSandboxPort({ sid: id, port })).pipe(
         Effect.map(({ data }) => ({ port: data.port, hostname: data.hostname })),
       ),
-    unexposePort: (port) => authorize(archil.deleteSandboxPort({ sid, port })).pipe(Effect.asVoid),
+    unexposePort: (port) =>
+      call((id) => archil.deleteSandboxPort({ sid: id, port })).pipe(Effect.asVoid),
     ports: () =>
-      authorize(archil.listSandboxPorts({ sid })).pipe(
+      call((id) => archil.listSandboxPorts({ sid: id })).pipe(
         Effect.map(({ data }) =>
           (data.ports ?? []).map((p) => ({ port: p.port, hostname: p.hostname })),
         ),
       ),
-    createPortToken: (port, ttl) => authorize(createPortToken(sid, port, ttl)),
-    revokePortToken: (tokenId) => authorize(revokePortToken(sid, tokenId)),
+    createPortToken: (port, ttl) => call((id) => createPortToken(id, port, ttl)),
+    revokePortToken: (tokenId) => call((id) => revokePortToken(id, tokenId)),
     listPortTokens: () =>
       authorize.stream(
-        StreamM.paginate(undefined as string | undefined, (cursor) =>
-          archil
-            .listSandboxPortTokens({ sid, cursor })
-            .pipe(
-              Effect.map(
-                ({ data, nextCursor }) => [data.tokens, Option.fromNullishOr(nextCursor)] as const,
-              ),
+        Stream.unwrap(
+          Effect.map(sid, (id) =>
+            Stream.paginate(undefined as string | undefined, (cursor) =>
+              archil
+                .listSandboxPortTokens({ sid: id, cursor })
+                .pipe(
+                  Effect.map(
+                    ({ data, nextCursor }) =>
+                      [data.tokens, Option.fromNullishOr(nextCursor)] as const,
+                  ),
+                ),
             ),
+          ),
         ),
       ),
     setEgress: (egress) =>
-      authorize(archil.updateSandboxNetwork({ sid, egress: toEgressPolicy(egress) })).pipe(
+      call((id) => archil.updateSandboxNetwork({ sid: id, egress: toEgressPolicy(egress) })).pipe(
         Effect.asVoid,
       ),
-    delete: () => authorize(deleteSandbox(sid)),
+    delete: () => call((id) => deleteSandbox(id)),
   };
-  return handle;
+  return ops;
 };
+
+/** A full handle on a sandbox known by id and name. */
+export const makeSandboxHandle = (
+  sandbox: { readonly sandboxId: string; readonly name: string },
+  authorize: Authorize,
+  forkName?: (name: string | undefined) => Effect.Effect<string | undefined>,
+): SandboxHandle => ({
+  sandboxId: sandbox.sandboxId,
+  name: sandbox.name,
+  ...makeSandboxOps(Effect.succeed(sandbox.sandboxId), authorize, forkName),
+});

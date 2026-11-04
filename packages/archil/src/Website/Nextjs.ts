@@ -12,15 +12,15 @@ export interface NextjsProps extends FrameworkSiteProps {}
 
 /**
  * Deploy a Next.js application to an Archil sandbox: `next build`
- * then a long-running `next({ dev: false })` Archil service on port 3000.
+ * then a long-running `next({ dev: false })` program on port 3000.
  * Does **not** use OpenNext (those wrappers are Lambda/workerd).
  *
  * The `.next` output (and `public/` when present) is packed into the
- * service's files. `next`, `react`, and `react-dom` are installed in the
- * service with `npm install` rather than bundled.
+ * program's files. `next`, `react`, and `react-dom` are installed next to the
+ * program with `npm install` rather than bundled.
  *
  * During `alchemy dev` the site is `next dev` and no cloud resources
- * are declared; `Alchemy.remote()` opts back into the live Service.
+ * are declared; `Alchemy.remote()` opts back into the live sandbox.
  *
  *
  * ### Creating Next.js Sites

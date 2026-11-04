@@ -10,6 +10,14 @@ import type { ArchilFailed, ArchilNotReady } from "./internal/archil.ts";
 import { findSandboxByName, listSandboxes, waitForSandbox } from "./internal/archil.ts";
 import { runtimeName, type OnDestroy } from "./RuntimeObjects.ts";
 import { deleteSandbox, toCreateSandboxRequest, type SandboxProps } from "./Sandbox.ts";
+import {
+  MountDiskUnresolved,
+  mountDiskId,
+  toSandboxMount,
+  type DiskRef,
+  type MountableDisk,
+  type MountOptionUnsupported,
+} from "./SandboxOptions.ts";
 
 export interface CreateSandboxOptions {
   /**
@@ -20,8 +28,15 @@ export interface CreateSandboxOptions {
   onDestroy?: OnDestroy;
 }
 
-/** A run-time create: a {@link Sandbox}'s props, with a required name. */
-export interface CreateSandboxRequest extends Omit<SandboxProps, "name"> {
+/**
+ * A run-time create: a box {@link Sandbox}'s props (no program), with a
+ * required name. A mount's disk is a `DiskHandle` (e.g. from
+ * `CreateDisk`), or a `MountDisk` reference this host bound at deploy.
+ */
+export interface CreateSandboxRequest extends Omit<
+  SandboxProps,
+  "name" | "main" | "handler" | "port" | "build" | "extraFiles" | "isExternal"
+> {
   /** Name, stamped with this binding's prefix. Lowercase letters, digits and `-`. */
   readonly name: string;
 }
@@ -31,7 +46,27 @@ export type CreateSandboxError =
   | archil.GetSandboxError
   | archil.ListSandboxesError
   | ArchilFailed
-  | ArchilNotReady;
+  | ArchilNotReady
+  | MountOptionUnsupported
+  | MountDiskUnresolved;
+
+/**
+ * A mount's disk id at run time: a handle carries it; a declared disk
+ * reads the id `MountDisk` bound into this host at deploy.
+ */
+const runtimeDiskId = Effect.fn(function* (disk: MountableDisk, path: string) {
+  if (isDiskRef(disk)) return disk.diskId;
+  if (Effect.isEffect(disk)) {
+    return yield* new MountDiskUnresolved({
+      path,
+      message: `The disk mounted at ${path} is a declaration: bind it with Archil.MountDisk(disk) and pass that reference, or pass a DiskHandle.`,
+    });
+  }
+  const diskId = yield* disk.diskId;
+  return yield* diskId;
+});
+
+const isDiskRef = (disk: MountableDisk): disk is DiskRef => mountDiskId(disk) !== undefined;
 
 export interface CreateSandboxClient {
   /**
@@ -83,7 +118,7 @@ export interface CreateSandboxClient {
  *         const home = yield* disks.create("user-1");
  *         const sandbox = yield* sandboxes.create({
  *           name: "task-1",
- *           mounts: [{ disk: home.diskId, path: "/home/user" }],
+ *           mounts: [{ disk: home, path: "/home/user" }],
  *           network: { egress: { default: "deny", allow: ["registry.npmjs.org"] } },
  *           idleTtlSeconds: 300,
  *         });
@@ -137,8 +172,15 @@ export const CreateSandboxHttp = Layer.effect(
                 request.image === undefined && request.baseImage === undefined && imageId
                   ? yield* imageId
                   : request.image;
+              const mounts: archil.SandboxMount[] = [];
+              for (const mount of request.mounts ?? []) {
+                const diskId = yield* runtimeDiskId(mount.disk, mount.path);
+                mounts.push(yield* toSandboxMount(diskId, mount));
+              }
               const { data } = yield* archil
-                .createSandbox(toCreateSandboxRequest(name, { ...request, image: defaultImage }))
+                .createSandbox(
+                  toCreateSandboxRequest(name, { ...request, image: defaultImage }, mounts),
+                )
                 .pipe(
                   Effect.catchTag("SandboxAlreadyExists", (conflict) =>
                     findSandboxByName(name).pipe(

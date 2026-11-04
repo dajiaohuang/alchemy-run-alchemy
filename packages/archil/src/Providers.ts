@@ -20,7 +20,6 @@ import { DeployerKey, DeployerKeyProvider } from "./internal/DeployerKey.ts";
 import { RuntimeObjects, RuntimeObjectsProvider } from "./RuntimeObjects.ts";
 import { Sandbox, SandboxProvider } from "./Sandbox.ts";
 import { SandboxPortToken, SandboxPortTokenProvider } from "./SandboxPortToken.ts";
-import { Service, ServiceProvider } from "./Service.ts";
 
 /**
  * Service tag bundling all Archil providers + auth + credentials. Use
@@ -54,7 +53,6 @@ export const providers = () =>
       RuntimeObjects,
       Sandbox,
       SandboxPortToken,
-      Service,
       WebsiteServer,
     ]),
   ).pipe(
@@ -70,7 +68,6 @@ export const providers = () =>
         RuntimeObjectsProvider(),
         SandboxProvider(),
         SandboxPortTokenProvider(),
-        ServiceProvider(),
         WebsiteServerProvider(),
       ),
     ),

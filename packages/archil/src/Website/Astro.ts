@@ -27,7 +27,7 @@ export interface AstroProps extends FrameworkSiteProps {
     /**
      * Astro output target. `"server"` renders pages on demand;
      * `"static"` prerenders every page at build time and deploys
-     * assets-only (no SSR service). Overrides the `output` in your
+     * assets-only (no SSR server). Overrides the `output` in your
      * `astro.config.*`; leave it unset to use the file's value.
      * @default the config file's `output`, else `"server"`
      */
@@ -45,8 +45,8 @@ export interface AstroProps extends FrameworkSiteProps {
 
 /**
  * Deploy an [Astro](https://astro.build) application to an Archil sandbox: the
- * Node adapter bundle as an Archil service on port 3000, static
- * assets uploaded with the service. Pages render on demand by default
+ * Node adapter bundle as the sandbox's program on port 3000, static
+ * assets uploaded with the program. Pages render on demand by default
  * (`output: "server"`); `output: "static"` in your `astro.config.*` or
  * `astro: { output: "static" }` prerenders every page and deploys
  * assets-only.

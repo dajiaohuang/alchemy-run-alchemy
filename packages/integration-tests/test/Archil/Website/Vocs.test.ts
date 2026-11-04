@@ -57,8 +57,7 @@ test.provider(
 
       const url = deployed.site.url;
       expect(url).toMatch(/^https:\/\//);
-      expect(deployed.site.service!.port).toBe(3000);
-      expect(deployed.site.service!.sandboxId).toBe(deployed.site.sandbox!.sandboxId);
+      expect(deployed.site.sandbox!.port).toBe(3000);
 
       yield* expectUrlContains(`${url!}/`, "Alchemy with Vocs", {
         timeout: "90 seconds",
@@ -71,7 +70,7 @@ test.provider(
       expect(gone).toEqual("gone");
     }).pipe(logLevel, Effect.ensuring(stack.destroy().pipe(Effect.orDie))),
   {
-    tags: ["provider:archil", "provider:archil:service", "provider:archil:website", "live"],
+    tags: ["provider:archil", "provider:archil:sandbox", "provider:archil:website", "live"],
     timeout: 240000,
   },
 );

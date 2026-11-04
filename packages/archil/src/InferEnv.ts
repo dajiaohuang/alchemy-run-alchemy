@@ -1,14 +1,14 @@
 import type * as Effect from "effect/Effect";
 
 /**
- * Typed `env` for an async (non-Effect) {@link Service}. A service's
- * environment is process environment variables, so every entry is a
- * `string`: the object the handler receives as its second argument.
+ * Typed `env` for the async (non-Effect) program of an `Archil.Sandbox`.
+ * A program's environment is process environment variables, so every
+ * entry is a `string`: the object the handler receives as its second
+ * argument.
  *
  * @example
  * ```typescript
- * export const Hello = Archil.Service("Hello", {
- *   sandbox: Box,
+ * export const Hello = Archil.Sandbox("Hello", {
  *   main: "./src/hello.ts",
  *   env: { GREETING: "hello" },
  * });

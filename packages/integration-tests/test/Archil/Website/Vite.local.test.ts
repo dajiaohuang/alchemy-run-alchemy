@@ -39,7 +39,6 @@ describe(
 
           const url = deployed.site.url;
           expect(url).toMatch(/^http:\/\/localhost:\d+\/?$/);
-          expect(deployed.site.service).toBeUndefined();
           expect(deployed.site.sandbox).toBeUndefined();
 
           yield* expectUrlContains(`${url}/`, "Vite SPA fixture", {

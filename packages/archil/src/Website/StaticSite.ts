@@ -9,13 +9,12 @@ import { loadFrontendCore } from "alchemy/Website/FrontendCore";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
-import { Service } from "../Service.ts";
+import { Sandbox } from "../Sandbox.ts";
 // Outputs stand in for plain prop values here: the engine resolves them
 // before reconcile, but Output<T> isn't assignable to T in the props type,
 // so those props are cast.
 import {
   DEFAULT_WEBSITE_PORT,
-  resolveWebsiteSandbox,
   unwrapEnv,
   type FrameworkSiteProps,
   type Website,
@@ -50,7 +49,7 @@ export interface StaticSiteProps extends Pick<FrameworkSiteProps, "sandbox" | "e
   /**
    * Local dev configuration. When `alchemy dev` runs, the build command is
    * skipped and `command` runs as a long-lived child. Without `dev`, the
-   * site is still built and served locally (no cloud service).
+   * site is still built and served locally (no cloud sandbox).
    */
   dev?: {
     /** Shell command to run as the local dev server (e.g. `npm run dev`). */
@@ -66,7 +65,7 @@ export interface StaticSiteProps extends Pick<FrameworkSiteProps, "sandbox" | "e
 
 /**
  * Static files built by a shell command, served from an Archil sandbox by
- * a small static-file service (`GET` assets, `/health`, optional SPA or
+ * a small static-file server (`GET` assets, `/health`, optional SPA or
  * 404 page) on a public `https://` URL. A request to a stopped sandbox
  * starts it again in a few seconds.
  *
@@ -135,7 +134,7 @@ export const StaticSite = (id: string, props: StaticSiteProps) =>
         env: props.dev.env ?? props.env,
       }).pipe(Namespace.push(id));
       const url = Output.map((detected: string | undefined) => detected ?? props.dev?.url)(dev.url);
-      return { url, sandbox: undefined, service: undefined } satisfies Website;
+      return { url, sandbox: undefined } satisfies Website;
     }
 
     const build = yield* Command.Build("Build", {
@@ -176,27 +175,23 @@ export const StaticSite = (id: string, props: StaticSiteProps) =>
           HOST: "127.0.0.1",
         },
       }).pipe(Namespace.push(id));
-      return { url: dev.url, sandbox: undefined, service: undefined } satisfies Website;
+      return { url: dev.url, sandbox: undefined } satisfies Website;
     }
 
-    const sandbox =
-      props.sandbox !== undefined
-        ? yield* resolveWebsiteSandbox(props)
-        : yield* resolveWebsiteSandbox(props).pipe(Namespace.push(id));
-    // Derived from the build's `outdir` so the service waits for the build:
+    // Derived from the build's `outdir` so the upload waits for the build:
     // a plain path would let the upload race the command that writes it.
     const extraFiles = Output.map(build.outdir, (built: string) => [
       { source: path.resolve(initialCwd, built), destination: path.basename(outdir) },
     ]);
-    const service = yield* Service(id, {
-      sandbox,
+    const sandbox = yield* Sandbox(id, {
+      ...props.sandbox,
       main: servePath,
       extraFiles: extraFiles as unknown as Array<{ source: string; destination: string }>,
       port,
-      env: unwrapEnv(props.env),
+      env: unwrapEnv(props.env) as Record<string, string> | undefined,
       // The generated static-file server is a complete Node program.
       isExternal: true,
     });
 
-    return { url: service.url, sandbox, service } satisfies Website;
+    return { url: sandbox.url, sandbox } satisfies Website;
   }).pipe(Effect.orDie);

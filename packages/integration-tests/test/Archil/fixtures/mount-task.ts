@@ -24,12 +24,12 @@ export default class MountTask extends AWS.ECS.Task<MountTask>()(
     memory: 1024,
   },
   Effect.gen(function* () {
-    const disk = yield* Archil.MountDisk(EcsDisk);
+    const disk = yield* Archil.MountDisk(EcsDisk, { path: "/mnt/archil" });
     const fs = yield* FileSystem.FileSystem;
     return {
       run: Effect.scoped(
         Effect.gen(function* () {
-          const path = yield* disk.mount({ path: "/mnt/archil" });
+          const path = yield* disk.mount();
           yield* Effect.log(`mount: mounted at ${path}`);
           yield* fs.makeDirectory(`${path}/ecs`, { recursive: true });
           yield* fs.writeFileString(`${path}/${ECS_MARKER_KEY}`, ECS_MARKER_TEXT);

@@ -13,20 +13,23 @@ const observe = (sid: string) =>
   );
 
 test.provider(
-  "sandbox mounts a disk, syncs ports and network in place, and replaces on size change",
+  "sandbox mounts disks, syncs mounts, ports and network in place, and replaces on size change",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
+      const Workspace = Archil.Disk("Workspace", {});
+      const Reference = Archil.Disk("Reference", {});
       const app = (props: Partial<Archil.SandboxProps>) =>
         Effect.gen(function* () {
-          const disk = yield* Archil.Disk("Workspace", {});
+          const disk = yield* Workspace;
+          const reference = yield* Reference;
           const sandbox = yield* Archil.Sandbox("DevBox", {
             baseImage: "node:24-bookworm",
-            mounts: [{ disk: disk.diskId, path: "/workspace" }],
+            mounts: [{ disk: Workspace, path: "/workspace" }],
             idleTtlSeconds: 300,
             ...props,
           });
-          return { disk, sandbox };
+          return { disk, reference, sandbox };
         });
 
       const { disk, sandbox } = yield* stack.deploy(app({ ports: [3000] }));
@@ -49,6 +52,28 @@ test.provider(
       expect(network.data.egress?.default).toBe("deny");
       // Archil adds its own mount endpoints for the mounted disk.
       expect(network.data.egress?.allow).toContain("registry.npmjs.org");
+
+      // Mounts update in place: the sandbox stops and starts with them.
+      const remounted = yield* stack.deploy(
+        app({
+          ports: [3000, 8080],
+          network: { egress: { default: "deny", allow: ["registry.npmjs.org"] } },
+          mounts: [
+            { disk: Workspace, path: "/workspace" },
+            { disk: Reference, path: "/reference", mode: "read-only" },
+          ],
+        }),
+      );
+      expect(remounted.sandbox.sandboxId).toBe(sandbox.sandboxId);
+      const mounts = (yield* observe(sandbox.sandboxId))?.mounts ?? [];
+      expect(
+        mounts
+          .map((m) => ({ disk: m.disk_id, path: m.path, readOnly: m.read_only ?? false }))
+          .sort((x, y) => (x.path ?? "").localeCompare(y.path ?? "")),
+      ).toEqual([
+        { disk: remounted.reference.diskId, path: "/reference", readOnly: true },
+        { disk: disk.diskId, path: "/workspace", readOnly: false },
+      ]);
 
       // Size is create-only: a new sandbox replaces the old one.
       const resized = yield* stack.deploy(app({ ports: [3000, 8080], memSizeMiB: 4096 }));

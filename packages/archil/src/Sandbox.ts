@@ -1,10 +1,19 @@
 import * as archil from "@distilled.cloud/archil";
 import { Unowned } from "alchemy/AdoptPolicy";
+import * as Bundle from "alchemy/Bundle/Bundle";
 import { deepEqual, isResolved } from "alchemy/Diff";
+import { Platform, type Main, type PlatformProps } from "alchemy/Platform";
 import * as Provider from "alchemy/Provider";
-import { Resource } from "alchemy/Resource";
+import type { Resource, ResourceBinding } from "alchemy/Resource";
+import {
+  createHostRuntimeContext,
+  type HostRuntimeContext,
+  type ServerHost,
+} from "alchemy/Runtime/Process";
+import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
+import type { Disk } from "./Disk.ts";
 import {
   deletableSandboxStates,
   findSandboxByName,
@@ -16,19 +25,41 @@ import {
   waitForSandboxGone,
   waitForSandboxStopped,
 } from "./internal/archil.ts";
+import {
+  bundleProgram,
+  deployProgram,
+  removeProgram,
+  type ProgramBuildOptions,
+  type ProgramExtraFile,
+} from "./internal/hosted.ts";
 import type { Providers } from "./Providers.ts";
 import {
   egressIdentity,
+  MountDiskUnresolved,
+  mountDiskId,
+  mountIdentity,
   splitArchilEgress,
   toEgressPolicy,
   toEnv,
   toSandboxMount,
+  type DiskMount,
+  type DiskMountOptions,
   type SandboxEgress,
   type SandboxEndpoint,
-  type SandboxMount,
 } from "./SandboxOptions.ts";
 
-export interface SandboxProps {
+/** A disk a binding mounts into a program sandbox (`MountDisk` inside one). */
+export interface SandboxMountBinding extends DiskMountOptions {
+  readonly diskId: string;
+}
+
+/** What bindings attach to a sandbox: its program's environment, and disks to mount. */
+export interface SandboxBinding {
+  env?: Record<string, any>;
+  mounts?: ReadonlyArray<SandboxMountBinding>;
+}
+
+export interface SandboxProps extends PlatformProps {
   /**
    * Sandbox name, unique within your account: lowercase letters, digits
    * and `-`, at most 63 characters. If omitted, a unique name is generated
@@ -53,8 +84,7 @@ export interface SandboxProps {
   memSizeMiB?: number;
   /**
    * TCP ports to serve publicly. Updated in place. When set, it is the
-   * whole list: ports not in it are unexposed, including ports an
-   * `Archil.Service` exposed, so leave it unset when services run here.
+   * whole list (plus the program's `port`): ports not in it are unexposed.
    */
   ports?: number[];
   /**
@@ -62,12 +92,20 @@ export interface SandboxProps {
    * Changing it replaces the sandbox. @default false
    */
   enableServiceIngress?: boolean;
-  /** Environment for the sandbox's processes. Changing it replaces the sandbox. */
+  /**
+   * Environment variables. With `main`, they are the program's environment
+   * and a change restarts it. Without `main`, every process in the sandbox
+   * gets them, and a change replaces the sandbox.
+   */
   env?: Record<string, string | Redacted.Redacted<string>>;
   /** Outbound network policy. Updated in place. */
   network?: { egress?: SandboxEgress };
-  /** Disks to mount. Changing them replaces the sandbox. */
-  mounts?: SandboxMount[];
+  /**
+   * Disks to mount: a declared `Archil.Disk` (or the Effect that declares
+   * it) at a `path`. Updated in place: the sandbox stops, then starts with
+   * the new mounts, keeping its root filesystem.
+   */
+  mounts?: DiskMount[];
   /**
    * Seconds a powered-on session may run before the sandbox pauses
    * (at most 24 hours). Changing it replaces the sandbox.
@@ -80,6 +118,34 @@ export interface SandboxProps {
   idleTtlSeconds?: number;
   /** Concurrent processes allowed. Changing it replaces the sandbox. */
   maxConcurrentExecs?: number;
+  /**
+   * A program to run in the sandbox. In the Effect form, `import.meta.url`
+   * (the file is both the bundle entry and the program). In the async form,
+   * a path to a module whose default export has `fetch(request, env)`.
+   * A code change uploads it and restarts the program in place.
+   */
+  main?: string;
+  /** Named export to load from `main`. @default "default" */
+  handler?: string;
+  /**
+   * TCP port the program listens on, passed to it as `PORT`. Alchemy
+   * exposes it publicly and returns its URL as `url`.
+   * @default 3000
+   */
+  port?: number;
+  /**
+   * Bundler options for `main` (rolldown `input` / `output`), and
+   * `install`: packages to `npm install` next to the program instead of
+   * bundling them.
+   */
+  build?: ProgramBuildOptions;
+  /**
+   * Host files or directories uploaded with the program, e.g. a site's
+   * built assets. With `extraFiles`, an async `main` is treated as a
+   * complete Node program and uploaded as built instead of bundled.
+   * Their content is part of `code.hash`, so a change redeploys.
+   */
+  extraFiles?: ReadonlyArray<ProgramExtraFile>;
 }
 
 export interface SandboxAttributes {
@@ -97,44 +163,65 @@ export interface SandboxAttributes {
   memSizeMiB: number;
   /** Public hostnames of the exposed ports. */
   endpoints: SandboxEndpoint[];
-  /** `https://` URL of the first exposed port, if any. */
+  /** `https://` URL of the program's port, or of the first exposed port. */
   url: string | undefined;
+  /** The port the program listens on, when the sandbox runs one. */
+  port: number | undefined;
+  /** Content hash of the deployed program, when the sandbox runs one. */
+  code: { hash: string } | undefined;
 }
 
-export type Sandbox = Resource<"Archil.Sandbox", SandboxProps, SandboxAttributes, never, Providers>;
+export type Sandbox = Resource<
+  "Archil.Sandbox",
+  SandboxProps,
+  SandboxAttributes,
+  SandboxBinding,
+  Providers
+>;
+
+export type SandboxShape = Main<ServerHost>;
 
 /**
- * A long-lived Archil sandbox: a Firecracker microVM with disks mounted,
- * public ports, and an outbound network policy that can inject credentials
- * at the boundary. It pauses when idle and resumes on the next connection,
+ * An Archil sandbox: a Firecracker microVM with disks mounted, public
+ * ports, and an outbound network policy that can inject credentials at the
+ * boundary. It pauses when idle and resumes on the next connection,
  * keeping its memory.
  *
- * Declare a sandbox at deploy time for a dev box or a preview environment
- * that outlives deploys. Short-lived sandboxes for one user or task are
- * created at run time with {@link CreateSandbox}; act on a declared one with
- * {@link ConnectSandbox}. Run your own program in it with
- * {@link Service}.
+ * Declare one as a box (a dev box or a preview environment that outlives
+ * deploys), or give it a `main` and it runs your program: Alchemy bundles
+ * it, uploads it, and registers it with Archil's service manager, which
+ * restarts it when it crashes and starts it whenever the sandbox boots. Its
+ * port gets a public `https://` URL, and a request to a stopped sandbox
+ * starts it again, typically in a few seconds. A code change uploads the
+ * program and restarts it in place.
+ *
+ * Short-lived sandboxes for one user or task are created at run time with
+ * {@link CreateSandbox}; act on a declared one with {@link ConnectSandbox}.
  *
  * :::caution
- * Changing the image, size, `env`, `mounts` or timeouts replaces the
- * sandbox, and a new one starts with an empty root filesystem. Keep data on
- * a mounted disk. `ports` and `network` update in place.
+ * Changing the image, size, timeouts, or the `env` of a sandbox without
+ * `main` replaces the sandbox, and a new one starts with an empty root
+ * filesystem. Keep data on a mounted disk. `mounts`, `ports`, `network`
+ * and the program update in place.
+ * :::
+ *
+ * :::caution
+ * An exposed port is public: anyone with the URL can call it. Check
+ * requests yourself, or hand clients an `Archil.SandboxPortToken`.
  * :::
  * @see https://docs.archil.com/compute/sandboxes/introduction
  *
  * ### Creating a Sandbox
  * **Example:** A dev box with a disk mounted
  * ```typescript
- * export const DevBox = Effect.gen(function* () {
- *   const workspace = yield* Workspace;
- *   return yield* Archil.Sandbox("DevBox", {
- *     baseImage: "node:24-bookworm",
- *     vcpuCount: 2,
- *     memSizeMiB: 4096,
- *     mounts: [{ disk: workspace.diskId, path: "/workspace" }],
- *     ports: [3000],
- *     idleTtlSeconds: 600,
- *   });
+ * export const Workspace = Archil.Disk("Workspace", {});
+ * export const DevBox = Archil.Sandbox("DevBox", {
+ *   baseImage: "node:24-bookworm",
+ *   vcpuCount: 2,
+ *   memSizeMiB: 4096,
+ *   mounts: [{ disk: Workspace, path: "/workspace" }],
+ *   ports: [3000],
+ *   idleTtlSeconds: 600,
  * });
  * ```
  *
@@ -159,16 +246,103 @@ export type Sandbox = Resource<"Archil.Sandbox", SandboxProps, SandboxAttributes
  * });
  * ```
  *
- * ### Running Services
- * **Example:** An Effect service at a public URL
+ * ### Running a Program
+ * **Example:** An Effect program that reads a mounted disk
  * ```typescript
- * export default class Api extends Archil.Service<Api>()(
+ * // src/Api.ts
+ * import * as Archil from "@alchemy.run/archil";
+ * import * as Effect from "effect/Effect";
+ * import * as FileSystem from "effect/FileSystem";
+ * import * as HttpServerResponse from "effect/http/HttpServerResponse";
+ *
+ * export const Dataset = Archil.Disk("Dataset", {});
+ *
+ * export default class Api extends Archil.Sandbox<Api>()(
  *   "Api",
- *   { sandbox: Box, main: import.meta.url, port: 3000 },
+ *   { main: import.meta.url, port: 3000 },
  *   Effect.gen(function* () {
- *     return { fetch: Effect.succeed(HttpServerResponse.text("hello")) };
- *   }),
+ *     const dataset = yield* Archil.MountDisk(Dataset, { path: "/data", mode: "read-only" });
+ *     const fs = yield* FileSystem.FileSystem;
+ *     return {
+ *       fetch: Effect.gen(function* () {
+ *         return yield* HttpServerResponse.json(yield* fs.readDirectory(dataset.path));
+ *       }).pipe(Effect.orDie),
+ *     };
+ *   }).pipe(Effect.provide(Archil.MountDiskLive)),
  * ) {}
+ * ```
+ *
+ * **Example:** A plain async handler with typed `env`
+ * ```typescript
+ * // src/infra.ts
+ * export const Hello = Archil.Sandbox("Hello", {
+ *   main: "./src/hello.ts",
+ *   env: { GREETING: "hello" },
+ * });
+ * export type HelloEnv = Archil.InferEnv<typeof Hello>;
+ * ```
+ *
+ * ```typescript
+ * // src/hello.ts
+ * import type { HelloEnv } from "./infra.ts";
+ *
+ * export default {
+ *   async fetch(request: Request, env: HelloEnv) {
+ *     return new Response(`${env.GREETING} from ${new URL(request.url).pathname}`);
+ *   },
+ * };
+ * ```
+ *
+ * **Example:** Secrets in the program's environment
+ * ```typescript
+ * export const Billing = Archil.Sandbox("Billing", {
+ *   main: "./src/billing.ts",
+ *   env: { STRIPE_KEY: Config.Redacted("STRIPE_KEY") },
+ * });
+ * ```
+ *
+ * ### Mounting Disks
+ * Archil sandboxes mount disks natively. Each entry names the disk and a
+ * `path`, with Archil's own options: `mode` (`exclusive`, `conditional`
+ * or `read-only`), `subdirectory`, and `queueMs`.
+ *
+ * **Example:** Mount two disks, one read-only
+ * ```typescript
+ * export const Box = Archil.Sandbox("Box", {
+ *   mounts: [
+ *     { disk: Workspace, path: "/workspace" },
+ *     { disk: Dataset, path: "/data", mode: "read-only" },
+ *   ],
+ * });
+ * ```
+ *
+ * **Example:** Mount from the program with `MountDisk`
+ * ```typescript
+ * const uploads = yield* Archil.MountDisk(Uploads, { path: "/uploads", mode: "conditional" });
+ * // runtime: the disk is already mounted at uploads.path
+ * yield* fs.writeFileString(`${uploads.path}/${id}.txt`, body);
+ * ```
+ *
+ * ### Packaging
+ * Alchemy bundles `main` with rolldown into one Node program. Packages
+ * that can't be bundled (native modules, or ones that read their own files
+ * at run time) go in `build.install` and are installed next to it with
+ * `npm install`.
+ *
+ * **Example:** Install a native package
+ * ```typescript
+ * export const Thumbs = Archil.Sandbox("Thumbs", {
+ *   main: "./src/thumbs.ts",
+ *   build: { install: ["sharp"] },
+ * });
+ * ```
+ *
+ * **Example:** Upload static files next to the program
+ * ```typescript
+ * export const Site = Archil.Sandbox("Site", {
+ *   main: "./dist/server.mjs",
+ *   extraFiles: [{ source: "./dist/client", destination: "client" }],
+ * });
  * ```
  *
  * ### Ports
@@ -201,28 +375,58 @@ export type Sandbox = Resource<"Archil.Sandbox", SandboxProps, SandboxAttributes
  * });
  * ```
  *
+ * ### Websites
+ * **Example:** A framework site runs in its own sandbox
+ * ```typescript
+ * const site = yield* Archil.Website.Astro("Site", { sandbox: { vcpuCount: 2 } });
+ * ```
+ *
  * ### Using a Sandbox at Run Time
- * **Example:** Run a command and share a port from a Worker
+ * **Example:** Run a command and fork a preview from a Worker
  * ```typescript
  * const preview = yield* Archil.ConnectSandbox(Preview);
- * const result = yield* preview.exec("pnpm build");
+ * const result = yield* preview.exec("pnpm build", { cwd: "/workspace" });
  * const fork = yield* preview.fork({ name: "pr-42" });
  * ```
  *
  * @resource
  * @product Sandbox
  */
-export const Sandbox = Resource<Sandbox>("Archil.Sandbox");
+export const Sandbox: Platform<Sandbox, ServerHost, SandboxShape, HostRuntimeContext> = Platform(
+  "Archil.Sandbox",
+  {
+    createRuntimeContext: createHostRuntimeContext("Archil.Sandbox"),
+    // `{ disk: Workspace }` at module scope is an Effect: yield it here so
+    // the disk is registered and `news.mounts[i].disk` resolves to its
+    // attributes.
+    transformProps: (_id, props) =>
+      Effect.gen(function* () {
+        if (globalThis.__ALCHEMY_RUNTIME__ || props?.mounts === undefined) return props;
+        const mounts: DiskMount[] = [];
+        for (const mount of props.mounts as DiskMount[]) {
+          mounts.push(
+            Effect.isEffect(mount.disk)
+              ? { ...mount, disk: yield* mount.disk as Effect.Effect<Disk, never, Providers> }
+              : mount,
+          );
+        }
+        return { ...props, mounts };
+      }),
+  },
+);
 
 /**
  * Map a sandbox and its exposed ports to attributes. Archil lists port
- * hostnames separately; sandbox responses don't carry them.
+ * hostnames separately; sandbox responses don't carry them. `program` is
+ * the port and code of the program the sandbox runs, if any.
  */
 export const toSandboxAttributes = (
   sandbox: archil.Sandbox,
   ports: ReadonlyArray<{ port: number; hostname: string }>,
+  program?: { readonly port: number; readonly code: { hash: string } },
 ): SandboxAttributes => {
   const endpoints = ports.map((e) => ({ port: e.port, hostname: e.hostname }));
+  const primary = (program && endpoints.find((e) => e.port === program.port)) ?? endpoints[0];
   return {
     sandboxId: sandbox.sandbox_id,
     name: sandbox.name,
@@ -232,23 +436,29 @@ export const toSandboxAttributes = (
     vcpuCount: sandbox.vcpu_count,
     memSizeMiB: sandbox.mem_size_mib,
     endpoints,
-    url: endpoints[0] ? `https://${endpoints[0].hostname}` : undefined,
+    url: primary ? `https://${primary.hostname}` : undefined,
+    port: program?.port,
+    code: program?.code,
   };
 };
 
 /** Read a sandbox's exposed ports and map it to attributes. */
-export const observeSandbox = Effect.fn(function* (sandbox: archil.Sandbox) {
+export const observeSandbox = Effect.fn(function* (
+  sandbox: archil.Sandbox,
+  program?: { readonly port: number; readonly code: { hash: string } },
+) {
   const ports = yield* archil.listSandboxPorts({ sid: sandbox.sandbox_id }).pipe(
     Effect.map(({ data }) => data.ports ?? []),
     Effect.catchTag("SandboxNotFound", () => Effect.succeed([])),
   );
-  return toSandboxAttributes(sandbox, ports);
+  return toSandboxAttributes(sandbox, ports, program);
 });
 
-/** The create request for sandbox props. */
+/** The create request for sandbox props, with mounts already on the wire. */
 export const toCreateSandboxRequest = (
   name: string | undefined,
-  props: Omit<SandboxProps, "name">,
+  props: Omit<SandboxProps, "name" | "mounts">,
+  mounts: ReadonlyArray<archil.SandboxMount> | undefined,
 ): archil.CreateSandboxRequest => ({
   wait: true,
   name,
@@ -260,10 +470,23 @@ export const toCreateSandboxRequest = (
   enable_service_ingress: props.enableServiceIngress,
   env: toEnv(props.env),
   network: props.network?.egress ? { egress: toEgressPolicy(props.network.egress) } : undefined,
-  mounts: props.mounts?.map(toSandboxMount),
+  mounts: mounts && mounts.length > 0 ? [...mounts] : undefined,
   max_ttl_seconds: props.maxTtlSeconds,
   idle_ttl_seconds: props.idleTtlSeconds,
   max_concurrent_execs: props.maxConcurrentExecs,
+});
+
+/** Stop a live sandbox and wait until it has stopped. */
+const stopSandbox = Effect.fn(function* (sid: string) {
+  const observed = yield* getSandbox(sid);
+  if (observed === undefined || deletableSandboxStates.has(observed.status)) return;
+  // Let a booting or pausing sandbox settle, then stop it.
+  yield* waitForSandbox(sid).pipe(Effect.catchTag("SandboxNotFound", () => Effect.undefined));
+  yield* archil.stopSandbox({ sid }).pipe(
+    Effect.asVoid,
+    Effect.catchTag("SandboxNotFound", () => Effect.void),
+  );
+  yield* waitForSandboxStopped(sid);
 });
 
 /**
@@ -274,20 +497,80 @@ export const toCreateSandboxRequest = (
 export const deleteSandbox = Effect.fn(function* (sid: string) {
   const observed = yield* getSandbox(sid);
   if (observed === undefined) return;
-  if (!deletableSandboxStates.has(observed.status)) {
-    // Let a booting or pausing sandbox settle, then stop it.
-    yield* waitForSandbox(sid).pipe(Effect.catchTag("SandboxNotFound", () => Effect.undefined));
-    yield* archil.stopSandbox({ sid }).pipe(
-      Effect.asVoid,
-      Effect.catchTag("SandboxNotFound", () => Effect.void),
-    );
-    yield* waitForSandboxStopped(sid);
-  }
+  yield* stopSandbox(sid);
   yield* archil.deleteSandbox({ sid }).pipe(
     Effect.asVoid,
     Effect.catchTag("SandboxNotFound", () => Effect.void),
   );
   yield* waitForSandboxGone(sid);
+});
+
+/**
+ * Wire mounts for a list of entries whose disks resolved to attributes or
+ * handles. Fails when a disk has no id yet.
+ */
+export const toSandboxMounts = Effect.fn(function* (
+  owner: string,
+  mounts: ReadonlyArray<DiskMount>,
+) {
+  const wire: archil.SandboxMount[] = [];
+  for (const mount of mounts) {
+    const diskId = mountDiskId(mount.disk);
+    if (diskId === undefined) {
+      return yield* new MountDiskUnresolved({
+        path: mount.path,
+        message: `${owner}: the disk mounted at ${mount.path} has no diskId. Pass an Archil.Disk or a DiskHandle.`,
+      });
+    }
+    wire.push(yield* toSandboxMount(diskId, mount));
+  }
+  return wire;
+});
+
+const activeBindings = (bindings: ReadonlyArray<ResourceBinding<SandboxBinding>>) =>
+  bindings.filter(
+    (b: ResourceBinding<SandboxBinding> & { action?: string }) => b.action !== "delete",
+  );
+
+/** The sandbox's mounts: the props' entries, then the ones bindings add. */
+const desiredMounts = Effect.fn(function* (
+  id: string,
+  mounts: ReadonlyArray<DiskMount> | undefined,
+  bindings: ReadonlyArray<ResourceBinding<SandboxBinding>>,
+) {
+  const wire = yield* toSandboxMounts(`Archil.Sandbox ${id}`, mounts ?? []);
+  for (const binding of activeBindings(bindings)) {
+    for (const mount of binding.data?.mounts ?? []) {
+      wire.push(yield* toSandboxMount(mount.diskId, mount));
+    }
+  }
+  // A binding and the props can name the same mount; keep one.
+  const seen = new Set<string>();
+  return wire.filter((mount) => {
+    const key = JSON.stringify(mountIdentity(mount));
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+});
+
+const sortedMounts = (mounts: ReadonlyArray<archil.SandboxMount>) =>
+  mounts.map(mountIdentity).sort((a, b) => a.path.localeCompare(b.path));
+
+/**
+ * Converge a sandbox's mounts. Archil only changes mounts when a stopped
+ * sandbox starts, so a change stops it and starts it with the new ones;
+ * its root filesystem is kept.
+ */
+const syncMounts = Effect.fn(function* (
+  sandbox: archil.Sandbox,
+  desired: ReadonlyArray<archil.SandboxMount>,
+) {
+  if (deepEqual(sortedMounts(sandbox.mounts ?? []), sortedMounts(desired))) return false;
+  const sid = sandbox.sandbox_id;
+  yield* stopSandbox(sid);
+  yield* archil.startSandbox({ sid, wait: true, mounts: [...desired] });
+  return true;
 });
 
 /** Converge a sandbox's exposed ports. */
@@ -325,17 +608,48 @@ const createOnly = (props: SandboxProps | undefined) => ({
   vcpuCount: props?.vcpuCount,
   memSizeMiB: props?.memSizeMiB,
   enableServiceIngress: props?.enableServiceIngress,
-  env: toEnv(props?.env),
-  mounts: props?.mounts,
+  // A program's environment is the program's: it restarts, the box stays.
+  env: props?.main === undefined ? toEnv(props?.env) : undefined,
   maxTtlSeconds: props?.maxTtlSeconds,
   maxConcurrentExecs: props?.maxConcurrentExecs,
+});
+
+/** Exclusive mounts in props whose disks are known: one sandbox at a time holds each. */
+const exclusiveDisks = (props: SandboxProps | undefined) =>
+  new Set(
+    (props?.mounts ?? [])
+      .filter((m) => (m.mode ?? "exclusive") === "exclusive")
+      .map((m) => mountDiskId(m.disk))
+      .filter((id) => id !== undefined),
+  );
+
+const DEFAULT_PORT = 3000;
+
+/** The name of the program's service inside its sandbox. */
+const PROGRAM = "program";
+
+/** The public hostname of `port`, exposing it when it isn't yet. */
+const exposePort = Effect.fn(function* (sid: string, port: number) {
+  const { data } = yield* archil.listSandboxPorts({ sid });
+  const existing = (data.ports ?? []).find((p) => p.port === port);
+  if (existing) return existing.hostname;
+  const { data: exposed } = yield* archil.exposeSandboxPort({ sid, port });
+  return exposed.hostname;
 });
 
 export const SandboxProvider = () =>
   Provider.effect(
     Sandbox,
     Effect.gen(function* () {
-      return {
+      const stack = yield* Stack;
+      const virtualEntryPlugin = yield* Bundle.virtualEntryPlugin;
+      const alchemyEnv = {
+        ALCHEMY_STACK_NAME: stack.name,
+        ALCHEMY_STAGE: stack.stage,
+        ALCHEMY_PHASE: "runtime",
+        HOST: "0.0.0.0",
+      };
+      return Sandbox.Provider.of({
         stables: ["sandboxId", "name"],
         nuke: { dependsOn: ["Archil.Disk"] },
         list: Effect.fn(function* () {
@@ -352,11 +666,20 @@ export const SandboxProvider = () =>
           if (olds !== undefined && !deepEqual(createOnly(news), createOnly(olds))) {
             // A disk mounted for exclusive writes can only be held by one
             // sandbox, so the old one has to let go before the new one boots.
-            const held = new Set(
-              (olds.mounts ?? []).filter((m) => !m.readOnly && !m.conditional).map((m) => m.disk),
-            );
-            const deleteFirst = (news.mounts ?? []).some((m) => held.has(m.disk));
+            const held = exclusiveDisks(olds);
+            const deleteFirst = [...exclusiveDisks(news)].some((d) => held.has(d));
             return { action: "replace", deleteFirst } as const;
+          }
+          if (news.main !== undefined) {
+            const { hash } = yield* bundleProgram(
+              news as SandboxProps & { main: string },
+              virtualEntryPlugin,
+            );
+            if (hash !== output?.code?.hash || (news.port ?? DEFAULT_PORT) !== output?.port) {
+              return { action: "update" } as const;
+            }
+          } else if (output?.code !== undefined) {
+            return { action: "update" } as const;
           }
           if (
             !deepEqual(egressIdentity(news.network?.egress), egressIdentity(olds?.network?.egress))
@@ -371,14 +694,20 @@ export const SandboxProvider = () =>
             (output ? yield* getSandbox(output.sandboxId) : undefined) ??
             (yield* findSandboxByName(name));
           if (!sandbox) return undefined;
-          const attrs = yield* observeSandbox(sandbox);
+          const program =
+            output?.port !== undefined && output.code !== undefined
+              ? { port: output.port, code: output.code }
+              : undefined;
+          const attrs = yield* observeSandbox(sandbox, program);
           if (output === undefined && olds?.name !== undefined && !isAlchemyName(sandbox.name)) {
             return Unowned(attrs);
           }
           return attrs;
         }),
-        reconcile: Effect.fn(function* ({ id, news, output, session }) {
+        reconcile: Effect.fn(function* ({ id, news, output, bindings, session }) {
           const name = output?.name ?? (yield* sandboxName(id, news.name));
+          const mounts = yield* desiredMounts(id, news.mounts, bindings);
+          const hosted = news.main !== undefined;
           // Observe
           let sandbox =
             (output ? yield* getSandbox(output.sandboxId) : undefined) ??
@@ -386,7 +715,12 @@ export const SandboxProvider = () =>
           // Ensure
           if (!sandbox) {
             yield* session.note(`Creating sandbox ${name}...`);
-            sandbox = yield* archil.createSandbox(toCreateSandboxRequest(name, news)).pipe(
+            const request = toCreateSandboxRequest(
+              name,
+              { ...news, env: hosted ? undefined : news.env },
+              mounts,
+            );
+            sandbox = yield* archil.createSandbox(request).pipe(
               Effect.map(({ data }) => data),
               Effect.catchTag("SandboxAlreadyExists", () =>
                 findSandboxByName(name).pipe(
@@ -406,21 +740,63 @@ export const SandboxProvider = () =>
           const sid = sandbox.sandbox_id;
           sandbox = yield* waitForSandbox(sid);
           // Sync
+          if (yield* syncMounts(sandbox, mounts)) {
+            yield* session.note(`Remounted disks on sandbox ${name}`);
+            sandbox = yield* waitForSandbox(sid);
+          }
           yield* syncNetwork(sid, news.network?.egress);
-          yield* syncPorts(sid, news.ports);
+          const port = news.port ?? DEFAULT_PORT;
+          yield* syncPorts(
+            sid,
+            news.ports === undefined ? undefined : hosted ? [...news.ports, port] : news.ports,
+          );
           if (
             news.idleTtlSeconds !== undefined &&
             news.idleTtlSeconds !== sandbox.idle_ttl_seconds
           ) {
             yield* archil.setSandboxTimeout({ sid, idle_ttl_seconds: news.idleTtlSeconds });
           }
+          let program: { port: number; code: { hash: string } } | undefined;
+          if (hosted) {
+            const bindingEnv = activeBindings(bindings).reduce<Record<string, unknown>>(
+              (acc, b) => ({ ...acc, ...b.data?.env }),
+              {},
+            );
+            const bundled = yield* bundleProgram(
+              news as SandboxProps & { main: string },
+              virtualEntryPlugin,
+            );
+            // A moved port leaves the old one exposed; take it down.
+            if (output?.port !== undefined && output.port !== port) {
+              yield* archil
+                .deleteSandboxPort({ sid, port: output.port })
+                .pipe(Effect.catchTag("SandboxNotFound", () => Effect.void));
+            }
+            yield* deployProgram({
+              sid,
+              name: PROGRAM,
+              port,
+              program: bundled,
+              env: { ...bindingEnv, ...alchemyEnv, ...news.env },
+            });
+            yield* exposePort(sid, port);
+            program = { port, code: { hash: bundled.hash } };
+          } else if (output?.code !== undefined) {
+            // `main` was removed: the box stays, the program goes.
+            yield* removeProgram(sid, PROGRAM);
+            if (output.port !== undefined && !(news.ports ?? []).includes(output.port)) {
+              yield* archil
+                .deleteSandboxPort({ sid, port: output.port })
+                .pipe(Effect.catchTag("SandboxNotFound", () => Effect.void));
+            }
+          }
           // Return
           const final = yield* getSandbox(sid);
-          return yield* observeSandbox(final ?? sandbox);
+          return yield* observeSandbox(final ?? sandbox, program);
         }),
         delete: Effect.fn(function* ({ output }) {
           yield* deleteSandbox(output.sandboxId);
         }),
-      };
+      });
     }),
   );

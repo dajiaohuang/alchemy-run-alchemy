@@ -1,5 +1,5 @@
 /**
- * Process bootstrap for `Archil.Service` (a Node process serving the
+ * Process bootstrap for an `Archil.Sandbox` program (a Node process serving the
  * bundled program). The generated entry imports this module and the user's
  * `main`, nothing else — see `alchemy/Runtime/Bootstrap` for why.
  */

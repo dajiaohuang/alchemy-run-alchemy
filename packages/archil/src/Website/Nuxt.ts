@@ -18,7 +18,7 @@ export interface NuxtProps extends FrameworkSiteProps {
 
 /**
  * Deploy a Nuxt application to an Archil sandbox: the nitro Node
- * server as an Archil service on port 3000, static assets uploaded with the service.
+ * server as the sandbox's program on port 3000, static assets uploaded with the program.
  *
  * The build runs through `@alchemy.run/frontend-frameworks/nuxt` with the
  * `@alchemy.run/frontend-frameworks/nuxt/node` deploy target (`nitro.preset`

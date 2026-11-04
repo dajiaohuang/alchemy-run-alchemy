@@ -15,22 +15,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
-import type { Providers } from "../Providers.ts";
-import { Sandbox } from "../Sandbox.ts";
-import { Service } from "../Service.ts";
+import { Sandbox, type SandboxProps } from "../Sandbox.ts";
 
 // Outputs stand in for plain prop values here: the engine resolves them
 // before reconcile, but Output<T> isn't assignable to T in the props type,
 // so those props are cast.
-
-/**
- * A resource-valued prop: the resource itself, or an Effect that produces
- * it (so `yield* Sandbox(...)` and `Sandbox(...)` both type-check).
- */
-export type Ref<T> = T | Effect.Effect<T, never, Providers>;
-
-const resolveRef = <T>(ref: Ref<T>): Effect.Effect<T, never, Providers> =>
-  Effect.isEffect(ref) ? ref : Effect.succeed(ref);
 
 /** Port every Archil website listens on. */
 export const DEFAULT_WEBSITE_PORT = 3000;
@@ -53,19 +42,25 @@ export interface FrameworkSiteProps {
   /** Options for the local dev server that runs this site under `alchemy dev`. */
   dev?: ServerDevProps;
   /**
-   * Process environment for the site's service (and the local framework
+   * Process environment for the site's program (and the local framework
    * dev server). Accepts `Output`s (e.g. `VITE_API_URL: api.url`).
    */
   env?: Record<string, string | Redacted.Redacted<string> | Output.Output<string | undefined>>;
   /** Static-asset routing (`notFoundHandling`, `htmlHandling`). */
   assets?: WebsiteAssetsProps;
   /**
-   * Sandbox the site's service runs in. Accepts an `Archil.Sandbox` or an
-   * Effect that produces one. When omitted, a sandbox with the defaults
-   * (1 vCPU, 2 GiB, `node:24-bookworm`) is created for the site.
+   * The site's own sandbox: size, image, timeouts, disks and network
+   * policy. The site is its program.
+   * @default 1 vCPU, 2 GiB, `node:24-bookworm`
    */
-  sandbox?: Ref<Sandbox>;
+  sandbox?: WebsiteSandboxOptions;
 }
+
+/** Options for the sandbox a website runs in (everything but its program). */
+export type WebsiteSandboxOptions = Omit<
+  SandboxProps,
+  "main" | "handler" | "port" | "build" | "extraFiles" | "isExternal" | "env"
+>;
 
 /** Per-framework wiring for {@link makeFrameworkSite}. */
 export interface FrameworkSiteConfig {
@@ -99,19 +94,17 @@ export interface FrameworkSiteConfig {
   /** Skip uploading `clientDirectory` at `dist/`. Next.js serves `.next` from the root. */
   skipClientAssets?: boolean | undefined;
   /**
-   * Packages to `npm install` into the service instead of bundling
+   * Packages to `npm install` next to the program instead of bundling
    * (Next.js needs `next` / `react` / `react-dom`).
    */
   install?: string[] | undefined;
 }
 
 export interface Website {
-  /** Local framework URL under `alchemy dev`, or the service's `https://` URL. */
+  /** Local framework URL under `alchemy dev`, or the sandbox's `https://` URL. */
   readonly url: string | Output.Output<string | undefined> | undefined;
-  /** Sandbox the service runs in. `undefined` during `alchemy dev`. */
+  /** The sandbox the site runs in. `undefined` during `alchemy dev`. */
   readonly sandbox: Sandbox | undefined;
-  /** The site's service. `undefined` during `alchemy dev`. */
-  readonly service: Service | undefined;
 }
 
 export class FrameworkSiteError extends Data.TaggedError("Archil.Website.FrameworkSiteError")<{
@@ -134,22 +127,14 @@ export const unwrapEnv = (
   );
 };
 
-/** The site's sandbox: the one passed in, or a new default one named `Sandbox`. */
-export const resolveWebsiteSandbox = Effect.fn(function* (props: {
-  readonly sandbox?: Ref<Sandbox> | undefined;
-}) {
-  if (props.sandbox !== undefined) return yield* resolveRef(props.sandbox);
-  return yield* Sandbox("Sandbox", {});
-});
-
 /**
  * Shared implementation behind the Archil framework website composites:
- * build through the Node deploy target, then run one `Archil.Service` in a
- * sandbox (created when `sandbox` is omitted).
+ * build through the Node deploy target, then run it as the program of its
+ * own `Archil.Sandbox`.
  *
  * During `alchemy dev` the site is the framework's own dev server and no
  * cloud resources are declared; `Alchemy.remote()` opts back into the
- * live service.
+ * live sandbox.
  */
 const runFrameworkSite = Effect.fn("Archil.Website.FrameworkSite")(function* (
   _id: string,
@@ -180,7 +165,7 @@ const runFrameworkSite = Effect.fn("Archil.Website.FrameworkSite")(function* (
   });
 
   if (isLocal) {
-    return { url: build.url, sandbox: undefined, service: undefined } satisfies Website;
+    return { url: build.url, sandbox: undefined } satisfies Website;
   }
 
   // The build runs at apply time, so its attributes are Outputs here:
@@ -216,22 +201,21 @@ const runFrameworkSite = Effect.fn("Archil.Website.FrameworkSite")(function* (
   );
   const main = Output.map(buildOut, (out) => out.main);
 
-  const sandbox = yield* resolveWebsiteSandbox(props);
   const extraFiles = Output.mapEffect((out: { distDir: string; main: string }) =>
     packSiteExtraFiles(out.distDir, config.skipClientAssets === true ? "next" : "client").pipe(
       Effect.map((files) =>
-        // Always a list, so the service uploads `main` as a complete program.
+        // Always a list, so the sandbox uploads `main` as a complete program.
         (files ?? []).map((file) => ({ source: file.source, destination: file.dest })),
       ),
     ),
   )(buildOut);
 
-  const service = yield* Service("Service", {
-    sandbox,
+  const sandbox = yield* Sandbox("Sandbox", {
+    ...props.sandbox,
     main: main as unknown as string,
     extraFiles: extraFiles as unknown as Array<{ source: string; destination: string }>,
     port,
-    env: unwrapEnv(props.env),
+    env: unwrapEnv(props.env) as Record<string, string> | undefined,
     isExternal: true,
     build:
       config.install !== undefined && config.install.length > 0
@@ -239,7 +223,7 @@ const runFrameworkSite = Effect.fn("Archil.Website.FrameworkSite")(function* (
         : undefined,
   });
 
-  return { url: service.url, sandbox, service } satisfies Website;
+  return { url: sandbox.url, sandbox } satisfies Website;
 });
 
 /**

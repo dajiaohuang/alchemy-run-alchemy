@@ -3,14 +3,24 @@ export * from "./AuthProvider.ts";
 export * from "./Branch.ts";
 export * from "./BranchDisk.ts";
 export * from "./Checkpoint.ts";
-export type {
-  DiskDelegationsClient,
-  DiskHandle,
-  ObjectsTransportError,
-  ReadWriteDiskClient,
-  RunOptions,
-  ShareError,
-  SandboxHandle,
+export {
+  SandboxFetchFailed,
+  SandboxPortNotExposed,
+  type Command,
+  type DiskDelegationsClient,
+  type DiskHandle,
+  type ExecOptions,
+  type ObjectsTransportError,
+  type ProcessCallError,
+  type PtyConnection,
+  type PtyOptions,
+  type ReadWriteDiskClient,
+  type SandboxFiles,
+  type SandboxHandle,
+  type SandboxOps,
+  type SandboxProcess,
+  type ShareError,
+  type StartOptions,
 } from "./Clients.ts";
 export * from "./ConnectSandbox.ts";
 export * from "./CreateDisk.ts";
@@ -43,7 +53,6 @@ export * from "./RuntimeObjects.ts";
 export * from "./Sandbox.ts";
 export * from "./SandboxOptions.ts";
 export * from "./SandboxPortToken.ts";
-export * from "./Service.ts";
 export type { InferEnv } from "./InferEnv.ts";
 export * from "./WriteDisk.ts";
 export * as Website from "./Website/index.ts";

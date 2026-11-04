@@ -12,8 +12,8 @@ export interface ReactRouterProps extends FrameworkSiteProps {}
 
 /**
  * Deploy a [React Router](https://reactrouter.com) v7 app (framework mode)
- * to an Archil sandbox: the SSR server as an Archil service on port 3000,
- * static assets uploaded with the service.
+ * to an Archil sandbox: the SSR server as the sandbox's program on port 3000,
+ * static assets uploaded with the program.
  *
  * The build runs through
  * `@alchemy.run/frontend-frameworks/react-router` with the

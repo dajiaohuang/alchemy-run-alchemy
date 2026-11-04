@@ -1,7 +1,8 @@
 /**
- * Bundling and deploying `Archil.Service` programs: a Node process run as
- * an Archil sandbox service (`archil-sandbox services create`), which
- * restarts when it crashes and starts whenever the sandbox boots.
+ * Bundling and deploying the program of an `Archil.Sandbox` with `main`: a
+ * Node process run as an Archil sandbox service (`archil-sandbox services
+ * create`), which restarts when it crashes and starts whenever the sandbox
+ * boots.
  */
 import * as archil from "@distilled.cloud/archil";
 import * as Process from "@distilled.cloud/archil/Process";
@@ -31,14 +32,14 @@ import * as Schedule from "effect/Schedule";
 import type * as rolldown from "rolldown";
 import { waitForSandbox } from "./archil.ts";
 
-/** A service failed to deploy or never started serving. */
-export class ServiceDeployFailed extends Data.TaggedError("Archil.ServiceDeployFailed")<{
-  readonly service: string;
+/** A sandbox program failed to deploy or never started serving. */
+export class ProgramDeployFailed extends Data.TaggedError("Archil.ProgramDeployFailed")<{
+  readonly program: string;
   readonly message: string;
 }> {}
 
-/** Bundler options for a service, plus packages installed instead of bundled. */
-export interface ServiceBuildOptions extends Bundle.BundleConfig {
+/** Bundler options for a program, plus packages installed instead of bundled. */
+export interface ProgramBuildOptions extends Bundle.BundleConfig {
   /**
    * Packages to `npm install` next to the program instead of bundling them
    * (native modules, or frameworks that load files at run time).
@@ -47,7 +48,7 @@ export interface ServiceBuildOptions extends Bundle.BundleConfig {
 }
 
 /** A host directory (or file) uploaded with the program. */
-export interface ServiceExtraFile {
+export interface ProgramExtraFile {
   readonly source: string;
   /** Destination relative to the program's directory; `"."` is the root. */
   readonly destination: string;
@@ -57,8 +58,8 @@ export interface HostedProgramProps {
   readonly main: string;
   readonly handler?: string;
   readonly isExternal?: boolean;
-  readonly build?: ServiceBuildOptions;
-  readonly extraFiles?: ReadonlyArray<ServiceExtraFile>;
+  readonly build?: ProgramBuildOptions;
+  readonly extraFiles?: ReadonlyArray<ProgramExtraFile>;
 }
 
 type ProgramFile = { readonly path: string; readonly content: Uint8Array };
@@ -137,7 +138,7 @@ const skipped = (relative: string, atRoot: boolean) =>
     .some((segment) => segment === ".git" || (!atRoot && segment === "node_modules"));
 
 /** Read every extra file into program files at their destinations. */
-const collectExtraFiles = Effect.fn(function* (extraFiles: ReadonlyArray<ServiceExtraFile>) {
+const collectExtraFiles = Effect.fn(function* (extraFiles: ReadonlyArray<ProgramExtraFile>) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const files: ProgramFile[] = [];
@@ -288,40 +289,40 @@ export const ensureRunning = Effect.fn(function* (sid: string) {
   }
   const ready = yield* waitForSandbox(sid);
   if (ready.status !== "running") {
-    return yield* new ServiceDeployFailed({
-      service: sid,
+    return yield* new ProgramDeployFailed({
+      program: sid,
       message: `Sandbox ${ready.name} is ${ready.status}, not running`,
     });
   }
 });
 
 /** Run a shell command in the sandbox and fail with its output on a non-zero exit. */
-const sh = Effect.fn(function* (sid: string, service: string, command: string) {
+const sh = Effect.fn(function* (sid: string, program: string, command: string) {
   const result = yield* Process.exec(sid, command);
   if (result.exitCode !== 0) {
-    return yield* new ServiceDeployFailed({
-      service,
+    return yield* new ProgramDeployFailed({
+      program,
       message: `\`${command.split("\n")[0]}\` exited ${result.exitCode ?? result.status}: ${(result.stderr || result.stdout).trim()}`,
     });
   }
   return result.stdout;
 });
 
-/** The directory a service's program lives in. */
-export const serviceDir = (name: string) => `/opt/alchemy/${name}`;
+/** The directory a program lives in. */
+export const programDir = (name: string) => `/opt/alchemy/${name}`;
 
 /**
- * Upload the program, (re)define the service, and wait until it answers on
+ * Upload the program, (re)define its service, and wait until it answers on
  * `port` inside the sandbox.
  */
-export const deployService = Effect.fn(function* (input: {
+export const deployProgram = Effect.fn(function* (input: {
   readonly sid: string;
   readonly name: string;
   readonly port: number;
   readonly program: BundledProgram;
   readonly env: Record<string, unknown>;
 }) {
-  const dir = serviceDir(input.name);
+  const dir = programDir(input.name);
   const staging = `${dir}.next`;
   yield* ensureRunning(input.sid);
   yield* sh(
@@ -332,7 +333,7 @@ export const deployService = Effect.fn(function* (input: {
   // One archive, one upload: a framework build can have thousands of files.
   const archive = yield* zipFiles(input.program.files);
   yield* Effect.logInfo(
-    `Archil.Service ${input.name}: uploading ${input.program.files.length} files (${Math.round(archive.byteLength / 1024)} KiB)`,
+    `Archil.Sandbox program: uploading ${input.program.files.length} files (${Math.round(archive.byteLength / 1024)} KiB)`,
   );
   yield* Process.uploadFile(input.sid, `${staging}.zip`, archive);
   yield* sh(
@@ -341,7 +342,7 @@ export const deployService = Effect.fn(function* (input: {
     `python3 -m zipfile -e ${shellQuote(`${staging}.zip`)} ${shellQuote(staging)} && rm -f ${shellQuote(`${staging}.zip`)}`,
   );
   if (input.program.install) {
-    yield* Effect.logInfo(`Archil.Service ${input.name}: npm install`);
+    yield* Effect.logInfo(`Archil.Sandbox program: npm install`);
     yield* sh(
       input.sid,
       input.name,
@@ -361,7 +362,7 @@ export const deployService = Effect.fn(function* (input: {
       `archil-sandbox services create ${shellQuote(input.name)} --tcp-port ${input.port} --dir ${shellQuote(dir)} ${envFlags} -- node ${shellQuote(input.program.entryRel)} >/dev/null`,
     ].join(" && "),
   );
-  yield* Effect.logInfo(`Archil.Service ${input.name}: started, waiting for port ${input.port}`);
+  yield* Effect.logInfo(`Archil.Sandbox program: started, waiting for port ${input.port}`);
   // Wait until the process answers HTTP on its port.
   const probe = `curl -s -o /dev/null -m 2 -w '%{http_code}' http://127.0.0.1:${input.port}/ || true`;
   const code = yield* Process.exec(input.sid, probe).pipe(
@@ -380,15 +381,15 @@ export const deployService = Effect.fn(function* (input: {
       Effect.map((r) => r.stdout),
       Effect.catch(() => Effect.succeed("")),
     );
-    return yield* new ServiceDeployFailed({
-      service: input.name,
-      message: `Service ${input.name} never answered on port ${input.port}.\n${logs}`,
+    return yield* new ProgramDeployFailed({
+      program: input.name,
+      message: `The program never answered on port ${input.port}.\n${logs}`,
     });
   }
 });
 
-/** Stop the service and remove its program. Removing a missing one succeeds. */
-export const removeService = Effect.fn(function* (sid: string, name: string) {
+/** Stop the program and remove its files. Removing a missing one succeeds. */
+export const removeProgram = Effect.fn(function* (sid: string, name: string) {
   const sandbox = yield* waitForSandbox(sid).pipe(
     Effect.catchTag("SandboxNotFound", () => Effect.undefined),
   );
@@ -396,6 +397,6 @@ export const removeService = Effect.fn(function* (sid: string, name: string) {
   yield* ensureRunning(sid);
   yield* Process.exec(
     sid,
-    `archil-sandbox services delete ${shellQuote(name)} >/dev/null 2>&1; rm -rf ${shellQuote(serviceDir(name))}`,
+    `archil-sandbox services delete ${shellQuote(name)} >/dev/null 2>&1; rm -rf ${shellQuote(programDir(name))}`,
   );
 });
