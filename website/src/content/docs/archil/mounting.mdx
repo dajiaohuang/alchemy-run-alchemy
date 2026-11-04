@@ -31,6 +31,32 @@ The mount lasts as long as its scope. Closing the scope flushes writes and unmou
 
 The host gets a disk token for `Dataset` only, so it can't mount any other disk and never holds an API key.
 
+## Start the Container with internet access
+
+The Archil client talks to Archil over the network, and a Cloudflare Container has no outbound network unless the Durable Object that starts it asks for one:
+
+```typescript
+export class IndexerObject extends Cloudflare.DurableObject<IndexerObject>()(
+  "IndexerObject",
+  Effect.gen(function* () {
+    const indexer = yield* Indexer;
+    return Effect.gen(function* () {
+      const { fetch } = yield* indexer.getTcpPort(3000);
+      return {
+        list: () =>
+          Effect.gen(function* () {
+            yield* indexer.start({ enableInternet: true });
+            const response = yield* fetch(HttpClientRequest.get("http://container/"));
+            return yield* response.text;
+          }),
+      };
+    });
+  }),
+) {}
+```
+
+Without `enableInternet: true`, `mount` fails after 60 seconds with the client's output.
+
 ## Mount disks named at run time
 
 `MountDisk()` takes the disk and its token per call, e.g. from a Worker that created the disk:

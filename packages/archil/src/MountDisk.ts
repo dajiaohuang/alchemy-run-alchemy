@@ -150,7 +150,13 @@ const run = (
   env: Record<string, string | Redacted.Redacted<string>> = {},
 ) =>
   Effect.gen(function* () {
-    const handle = yield* ChildProcess.make(command, args, { env, extendEnv: true, shell: false });
+    const handle = yield* ChildProcess.make(command, args, {
+      env,
+      extendEnv: true,
+      shell: false,
+      // A client stuck on the network may ignore SIGTERM; don't wait on it.
+      forceKillAfter: "3 seconds",
+    });
     let stderr = "";
     const reader = yield* handle.stderr.pipe(
       Stream.decodeText,
@@ -167,7 +173,13 @@ const run = (
           : handle.kill().pipe(
               Effect.ignore,
               Effect.as(124),
-              Effect.tap(() => Effect.sync(() => void (stderr += "\n(timed out after 60s)"))),
+              Effect.tap(() =>
+                Effect.sync(
+                  () =>
+                    void (stderr +=
+                      "\n(timed out after 60s: check that the host can reach Archil; a Cloudflare Container needs `start({ enableInternet: true })`)"),
+                ),
+              ),
             ),
       ),
     );
@@ -296,6 +308,9 @@ export interface MountDiskOptions {
  * and the host never holds an API key. `MountDisk()` mounts whatever disk
  * the program names, with a disk token it receives at run time (e.g. from
  * a control Worker's `DiskHandle.createToken`).
+ *
+ * The client reaches Archil over the network, so start a Cloudflare
+ * Container with `container.start({ enableInternet: true })`.
  *
  * ### Mounting a Shared Disk
  * **Example:** Read a dataset in a Cloudflare Container

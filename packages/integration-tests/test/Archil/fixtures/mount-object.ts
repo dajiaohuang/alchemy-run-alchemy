@@ -13,7 +13,8 @@ export class MountObject extends Cloudflare.DurableObject<MountObject>()(
       return {
         read: (key: string) =>
           Effect.gen(function* () {
-            yield* container.start();
+            // The Archil client needs outbound networking to reach Archil.
+            yield* container.start({ enableInternet: true });
             const response = yield* fetch(
               HttpClientRequest.get(`http://container/?key=${encodeURIComponent(key)}`),
             );
