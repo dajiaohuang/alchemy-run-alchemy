@@ -9,16 +9,19 @@ import * as Redacted from "effect/Redacted";
 
 const { test } = Test.make({ providers: Modal.providers() });
 
-// Serves a model on Modal GPUs: billed while it runs.
+// Serves a catalog model on Modal's shared capacity, billed per token.
 test.provider.skipIf(!!process.env.FAST)(
   "serve a catalog model behind the OpenAI API and stop it",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
+      // Modal creates an authenticated endpoint only once a webhook token
+      // with access to its environment exists.
+      yield* stack.deploy(Modal.WebhookToken("EndpointCaller", {}));
       const { qwen, caller } = yield* stack.deploy(
         Effect.gen(function* () {
           const qwen = yield* Modal.Endpoint("Qwen", {
-            model: { repoId: "Qwen/Qwen3-0.6B" },
+            model: { repoId: "zai-org/GLM-5.3-Flash" },
             servingMode: "shared",
           });
           const caller = yield* Modal.WebhookToken("EndpointCaller", {});
@@ -34,7 +37,7 @@ test.provider.skipIf(!!process.env.FAST)(
             "Modal-Secret": Redacted.value(caller.tokenSecret),
           }),
           HttpClientRequest.bodyJsonUnsafe({
-            model: "Qwen/Qwen3-0.6B",
+            model: "zai-org/GLM-5.3-Flash",
             messages: [{ role: "user", content: "Say ok." }],
             max_tokens: 8,
           }),

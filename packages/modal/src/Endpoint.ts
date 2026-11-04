@@ -76,11 +76,16 @@ export interface EndpointProps {
   servingMode?: "dedicated" | "shared";
   /** Regions the model runs in. @default Modal picks */
   regions?: string[];
-  /** Regions requests enter through. */
-  proxyRegions?: string[];
+  /**
+   * The region requests enter through. Changing it replaces the endpoint.
+   * @default "us-west"
+   */
+  routingRegion?: string;
   /**
    * Serve without proxy authentication. Without it, callers send a
-   * `Modal.WebhookToken` as `Modal-Key` / `Modal-Secret`.
+   * `Modal.WebhookToken` as `Modal-Key` / `Modal-Secret`, and Modal only
+   * creates the endpoint once a webhook token with access to its environment
+   * exists (`EndpointProxyTokenRequired` otherwise): deploy the token first.
    * @default false
    */
   unauthenticated?: boolean;
@@ -199,6 +204,9 @@ const modelSource = (model: EndpointModel): endpoint.EndpointModelSource => {
   };
 };
 
+/** Modal's default routing region (`modal endpoint create`'s). */
+const DEFAULT_ROUTING_REGION = "us-west";
+
 /** Props compared for replacement (credentials and references by value). */
 const identity = (news: EndpointProps) => ({
   environment: envNameOf(news.environment),
@@ -207,7 +215,7 @@ const identity = (news: EndpointProps) => ({
   inputs: news.inputs ?? ["text"],
   servingMode: news.servingMode ?? "dedicated",
   regions: news.regions,
-  proxyRegions: news.proxyRegions,
+  routingRegion: news.routingRegion ?? DEFAULT_ROUTING_REGION,
   unauthenticated: news.unauthenticated ?? false,
   description: news.description,
 });
@@ -311,7 +319,8 @@ export const EndpointProvider = () =>
                 computeRegion: news.regions
                   ? { explicit: { regions: news.regions } }
                   : { auto: {} },
-                proxyRegions: news.proxyRegions,
+                // Modal routes an endpoint through exactly one region.
+                proxyRegions: [news.routingRegion ?? DEFAULT_ROUTING_REGION],
                 unauthenticated: news.unauthenticated ?? false,
                 sharedEndpointNoticeAcknowledged: news.servingMode === "shared" ? true : undefined,
               })

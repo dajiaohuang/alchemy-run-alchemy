@@ -10,8 +10,9 @@ import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import { Token } from "./fixtures/resources.ts";
 import ModalWorker from "./fixtures/worker.ts";
+import { hostIdentity } from "./hostIdentity.ts";
 
-const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers());
+const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers(), hostIdentity);
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers });
 
 const Stack = Alchemy.Stack(

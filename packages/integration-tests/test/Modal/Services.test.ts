@@ -13,8 +13,9 @@ import { AsyncApi } from "./fixtures/async-server.ts";
 import ServicesWorker from "./fixtures/services-worker.ts";
 import { Services } from "./fixtures/services.ts";
 import Web from "./fixtures/web-function.ts";
+import { hostIdentity } from "./hostIdentity.ts";
 
-const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers());
+const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers(), hostIdentity);
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers });
 
 const Stack = Alchemy.Stack(

@@ -77,4 +77,5 @@ export {
   fromAuthProvider,
   fromToken,
 } from "./Credentials.ts";
+export { DeployerHostIdentity, HostIdentity } from "./ModalBindings.ts";
 export type { DictHandle, DictsClient } from "./CreateDict.ts";

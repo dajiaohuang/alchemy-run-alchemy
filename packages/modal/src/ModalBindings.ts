@@ -32,6 +32,11 @@ import { ServiceUser } from "./ServiceUser.ts";
  * - no host (a script or a deploy-time Action): nothing is bound, and calls
  *   use the deployer's credentials.
  *
+ * Modal's Starter plan has no service users. There, provide
+ * {@link DeployerHostIdentity} to bind the deployer's own token pair into
+ * each host instead: hosts then act with the deployer's workspace-wide
+ * access, not the roles their bindings ask for.
+ *
  * Import it as a namespace. A binding resolves its operations with
  * {@link withCredentials} and gets its `bind` from {@link Bind} when its layer
  * is built, then binds behind its own `__ALCHEMY_RUNTIME__` guard:
@@ -57,6 +62,36 @@ export const TOKEN_ENV = {
   secret: "MODAL_TOKEN_SECRET",
   serverUrl: "MODAL_SERVER_URL",
 } as const;
+
+/**
+ * The identity {@link Bind} gives a binding's host:
+ *
+ * - `"service-user"`: a scoped `Modal.ServiceUser` per host with only the
+ *   roles its bindings ask for (needs Modal's Team or Enterprise plan);
+ * - `"deployer"`: the deployer's own token pair, with its workspace-wide
+ *   access (for the Starter plan, which has no service users).
+ *
+ * Set it with {@link DeployerHostIdentity}.
+ */
+export const HostIdentity = Context.Reference<"service-user" | "deployer">("Modal/HostIdentity", {
+  defaultValue: () => "service-user",
+});
+
+/**
+ * Bind the deployer's own Modal token into binding hosts instead of a
+ * scoped service user per host. Use it on Modal's Starter plan, which has
+ * no service users; hosts then have the deployer's workspace-wide access.
+ *
+ * @example
+ * ```ts
+ * export default Alchemy.Stack(
+ *   "App",
+ *   { providers: Layer.mergeAll(Cloudflare.providers(), Modal.providers(), Modal.DeployerHostIdentity) },
+ *   Effect.gen(function* () { ... }),
+ * );
+ * ```
+ */
+export const DeployerHostIdentity: Layer.Layer<never> = Layer.succeed(HostIdentity, "deployer");
 
 /** A role a binding needs in one environment. */
 export interface EnvironmentGrant {
@@ -101,6 +136,7 @@ export const Bind: Effect.Effect<BindHost> = Effect.gen(function* () {
   // and drops the identity resource.
   if (globalThis.__ALCHEMY_RUNTIME__) return () => () => Effect.void;
   const Identity = yield* ServiceUser;
+  const identity = yield* HostIdentity;
   const ambient = yield* Effect.serviceOption(Credentials);
   return (label: TemplateStringsArray, ...args: unknown[]) =>
     Effect.fn(function* (data: HostBinding = {}) {
@@ -111,12 +147,6 @@ export const Bind: Effect.Effect<BindHost> = Effect.gen(function* () {
 
       // A binding that calls no Modal API (only `env`) needs no identity.
       if (data.roles !== undefined && data.roles.length > 0) {
-        const user = yield* Identity(`${host.LogicalId}ModalIdentity`, { scoped: true });
-        yield* (user as unknown as BindTarget).bind(
-          labelled("Allow", label),
-          host,
-          ...args,
-        )({ environments: data.roles });
         // The host talks to the deployer's Modal control plane.
         const resolve = Option.isSome(ambient)
           ? ambient.value
@@ -124,8 +154,19 @@ export const Bind: Effect.Effect<BindHost> = Effect.gen(function* () {
         // Binding initialization can't fail; the engine reports this defect as
         // `CredentialsRequired`.
         const creds = yield* resolve.pipe(orDieCredentialsUnavailable("Modal"));
-        yield* runtime.set(TOKEN_ENV.id, user.tokenId);
-        yield* runtime.set(TOKEN_ENV.secret, user.tokenSecret);
+        if (identity === "deployer") {
+          yield* runtime.set(TOKEN_ENV.id, Output.literal(Redacted.value(creds.tokenId)));
+          yield* runtime.set(TOKEN_ENV.secret, Output.literal(creds.tokenSecret));
+        } else {
+          const user = yield* Identity(`${host.LogicalId}ModalIdentity`, { scoped: true });
+          yield* (user as unknown as BindTarget).bind(
+            labelled("Allow", label),
+            host,
+            ...args,
+          )({ environments: data.roles });
+          yield* runtime.set(TOKEN_ENV.id, user.tokenId);
+          yield* runtime.set(TOKEN_ENV.secret, user.tokenSecret);
+        }
         yield* runtime.set(TOKEN_ENV.serverUrl, Output.literal(creds.apiBaseUrl));
       }
       for (const [name, value] of Object.entries(data.env ?? {})) {

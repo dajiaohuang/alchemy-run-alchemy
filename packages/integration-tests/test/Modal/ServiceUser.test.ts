@@ -7,6 +7,25 @@ import * as Redacted from "effect/Redacted";
 
 const { test } = Test.make({ providers: Modal.providers() });
 
+// Service users need Modal's Team or Enterprise plan. A Starter workspace
+// gets `Modal.ServiceUsersNotAvailable`; set MODAL_TEST_SERVICE_USERS=1 on a
+// Team workspace to run the lifecycle instead.
+const entitled = !!process.env.MODAL_TEST_SERVICE_USERS;
+
+test.provider.skipIf(entitled)(
+  "a Starter workspace gets ServiceUsersNotAvailable naming DeployerHostIdentity",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const error = yield* stack.deploy(Modal.ServiceUser("Probe", {})).pipe(Effect.flip);
+      const failure = error as { readonly _tag?: string; readonly message?: string };
+      expect(failure._tag).toBe("Modal.ServiceUsersNotAvailable");
+      expect(failure.message).toContain("Modal.DeployerHostIdentity");
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:modal", "provider:modal:service", "live"], timeout: 120_000 },
+);
+
 const deployUser = (role: "viewer" | "contributor") =>
   Effect.gen(function* () {
     const environment = yield* Modal.Environment("ServiceUserEnv", {});
@@ -27,7 +46,7 @@ const rolesOf = (name: string) =>
       ),
     );
 
-test.provider(
+test.provider.skipIf(!entitled)(
   "create a scoped service user, change its role, and delete it",
   (stack) =>
     Effect.gen(function* () {

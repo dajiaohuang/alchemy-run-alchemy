@@ -8,8 +8,9 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import RuntimeWorker from "./fixtures/runtime-worker.ts";
+import { hostIdentity } from "./hostIdentity.ts";
 
-const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers());
+const providers = Layer.mergeAll(Modal.providers(), Cloudflare.providers(), hostIdentity);
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers });
 
 const Stack = Alchemy.Stack(

@@ -17,6 +17,15 @@ export class ServiceUserUnexpectedResponse extends Data.TaggedError(
   readonly message: string;
 }> {}
 
+/**
+ * The workspace's plan has no service users (Modal's Starter plan). Bindings
+ * create one per host; `Modal.DeployerHostIdentity` binds the deployer's token
+ * instead.
+ */
+export class ServiceUsersNotAvailable extends Data.TaggedError("Modal.ServiceUsersNotAvailable")<{
+  readonly message: string;
+}> {}
+
 /** A role a scoped service user holds in one environment. */
 export interface ServiceUserEnvironmentRole {
   /** The environment: its name, or a yielded `Modal.Environment`. */
@@ -218,11 +227,21 @@ export const ServiceUserProvider = () =>
                 .pipe(Effect.catchTag("ServiceUserNotFound", () => Effect.void));
             }
             yield* session.note(`Creating service user ${name}...`);
-            const created = yield* service.createServiceUser({
-              name,
-              scoped,
-              expiresInSeconds: seconds(news.expiresIn),
-            });
+            const created = yield* service
+              .createServiceUser({
+                name,
+                scoped,
+                expiresInSeconds: seconds(news.expiresIn),
+              })
+              .pipe(
+                Effect.catchTag("ServiceUsersNotAvailable", (e) =>
+                  Effect.fail(
+                    new ServiceUsersNotAvailable({
+                      message: `${e.message ?? "Service users are not available on this plan."} Modal bindings give each host its own service user; on this plan, add Modal.DeployerHostIdentity to the Stack's providers to bind your own token into hosts instead.`,
+                    }),
+                  ),
+                ),
+              );
             if (!created.serviceUserId || !created.tokenId || !created.tokenSecret) {
               return yield* new ServiceUserUnexpectedResponse({
                 message: `Modal returned no token for service user ${name}`,
