@@ -182,3 +182,333 @@ export const system = Effect.fn(function* (box: DaytonaSandbox, prefix: string) 
     memory: (metrics.memTotal ?? 0) > 0,
   };
 });
+
+/**
+ * A smart-HTTP git server over `git http-backend`, run inside the sandbox.
+ * The daemon's git client always sends basic auth, which `git://` refuses,
+ * and its `file://` transport fails reaping git's child processes, so a
+ * remote it can push to and pull from has to be HTTP.
+ */
+const GIT_HTTP_SERVER = String.raw`import os, subprocess, sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+ROOT = sys.argv[1]
+PORT = int(sys.argv[2])
+
+
+class Git(BaseHTTPRequestHandler):
+    def handle_one(self):
+        path, _, query = self.path.partition("?")
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        env = dict(
+            os.environ,
+            GIT_PROJECT_ROOT=ROOT,
+            GIT_HTTP_EXPORT_ALL="1",
+            PATH_INFO=path,
+            QUERY_STRING=query,
+            REQUEST_METHOD=self.command,
+            CONTENT_TYPE=self.headers.get("Content-Type") or "",
+            CONTENT_LENGTH=str(len(body)),
+            REMOTE_USER="alchemy",
+            REMOTE_ADDR="127.0.0.1",
+        )
+        if self.headers.get("Content-Encoding"):
+            env["HTTP_CONTENT_ENCODING"] = self.headers["Content-Encoding"]
+        out = subprocess.run(["git", "http-backend"], input=body, env=env, capture_output=True).stdout
+        head, _, payload = out.partition(b"\r\n\r\n")
+        status = 200
+        headers = []
+        for line in head.split(b"\r\n"):
+            if not line:
+                continue
+            k, _, v = line.decode().partition(":")
+            if k.lower() == "status":
+                status = int(v.strip().split()[0])
+            else:
+                headers.append((k, v.strip()))
+        self.send_response(status)
+        for k, v in headers:
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    do_GET = handle_one
+    do_POST = handle_one
+
+    def log_message(self, *args):
+        pass
+
+
+ThreadingHTTPServer(("127.0.0.1", PORT), Git).serve_forever()
+`;
+
+/** Git against a remote: config, remotes, push, clone, pull, restore, reset, branches. */
+export const gitRemote = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+  const root = `/tmp/alchemy-remote-${prefix}`;
+  const path = `${root}/work`;
+  const other = `${root}/other`;
+  const port = 8765;
+  const url = `http://127.0.0.1:${port}/origin.git`;
+  const sessionId = `alchemy-git-http-${prefix}`;
+  yield* box.process.deleteSession({ sessionId }).pipe(Effect.ignore);
+  yield* box.exec(
+    `rm -rf ${root} && mkdir -p ${root} && git init -q --bare -b main ${root}/origin.git && ` +
+      `git -C ${root}/origin.git config http.receivepack true`,
+  );
+  yield* box.fs.uploadFile({ path: `${root}/server.py`, body: GIT_HTTP_SERVER });
+  yield* box.process.createSession({ sessionId });
+  yield* box.process.sessionExecuteCommand({
+    sessionId,
+    command: `python3 ${root}/server.py ${root} ${port}`,
+    runAsync: true,
+  });
+  yield* box.ports.isPortInUse({ port }).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("1 second"),
+      until: (r) => r.isInUse === true,
+      times: 15,
+    }),
+  );
+
+  const commit = (repo: string, file: string, message: string) =>
+    Effect.gen(function* () {
+      yield* box.fs.uploadFile({ path: `${repo}/${file}`, body: `${message}\n` });
+      yield* box.git.addFiles({ path: repo, files: [file] });
+      return yield* box.git.commitChanges({
+        path: repo,
+        message,
+        author: "Alchemy",
+        email: "test@alchemy.run",
+      });
+    });
+
+  yield* box.git.initRepository({ path, initial_branch: "main" });
+  yield* box.git.configureUser({ path, name: "Alchemy", email: "test@alchemy.run" });
+  yield* box.git.setGitConfig({ path, key: "alchemy.test", value: "yes", scope: "local" });
+  const config = yield* box.git.getGitConfig({ path, key: "alchemy.test", scope: "local" });
+  yield* box.git.addRemote({ path, name: "origin", url });
+  const remotes = yield* box.git.listRemotes({ path });
+  yield* commit(path, "one.txt", "one");
+  yield* box.git.pushChanges({ path, remote: "origin", branch: "main", set_upstream: true });
+
+  // A second clone pushes a commit; the first pulls it.
+  yield* box.git.cloneRepository({ url, path: other });
+  yield* box.git.configureUser({ path: other, name: "Alchemy", email: "test@alchemy.run" });
+  yield* commit(other, "two.txt", "two");
+  yield* box.git.pushChanges({ path: other });
+  yield* box.git.pullChanges({ path, remote: "origin", branch: "main" });
+  const pulled = yield* box.fs.listFiles({ path });
+
+  // Restore an edited file, delete a branch, then reset to the first commit
+  // (reset takes a commit, not a relative ref like HEAD~1).
+  yield* box.fs.uploadFile({ path: `${path}/one.txt`, body: "edited\n" });
+  yield* box.git.restoreFiles({ path, files: ["one.txt"], worktree: true });
+  const restored = new TextDecoder().decode(
+    yield* box.fs.downloadFile({ path: `${path}/one.txt` }),
+  );
+  // Creating a branch also checks it out, and the daemon will delete the
+  // branch HEAD is on, so switch back before deleting it.
+  yield* box.git.createBranch({ path, name: "scratch" });
+  const created = yield* box.git.listBranches({ path });
+  yield* box.git.checkoutBranch({ path, branch: "main" });
+  yield* box.git.deleteBranch({ path, name: "scratch" });
+  const branches = yield* box.git.listBranches({ path });
+  const before = yield* box.git.getCommitHistory({ path });
+  const first = before.find((c) => c.message.trim() === "one");
+  yield* box.git.resetChanges({ path, mode: "hard", target: first?.hash ?? "HEAD" });
+  const history = yield* box.git.getCommitHistory({ path });
+  yield* box.git.authenticate({ host: "git.example.com", username: "alchemy", password: "x" });
+  yield* box.process.deleteSession({ sessionId });
+  yield* box.exec(`rm -rf ${root}`);
+  return {
+    config: config.value,
+    remotes: remotes.remotes.map((r) => r.name),
+    pulled: pulled
+      .map((f) => f.name)
+      .filter((n) => !n.startsWith("."))
+      .sort(),
+    restored: restored.trim(),
+    createdOn: created.current,
+    branches: [...branches.branches].sort(),
+    history: history.map((c) => c.message.trim()),
+  };
+});
+
+/** Interactive input, a single command, the entrypoint, daemon env, LSP workspace symbols. */
+export const sessions = Effect.fn(function* (box: DaytonaSandbox, prefix: string) {
+  const sessionId = `alchemy-input-${prefix}`;
+  yield* box.process.deleteSession({ sessionId }).pipe(Effect.ignore);
+  yield* box.process.createSession({ sessionId });
+  const started = yield* box.process.sessionExecuteCommand({
+    sessionId,
+    command: "read line && echo got:$line",
+    runAsync: true,
+  });
+  yield* box.process.sendInput({ sessionId, commandId: started.cmdId, data: "alchemy\n" });
+  const logs = yield* box.process
+    .getSessionCommandLogs({ sessionId, commandId: started.cmdId })
+    .pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced("1 second"),
+        until: (l) => l.includes("got:alchemy"),
+        times: 15,
+      }),
+    );
+  const command = yield* box.process.getSessionCommand({ sessionId, commandId: started.cmdId });
+  yield* box.process.deleteSession({ sessionId });
+  const entrypoint = yield* box.process.getEntrypointSession();
+  const entrypointLogs = yield* box.process.getEntrypointLogs();
+
+  yield* box.server.updateEnv({ set: { ALCHEMY_DAEMON_ENV: "on" } });
+  const withEnv = yield* box.exec("echo ${ALCHEMY_DAEMON_ENV:-off}");
+  yield* box.server.updateEnv({ unset: ["ALCHEMY_DAEMON_ENV"] });
+  const withoutEnv = yield* box.exec("echo ${ALCHEMY_DAEMON_ENV:-off}");
+
+  const pathToProject = `/tmp/alchemy-ws-${prefix}`;
+  const uri = `file://${pathToProject}/index.ts`;
+  yield* box.exec(`rm -rf ${pathToProject} && mkdir -p ${pathToProject}`);
+  yield* box.fs.uploadFile({
+    path: `${pathToProject}/index.ts`,
+    body: "export const alchemyGreeting = () => 'hi';\n",
+  });
+  const languageId = "typescript";
+  yield* box.lsp.start({ languageId, pathToProject });
+  yield* box.lsp.didOpen({ languageId, pathToProject, uri });
+  const symbols = yield* box.lsp
+    .workspaceSymbols({ languageId, pathToProject, query: "alchemyGreeting" })
+    .pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced("1 second"),
+        until: (s) => s.length > 0,
+        times: 10,
+      }),
+    );
+  yield* box.lsp.didClose({ languageId, pathToProject, uri });
+  yield* box.lsp.stop({ languageId, pathToProject });
+  return {
+    logs: logs.trim().split("\n").pop(),
+    command: command.command,
+    entrypoint: entrypoint.sessionId,
+    entrypointLogs: typeof entrypointLogs,
+    env: [withEnv.result.trim(), withoutEnv.result.trim()],
+    symbols: symbols.map((s) => s.name),
+  };
+});
+
+/** The desktop: input, windows, screenshots, recordings, accessibility, its processes. */
+export const desktop = Effect.fn(function* (box: DaytonaSandbox) {
+  const cu = box.computerUse;
+  yield* cu.startComputerUse();
+  const status = yield* cu.getComputerUseStatus().pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("2 seconds"),
+      until: (s) => s.status === "active",
+      times: 20,
+    }),
+  );
+  const system = yield* cu.getComputerUseSystemStatus();
+  const display = yield* cu.getDisplayInfo();
+
+  // Keyboard and mouse.
+  yield* cu.typeText({ text: "alchemy" });
+  yield* cu.pressKey({ key: "Return" });
+  yield* cu.pressHotkey({ keys: "ctrl+a" });
+  yield* cu.keyDown({ key: "shift" });
+  yield* cu.keyUp({ key: "shift" });
+  yield* cu.moveMouse({ x: 100, y: 120 });
+  const mouse = yield* cu.getMousePosition();
+  const clicked = yield* cu.click({ x: 50, y: 60 });
+  yield* cu.mouseDown({ x: 50, y: 60 });
+  const released = yield* cu.mouseUp({ x: 70, y: 80 });
+  const dragged = yield* cu.drag({ startX: 10, startY: 10, endX: 40, endY: 40 });
+  const scrolled = yield* cu.scroll({ x: 100, y: 100, direction: "down", amount: 2 });
+
+  // Screenshots: full, region, and compressed.
+  const full = yield* cu.takeScreenshot({ showCursor: true });
+  const region = yield* cu.takeRegionScreenshot({ x: 0, y: 0, width: 100, height: 100 });
+  const jpeg = yield* cu.takeCompressedScreenshot({ format: "jpeg", quality: 50, scale: 0.5 });
+  const pngRegion = yield* cu.takeCompressedRegionScreenshot({
+    x: 0,
+    y: 0,
+    width: 100,
+    height: 100,
+    format: "png",
+  });
+
+  // A recording: start, stop, list, read, download, delete.
+  const recording = yield* cu.startRecording({ label: "alchemy" });
+  yield* Effect.sleep("2 seconds");
+  const stopped = yield* cu.stopRecording({ id: recording.id });
+  const recordings = yield* cu.listRecordings();
+  const fetched = yield* cu.getRecording({ id: recording.id });
+  const video = yield* cu.downloadRecording({ id: recording.id });
+  yield* cu.deleteRecording({ id: recording.id });
+  const afterDelete = yield* cu.listRecordings();
+
+  // Accessibility: open a terminal window, find the panel's button, act on it.
+  yield* box.process.createSession({ sessionId: "desktop-app" });
+  yield* box.process.sessionExecuteCommand({
+    sessionId: "desktop-app",
+    command: "DISPLAY=:0 xfce4-terminal --title=AlchemyDesktop",
+    runAsync: true,
+  });
+  const windows = yield* cu.getWindows().pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("1 second"),
+      until: (w) => (w.windows ?? []).some((x) => x.title === "AlchemyDesktop"),
+      times: 15,
+    }),
+  );
+  const tree = yield* cu.getAccessibilityTree({ maxDepth: 2 });
+  const found = yield* cu.findAccessibilityNodes({
+    name: "Show Desktop",
+    scope: "all",
+    limit: 1,
+  });
+  const node = found.matches?.[0];
+  const nodeId = node?.id ?? "";
+  // A toggle button can be invoked, but not focused or given a value.
+  yield* cu.invokeAccessibilityNode({ id: nodeId });
+  const focus = yield* cu.focusAccessibilityNode({ id: nodeId }).pipe(
+    Effect.flip,
+    Effect.map((e) => e._tag),
+  );
+  const setValue = yield* cu.setAccessibilityNodeValue({ id: nodeId, value: "x" }).pipe(
+    Effect.flip,
+    Effect.map((e) => e._tag),
+  );
+
+  // The desktop's own processes.
+  const xfce = yield* cu.getProcessStatus({ processName: "xfce4" });
+  const logs = yield* cu.getProcessLogs({ processName: "xfce4" });
+  const errors = yield* cu.getProcessErrors({ processName: "xfce4" });
+  const restarted = yield* cu.restartProcess({ processName: "novnc" });
+  yield* cu.stopComputerUse();
+  return {
+    status: status.status,
+    system: system.status,
+    displays: display.displays?.length ?? 0,
+    mouse: { x: mouse.x, y: mouse.y },
+    clicked: { x: clicked.x, y: clicked.y },
+    released: { x: released.x, y: released.y },
+    dragged: { x: dragged.x, y: dragged.y },
+    scrolled: scrolled.success,
+    screenshots: [full, region, jpeg, pngRegion].map((s) => (s.screenshot?.length ?? 0) > 1000),
+    recording: {
+      stopped: stopped.status,
+      listed: recordings.recordings.some((r) => r.id === recording.id),
+      fetched: fetched.id === recording.id,
+      mp4: video.length > 1000 && new TextDecoder().decode(video.slice(4, 8)) === "ftyp",
+      deleted: !afterDelete.recordings.some((r) => r.id === recording.id),
+    },
+    window: (windows.windows ?? []).some((w) => w.title === "AlchemyDesktop"),
+    tree: tree.root !== undefined,
+    node: node?.name,
+    focus,
+    setValue,
+    process: { running: xfce.running, logs: typeof logs.logs, errors: typeof errors.errors },
+    restarted: restarted.processName,
+  };
+});

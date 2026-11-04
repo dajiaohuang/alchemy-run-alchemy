@@ -53,7 +53,6 @@ const SANDBOX_OPERATIONS = [
   "getSandboxTraces",
   "getSandboxTraceSpans",
   "getSandboxMetrics",
-  "getRegionQuotaBySandboxId",
 ] as const;
 
 type SandboxOperations = Pick<typeof sandboxes, (typeof SANDBOX_OPERATIONS)[number]>;

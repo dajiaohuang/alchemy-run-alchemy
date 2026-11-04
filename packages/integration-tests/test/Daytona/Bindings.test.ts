@@ -40,19 +40,29 @@ class RouteFailed extends Data.TaggedError("RouteFailed")<{ path: string; body: 
   }
 }
 
+/** Cloudflare hasn't routed the fresh workers.dev script yet (error 1104). */
+class NotPropagated extends Data.TaggedError("NotPropagated")<{}> {}
+
 const get = (path: string) =>
   Effect.gen(function* () {
     const { url, stage } = yield* stack;
     const client = yield* HttpClient.HttpClient;
-    // Retry only while the fresh workers.dev URL propagates.
+    // Retry only while the fresh workers.dev URL propagates: a non-2xx from
+    // Cloudflare's edge, or its 500 "Script not found" page.
     const res = yield* client.get(`${url}${path}?prefix=${encodeURIComponent(stage)}`).pipe(
       Effect.flatMap((res) =>
-        res.status === 500 ? Effect.succeed(res) : HttpClientResponse.filterStatusOk(res),
+        res.status === 500
+          ? Effect.flatMap(res.text, (body) =>
+              body.includes("Script not found")
+                ? Effect.fail(new NotPropagated())
+                : Effect.succeed({ res, body }),
+            )
+          : Effect.map(HttpClientResponse.filterStatusOk(res), (res) => ({ res, body: "" })),
       ),
       Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }),
     );
-    if (res.status === 500) return yield* new RouteFailed({ path, body: yield* res.text });
-    return (yield* res.json) as any;
+    if (res.res.status === 500) return yield* new RouteFailed({ path, body: res.body });
+    return (yield* res.res.json) as any;
   });
 
 /** Out-of-band reads with the deployer's credentials. */
@@ -99,7 +109,7 @@ describe("CreateSandbox", () => {
 
 describe("CreateSandbox lifecycle", () => {
   test.skipIf(!!process.env.FAST)(
-    "signed preview, SSH access and signing keys; fork and pause refused for containers",
+    "signed preview, SSH, signing keys, settings, reads and stop/start; fork, pause and resize refused",
     Effect.gen(function* () {
       expect(yield* get("/sandbox-lifecycle")).toEqual({
         page: { status: 200, body: "signed-ok" },
@@ -110,6 +120,22 @@ describe("CreateSandbox lifecycle", () => {
         fork: "ForkNotSupported",
         // Container sandboxes can't pause either.
         pause: "PauseNotSupported",
+        configured: {
+          step: "two",
+          kept: true,
+          autoStop: 20,
+          autoArchive: 1440,
+          autoDelete: 60,
+          ttl: true,
+          public: true,
+        },
+        autoPause: "AutoPauseNotSupported",
+        resize: "SandboxResizeUnavailable",
+        ancestors: true,
+        legacyTelemetry: "TelemetryEndpointsDisabled",
+        buildLogs: "SandboxHasNoBuildInfo",
+        telemetry: true,
+        cycle: ["stopped", "started"],
       });
     }),
     { tags, timeout: 300_000 },
@@ -131,13 +157,27 @@ describe("CreateSandbox resources", () => {
 describe("CreateSandbox computer use", () => {
   // A desktop session bills like any running sandbox, and takes a while.
   test.skipIf(!!process.env.FAST)(
-    "starts a desktop, moves the mouse, takes a screenshot",
+    "drives the desktop: input, windows, screenshots, recordings, accessibility, processes",
     Effect.gen(function* () {
-      const body = yield* get("/computer-use");
-      expect(body.status).toEqual("active");
-      expect(body.displays).toBeGreaterThan(0);
-      expect(body.mouse).toEqual({ x: 100, y: 120 });
-      expect(body.screenshotBytes).toBeGreaterThan(1000);
+      expect(yield* get("/computer-use")).toEqual({
+        status: "active",
+        system: "active",
+        displays: 1,
+        mouse: { x: 100, y: 120 },
+        clicked: { x: 50, y: 60 },
+        released: { x: 70, y: 80 },
+        dragged: { x: 40, y: 40 },
+        scrolled: true,
+        screenshots: [true, true, true, true],
+        recording: { stopped: "completed", listed: true, fetched: true, mp4: true, deleted: true },
+        window: true,
+        tree: true,
+        node: "Show Desktop",
+        focus: "AccessibilityActionNotSupported",
+        setValue: "AccessibilityActionNotSupported",
+        process: { running: true, logs: "string", errors: "string" },
+        restarted: "novnc",
+      });
     }),
     { tags, timeout: 300_000 },
   );
@@ -187,6 +227,37 @@ describe("ConnectSandbox", () => {
         current: "feature",
         history: ["first"],
         cloned: true,
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "git against an HTTP remote: config, push, clone, pull, restore, delete a branch, reset",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/git-remote")).toEqual({
+        config: "yes",
+        remotes: ["origin"],
+        pulled: ["one.txt", "two.txt"],
+        restored: "one",
+        createdOn: "scratch",
+        branches: ["main"],
+        history: ["one"],
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "session input, a session command, the entrypoint, daemon env, workspace symbols",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/sessions")).toEqual({
+        logs: "got:alchemy",
+        command: "read line && echo got:$line",
+        entrypoint: "entrypoint",
+        entrypointLogs: "string",
+        env: ["on", "off"],
+        symbols: ["alchemyGreeting"],
       });
     }),
     { tags, timeout: 180_000 },

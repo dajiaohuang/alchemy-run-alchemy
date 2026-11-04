@@ -67,6 +67,8 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
             git: Toolbox.git,
             lsp: Toolbox.lsp,
             system: Toolbox.system,
+            "git-remote": Toolbox.gitRemote,
+            sessions: Toolbox.sessions,
           }[url.pathname.slice("/toolbox/".length)];
           if (run === undefined) return HttpServerResponse.text("not found", { status: 404 });
           return yield* HttpServerResponse.json(yield* run(devBox, prefix));
@@ -123,6 +125,69 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
 
           const pause = yield* sandbox.pauseSandbox().pipe(Effect.flip);
 
+          // Settings through the handle.
+          // Replacing labels keeps the ones the binding tracks its sandboxes by.
+          const labelled = yield* sandbox.getSandbox();
+          yield* sandbox.replaceLabels({ labels: { ...labelled.labels, step: "two" } });
+          yield* sandbox.setAutostopInterval({ interval: 20 });
+          yield* sandbox.setAutoArchiveInterval({ interval: 60 * 24 });
+          yield* sandbox.setAutoDeleteInterval({ interval: 60 });
+          yield* sandbox.setTtl({ ttlMinutes: 120 });
+          yield* sandbox.updatePublicStatus({ isPublic: true });
+          const configured = yield* sandbox.getSandbox();
+          const autoPause = yield* sandbox.setAutoPauseInterval({ interval: 30 }).pipe(
+            Effect.flip,
+            Effect.map((e) => e._tag),
+          );
+          const resize = yield* sandbox.resizeSandbox({ cpu: 2 }).pipe(
+            Effect.flip,
+            Effect.map((e) => e._tag),
+          );
+
+          // Reads: quota, lineage, logs, metrics, traces, telemetry.
+          const to = new Date().toISOString();
+          const from = new Date(Date.now() - 3_600_000).toISOString();
+          const ancestors = yield* sandbox.getSandboxAncestors();
+          // Daytona Cloud serves telemetry from its Analytics API (below); the
+          // sandbox-scoped endpoints are switched off.
+          const legacyTelemetry = yield* sandbox.getSandboxLogs({ from, to }).pipe(
+            Effect.flip,
+            Effect.map((e) => e._tag),
+          );
+          const buildLogs = yield* sandbox.getBuildLogsUrl().pipe(
+            Effect.result,
+            Effect.map((r) => (r._tag === "Success" ? "url" : r.failure._tag)),
+          );
+          const telemetryLogs = yield* sandbox.telemetry.listOrganizationSandboxTelemetryLogs({
+            from,
+            to,
+          });
+          const telemetryMetrics = yield* sandbox.telemetry.listOrganizationSandboxTelemetryMetrics(
+            { from, to },
+          );
+          const telemetryTraces = yield* sandbox.telemetry.listOrganizationSandboxTelemetryTraces({
+            from,
+            to,
+          });
+
+          // Stop and start through the handle.
+          yield* sandbox.stopSandbox();
+          const stopped = yield* sandbox.getSandbox().pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("1 second"),
+              until: (s) => s.state === "stopped",
+              times: 60,
+            }),
+          );
+          yield* sandbox.startSandbox();
+          const restarted = yield* sandbox.getSandbox().pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("1 second"),
+              until: (s) => s.state === "started",
+              times: 60,
+            }),
+          );
+
           return yield* HttpServerResponse.json({
             page: { status: page.status, body: page.body.trim() },
             ssh: ssh.sshCommand.includes("ssh"),
@@ -130,6 +195,24 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
             rotated: rotated !== undefined,
             fork: fork._tag,
             pause: pause._tag,
+            configured: {
+              step: configured.labels.step,
+              kept: Object.keys(labelled.labels).every((k) => k in configured.labels),
+              autoStop: configured.autoStopInterval,
+              autoArchive: configured.autoArchiveInterval,
+              autoDelete: configured.autoDeleteInterval,
+              ttl: configured.autoDestroyAt !== undefined,
+              public: configured.public,
+            },
+            autoPause,
+            resize,
+            ancestors: Array.isArray(ancestors),
+            legacyTelemetry,
+            buildLogs,
+            telemetry: [telemetryLogs, telemetryMetrics, telemetryTraces].every(
+              (r) => r !== undefined,
+            ),
+            cycle: [stopped.state, restarted.state],
           });
         }
 
@@ -149,27 +232,7 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
             }),
             (s) => sandboxes.delete(s.sandboxId).pipe(Effect.ignore),
           );
-          const desktop = sandbox.computerUse;
-          yield* desktop.startComputerUse();
-          // The X server and window manager take a few seconds to come up.
-          const status = yield* desktop.getComputerUseStatus().pipe(
-            Effect.repeat({
-              schedule: Schedule.spaced("2 seconds"),
-              until: (s) => s.status === "active",
-              times: 20,
-            }),
-          );
-          const display = yield* desktop.getDisplayInfo();
-          yield* desktop.moveMouse({ x: 100, y: 120 });
-          const mouse = yield* desktop.getMousePosition();
-          const screenshot = yield* desktop.takeScreenshot({ showCursor: true });
-          yield* desktop.stopComputerUse();
-          return yield* HttpServerResponse.json({
-            status: status.status,
-            displays: display.displays?.length ?? 0,
-            mouse: { x: mouse.x, y: mouse.y },
-            screenshotBytes: screenshot.screenshot?.length ?? 0,
-          });
+          return yield* HttpServerResponse.json(yield* Toolbox.desktop(sandbox));
         }
 
         if (url.pathname === "/connect-sandbox") {
