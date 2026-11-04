@@ -26,7 +26,6 @@ import { Runner, RunnerProvider } from "./Runner.ts";
 import { RuntimeObjects, RuntimeObjectsProvider } from "./RuntimeObjects.ts";
 import { Sandbox, SandboxProvider } from "./Sandbox.ts";
 import { Secret, SecretProvider } from "./Secret.ts";
-import { Service, ServiceProvider } from "./Service.ts";
 import { Snapshot, SnapshotProvider } from "./Snapshot.ts";
 import { Volume, VolumeProvider } from "./Volume.ts";
 import { WarmPool, WarmPoolProvider } from "./WarmPool.ts";
@@ -58,7 +57,6 @@ export const providers = () =>
       RuntimeObjects,
       Sandbox,
       Secret,
-      Service,
       Snapshot,
       Volume,
       WarmPool,
@@ -81,7 +79,6 @@ export const providers = () =>
         RuntimeObjectsProvider(),
         SandboxProvider(),
         SecretProvider(),
-        ServiceProvider(),
         SnapshotProvider(),
         VolumeProvider(),
         WarmPoolProvider(),

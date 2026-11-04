@@ -132,6 +132,11 @@ describe("CreateSandbox lifecycle", () => {
         autoPause: "AutoPauseNotSupported",
         resize: "SandboxResizeUnavailable",
         regionQuota: "RegionQuotaRunnerOnly",
+        mounted: [
+          ["/cache", true],
+          ["/home/daytona/work", true],
+        ],
+        writable: "ok",
         initialized: true,
         afterInit: "init-ok",
         ancestors: true,

@@ -1,6 +1,6 @@
 /**
- * Process bootstrap for `Daytona.Service` (a Node process in a sandbox
- * serving the bundled program). The generated entry imports this module
+ * Process bootstrap for a `Daytona.Sandbox` with `main` (a Node process in
+ * the sandbox serving the bundled program). The generated entry imports this module
  * and the user's `main`, nothing else — see `alchemy/Runtime/Bootstrap`
  * for why.
  */

@@ -7,7 +7,7 @@ import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import { DevBox } from "./resources.ts";
+import { BindingsCache, DevBox } from "./resources.ts";
 import * as Toolbox from "./toolbox.ts";
 
 export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
@@ -20,6 +20,7 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
       onDestroy: "delete",
       prefix: "alchemy-bindings-",
     });
+    const cache = yield* Daytona.MountVolume(BindingsCache, { path: "/cache" });
     const secrets = yield* Daytona.CreateSecret();
     const images = yield* Daytona.CreateSnapshot();
     const organization = yield* Daytona.ReadOrganization();
@@ -77,13 +78,24 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
         }
 
         if (url.pathname === "/sandbox-lifecycle") {
+          // Mount a declared volume (through MountVolume) and one created at runtime.
+          const home = yield* volumes.getOrCreate({ name: `alchemy-bindings-home-${prefix}` });
           const sandbox = yield* Effect.acquireRelease(
             sandboxes.create({
               name: `alchemy-lifecycle-${prefix}`,
               labels: { purpose: "lifecycle-test" },
+              mounts: [cache, { volume: home, path: "/home/daytona/work" }],
             }),
             (s) => sandboxes.delete(s.sandboxId).pipe(Effect.ignore),
           );
+          const cacheId = yield* Daytona.volumeIdOf(cache.volume);
+          const mounted = ((yield* sandbox.getSandbox()).volumes ?? [])
+            .map((v) => [
+              v.mountPath,
+              v.volumeId === (v.mountPath === "/cache" ? cacheId : home.volumeId),
+            ])
+            .sort();
+          const writable = yield* sandbox.exec("touch /cache/ok /home/daytona/work/ok && echo ok");
           // Serve a page on a port and reach it through a signed preview URL.
           yield* sandbox.process.createSession({ sessionId: "web" });
           yield* sandbox.exec("mkdir -p /tmp/site && echo signed-ok > /tmp/site/index.html");
@@ -217,6 +229,8 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
             autoPause,
             resize,
             ancestors: Array.isArray(ancestors),
+            mounted,
+            writable: writable.result.trim(),
             regionQuota,
             initialized: Object.values(initialized).some((m) => m?.includes("initialized")),
             afterInit: afterInit.result.trim(),
@@ -367,6 +381,7 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
         Daytona.CreateSandboxHttp,
         Daytona.ConnectSandboxHttp,
         Daytona.CreateVolumeHttp,
+        Daytona.MountVolumeLive,
         Daytona.CreateSecretHttp,
         Daytona.CreateSnapshotHttp,
         Daytona.ReadOrganizationHttp,

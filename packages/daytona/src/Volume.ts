@@ -19,7 +19,7 @@ export interface VolumeProps {
 }
 
 export interface VolumeAttributes {
-  /** Volume ID; what `volumes: [{ volumeId, mountPath }]` takes. */
+  /** Volume ID. */
   volumeId: string;
   /** Volume name. */
   name: string;
@@ -52,16 +52,14 @@ export type Volume = Resource<"Daytona.Volume", VolumeProps, VolumeAttributes, n
  * ```typescript
  * export const DevBox = Daytona.Sandbox("DevBox", {
  *   snapshot: Base,
- *   volumes: [{ volume: Cache, mountPath: "/cache" }],
+ *   mounts: [{ volume: Cache, path: "/cache" }],
  * });
  * ```
  *
  * **Example:** Mount it in sandboxes created at runtime
  * ```typescript
- * const cache = yield* Cache;
- * const sandbox = yield* sandboxes.create({
- *   volumes: [{ volumeId: cache.volumeId, mountPath: "/cache" }],
- * });
+ * const cache = yield* Daytona.MountVolume(Cache, { path: "/cache" });
+ * const sandbox = yield* sandboxes.create({ mounts: [cache] });
  * ```
  *
  * @resource

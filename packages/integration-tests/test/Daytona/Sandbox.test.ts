@@ -249,7 +249,7 @@ test.provider(
             });
             const box = yield* Daytona.Sandbox("Mounted", {
               user: "daytona",
-              volumes: [{ volume: cache, mountPath: "/home/daytona/cache" }],
+              mounts: [{ volume: cache, path: "/home/daytona/cache" }],
               secrets: { API_TOKEN: token },
               public: options.public,
               otelEndpointOverride: "https://api.honeycomb.io/",

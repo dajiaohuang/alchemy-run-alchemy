@@ -74,7 +74,7 @@ export type CreateVolumeOptions =
  *   fetch: Effect.gen(function* () {
  *     const home = yield* volumes.getOrCreate({ name: `user-${user}` });
  *     const sandbox = yield* sandboxes.create({
- *       volumes: [{ volumeId: home.volumeId, mountPath: "/home/daytona/work" }],
+ *       mounts: [{ volume: home, path: "/home/daytona/work" }],
  *     });
  *     const ls = yield* sandbox.exec("ls /home/daytona/work");
  *     return yield* HttpServerResponse.json(ls);

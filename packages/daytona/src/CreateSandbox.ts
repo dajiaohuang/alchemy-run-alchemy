@@ -3,16 +3,27 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type { StateFailed, StateTimeout } from "./internal/Wait.ts";
+import type { VolumeMount } from "./MountVolume.ts";
 import type { OnDestroy } from "./RuntimeObjects.ts";
 import type { SandboxInfo } from "./Sandbox.ts";
 import type { DaytonaSandbox } from "./SandboxClient.ts";
 import type { Snapshot } from "./Snapshot.ts";
 
 /**
- * `create` input: Daytona's own create request. `snapshot` defaults to the
- * binding's base; labels are merged with the binding's owner label.
+ * `create` input: Daytona's own create request, with volumes as `mounts`.
+ * `snapshot` defaults to the binding's base; labels are merged with the
+ * binding's owner label.
  */
-export type CreateSandboxInput = Omit<sandboxes.CreateSandboxRequest, "xDaytonaOrganizationID">;
+export type CreateSandboxInput = Omit<
+  sandboxes.CreateSandboxRequest,
+  "xDaytonaOrganizationID" | "volumes"
+> & {
+  /**
+   * Volumes to mount: `MountVolume` references, or entries naming a
+   * `CreateVolume` handle (`{ volume: home, path: "/home/daytona/work" }`).
+   */
+  readonly mounts?: ReadonlyArray<VolumeMount>;
+};
 
 /** `list` filters: Daytona's own, with `labels` as an object. */
 export type ListSandboxesInput = Omit<

@@ -14,7 +14,11 @@ import * as telemetry from "@distilled.cloud/daytona/telemetry";
 import * as toolboxStreams from "@distilled.cloud/daytona/Toolbox";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
-import type * as HttpClient from "effect/http/HttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
 import * as Stream from "effect/Stream";
@@ -62,20 +66,118 @@ const SANDBOX_OPERATIONS = [
 
 type SandboxOperations = Pick<typeof sandboxes, (typeof SANDBOX_OPERATIONS)[number]>;
 
-/** What `exec` returns: the exit code and combined output. */
+/**
+ * What `exec` returns. Daytona runs a command with stdout and stderr on one
+ * stream, so the output is combined in `result`, as Daytona names it.
+ */
 export interface ExecResult {
   readonly exitCode: number;
   readonly result: string;
 }
 
-/** `exec` options. */
+/**
+ * `exec` and `start` options. Daytona's command API takes no stdin, so
+ * there is no `stdin` option: write to a {@link SandboxProcess} instead.
+ */
 export interface ExecOptions {
   /** Working directory. */
   readonly cwd?: string;
   /** Extra environment variables. */
   readonly env?: Record<string, string>;
-  /** Seconds before the command is killed. */
+  /** Seconds before the command is killed (`exec` only). */
   readonly timeout?: number;
+}
+
+/** A command, as a shell line or as an argument vector run without a shell. */
+export type Command = string | readonly string[];
+
+/** A command started with `start`, running in its own Daytona session. */
+export interface SandboxProcess {
+  /** The session the command runs in. */
+  readonly sessionId: string;
+  /** The command's ID in that session. */
+  readonly commandId: string;
+  /** Its stdout and stderr as they are produced, until it exits. */
+  readonly output: Stream.Stream<
+    toolboxStreams.LogOutput,
+    toolboxStreams.ToolboxSocketOpenError,
+    RuntimeContext
+  >;
+  /** Write to its stdin. */
+  write(data: string): Effect.Effect<void, process.SendInputError, RuntimeContext>;
+  /** Kill it (deletes its session). */
+  readonly kill: Effect.Effect<void, process.DeleteSessionError, RuntimeContext>;
+  /** Wait for it to exit. */
+  readonly wait: Effect.Effect<
+    { readonly exitCode: number },
+    process.GetSessionCommandError,
+    RuntimeContext
+  >;
+}
+
+/** Files in the sandbox, over Daytona's file API. */
+export interface SandboxFiles {
+  /** A file's bytes. */
+  read(path: string): Effect.Effect<Uint8Array, fileSystem.DownloadFileError, RuntimeContext>;
+  /** A file's text (UTF-8). */
+  readText(path: string): Effect.Effect<string, fileSystem.DownloadFileError, RuntimeContext>;
+  /** Write a file, creating parent directories. */
+  write(
+    path: string,
+    content: string | Uint8Array,
+  ): Effect.Effect<void, fileSystem.UploadFileError, RuntimeContext>;
+  /** A directory's entries. */
+  list(
+    path: string,
+  ): Effect.Effect<readonly fileSystem.FileInfo[], fileSystem.ListFilesError, RuntimeContext>;
+  /** One entry's details. */
+  stat(
+    path: string,
+  ): Effect.Effect<fileSystem.FileInfo, fileSystem.GetFileInfoError, RuntimeContext>;
+  /** Delete a file, or a directory with `recursive`. */
+  remove(
+    path: string,
+    options?: { readonly recursive?: boolean },
+  ): Effect.Effect<void, fileSystem.DeleteFileError, RuntimeContext>;
+  /** Create a directory. */
+  makeDir(
+    path: string,
+    options?: { readonly mode?: string },
+  ): Effect.Effect<void, fileSystem.CreateFolderError, RuntimeContext>;
+}
+
+/** `pty.open` options. Daytona starts the user's shell; it takes no command. */
+export interface PtyOpenOptions {
+  /** Session ID. @default a generated one */
+  readonly id?: string;
+  /** @default 80 */
+  readonly cols?: number;
+  /** @default 24 */
+  readonly rows?: number;
+  /** Working directory. */
+  readonly cwd?: string;
+  /** Environment variables for the shell. */
+  readonly env?: Record<string, string>;
+}
+
+/** Terminals: a scoped connection with `output`, `write` and `resize`. */
+export interface SandboxPty {
+  /** Open a new terminal. The connection closes with the scope; the shell keeps running until it exits or is killed. */
+  open(
+    options?: PtyOpenOptions,
+  ): Effect.Effect<
+    toolboxStreams.PtyConnection,
+    toolboxStreams.PtyError,
+    RuntimeContext | Scope.Scope
+  >;
+  /** Connect to a terminal that already runs. */
+  connect(
+    sessionId: string,
+  ): Effect.Effect<
+    toolboxStreams.PtyConnection,
+    toolboxStreams.PtyError,
+    RuntimeContext | Scope.Scope
+  >;
 }
 
 /**
@@ -209,13 +311,42 @@ export interface DaytonaSandbox extends ScopedModule<SandboxOperations> {
   /** Logs, traces and metrics the sandbox exported. */
   readonly telemetry: ScopedModule<typeof telemetry>;
   /**
-   * Run a shell command and wait for it. Pipes, quotes and `&&` work as in
-   * a shell; a non-zero exit is returned, not failed.
+   * Run a command and wait for it. A string runs in a shell (pipes, quotes
+   * and `&&` work); an array runs as an argument vector. A non-zero exit
+   * is returned, not failed.
    */
   exec(
-    command: string,
+    command: Command,
     options?: ExecOptions,
   ): Effect.Effect<ExecResult, process.ExecuteCommandError, RuntimeContext>;
+  /**
+   * Start a command in its own session and return it while it runs. Closing
+   * the scope detaches; the command keeps running until it exits or is killed.
+   */
+  start(
+    command: Command,
+    options?: Omit<ExecOptions, "timeout">,
+  ): Effect.Effect<
+    SandboxProcess,
+    process.CreateSessionError | process.SessionExecuteCommandError,
+    RuntimeContext | Scope.Scope
+  >;
+  /** Files: read, write, list, stat, remove, make directories. */
+  readonly files: SandboxFiles;
+  /** Terminals. */
+  readonly pty: SandboxPty;
+  /**
+   * Send an HTTP request to a port in the sandbox through its preview URL,
+   * with the sandbox's preview token. `request`'s URL is a path on the port.
+   */
+  fetch(
+    port: number,
+    request: HttpClientRequest.HttpClientRequest,
+  ): Effect.Effect<
+    HttpClientResponse.HttpClientResponse,
+    sandboxes.GetPortPreviewUrlError | HttpClientError.HttpClientError,
+    RuntimeContext
+  >;
 }
 
 /**
@@ -247,17 +378,45 @@ type Runner = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ) => Effect.Effect<A, E, Exclude<R, Credentials | HttpClient.HttpClient> | RuntimeContext>;
 
+/** Everything on a handle but its identity. */
+export type SandboxMethods = Omit<DaytonaSandbox, "sandboxId" | "name" | "toolboxProxyUrl">;
+
+/** POSIX single-quote one argument. */
+const quote = (arg: string) =>
+  /^[\w@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`;
+
+/** A shell line for a command: a string as is, an argument vector quoted. */
+const shellLine = (command: Command) =>
+  typeof command === "string" ? command : command.map(quote).join(" ");
+
+/** Run a shell line without quoting problems: pass it base64-encoded. */
+const viaShell = (line: string) =>
+  Effect.sync(() => `sh -c "echo '${Buffer.from(line).toString("base64")}' | base64 -d | sh"`);
+
+/** A fresh session ID. */
+const newSessionId = (prefix: string) => Effect.sync(() => `${prefix}-${crypto.randomUUID()}`);
+
 /**
- * Build the handle for one sandbox. `run` supplies the binding's
- * credentials; toolbox calls are additionally scoped to the sandbox.
+ * Build the methods for one sandbox. `identity` resolves the sandbox (at
+ * runtime for a sandbox declared at deploy); `run` supplies the binding's
+ * credentials, and toolbox calls are additionally scoped to the sandbox.
  */
-export const makeSandboxClient = (
-  sandbox: SandboxIdentity,
-  organizationId: string,
+export const makeSandboxMethods = (
+  identity: Effect.Effect<SandboxIdentity, never, RuntimeContext>,
+  organizationId: Effect.Effect<string, never, RuntimeContext>,
   run: Runner,
-): DaytonaSandbox => {
-  const fixed = { sandboxIdOrName: sandbox.id, sandboxId: sandbox.id, organizationId };
-  const toolbox: Runner = (effect) => run(inSandbox(sandbox.id, sandbox.toolboxProxyUrl)(effect));
+): SandboxMethods => {
+  const fixed = Effect.all({ id: identity, organizationId }).pipe(
+    Effect.map(({ id, organizationId }) => ({
+      sandboxIdOrName: id.id,
+      sandboxId: id.id,
+      organizationId,
+    })),
+  );
+  const toolbox: Runner = (effect) =>
+    Effect.flatMap(identity, (sandbox) =>
+      run(inSandbox(sandbox.id, sandbox.toolboxProxyUrl)(effect)),
+    );
   // Sockets dial with the runtime's global WebSocket (Workers, Node 22+, Bun, Deno).
   const socket = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     toolbox(Effect.provide(effect, Socket.layerWebSocketConstructorGlobal));
@@ -270,23 +429,99 @@ export const makeSandboxClient = (
         ),
       ),
     );
-  const exec = Effect.fn(function* (command: string, options?: ExecOptions) {
-    const encoded = yield* Effect.sync(() => Buffer.from(command).toString("base64"));
+
+  const exec = Effect.fn(function* (command: Command, options?: ExecOptions) {
     const response = yield* toolbox(
       process.executeCommand({
-        command: `sh -c "echo '${encoded}' | base64 -d | sh"`,
+        command: yield* viaShell(shellLine(command)),
         cwd: options?.cwd,
         envs: options?.env,
         timeout: options?.timeout,
       }),
     );
-    return { exitCode: response.exitCode ?? 0, result: response.result };
+    return { exitCode: response.exitCode ?? 0, result: response.result } satisfies ExecResult;
   });
+
+  const start = Effect.fn(function* (command: Command, options?: Omit<ExecOptions, "timeout">) {
+    const sessionId = yield* newSessionId("alchemy");
+    const env = Object.entries(options?.env ?? {})
+      .map(([key, value]) => `export ${key}=${quote(value)}`)
+      .join("; ");
+    const line = [env, options?.cwd ? `cd ${quote(options.cwd)}` : "", `exec ${shellLine(command)}`]
+      .filter(Boolean)
+      .join("; ");
+    yield* toolbox(process.createSession({ sessionId }));
+    const begun = yield* toolbox(
+      process.sessionExecuteCommand({ sessionId, command: yield* viaShell(line), runAsync: true }),
+    );
+    const commandId = begun.cmdId;
+    return {
+      sessionId,
+      commandId,
+      output: stream(toolboxStreams.followSessionCommandLogs({ sessionId, commandId })),
+      write: (data: string) =>
+        toolbox(process.sendInput({ sessionId, commandId, data })).pipe(Effect.asVoid),
+      kill: toolbox(process.deleteSession({ sessionId })).pipe(Effect.asVoid),
+      wait: toolbox(process.getSessionCommand({ sessionId, commandId })).pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced("1 second"),
+          until: (c) => c.exitCode !== undefined,
+        }),
+        Effect.map((c) => ({ exitCode: c.exitCode ?? 0 })),
+      ),
+    } satisfies SandboxProcess;
+  });
+
+  const files: SandboxFiles = {
+    read: (path) => toolbox(fileSystem.downloadFile({ path })),
+    readText: (path) =>
+      toolbox(fileSystem.downloadFile({ path })).pipe(
+        Effect.map((bytes) => new TextDecoder().decode(bytes)),
+      ),
+    write: (path, content) =>
+      toolbox(fileSystem.uploadFile({ path, body: content })).pipe(Effect.asVoid),
+    list: (path) => toolbox(fileSystem.listFiles({ path })),
+    stat: (path) => toolbox(fileSystem.getFileInfo({ path })),
+    remove: (path, options) =>
+      toolbox(fileSystem.deleteFile({ path, recursive: options?.recursive })).pipe(Effect.asVoid),
+    makeDir: (path, options) =>
+      toolbox(fileSystem.createFolder({ path, mode: options?.mode ?? "755" })).pipe(Effect.asVoid),
+  };
+
+  const pty: SandboxPty = {
+    open: (options) =>
+      Effect.flatMap(options?.id ? Effect.succeed(options.id) : newSessionId("alchemy-pty"), (id) =>
+        socket(
+          toolboxStreams.createPty({
+            id,
+            cols: options?.cols,
+            rows: options?.rows,
+            cwd: options?.cwd,
+            envs: options?.env,
+          }),
+        ),
+      ),
+    connect: (sessionId) => socket(toolboxStreams.connectPty({ sessionId })),
+  };
+
+  const fetch = (port: number, request: HttpClientRequest.HttpClientRequest) =>
+    Effect.flatMap(fixed, ({ sandboxIdOrName }) =>
+      run(
+        Effect.gen(function* () {
+          const preview = yield* sandboxes.getPortPreviewUrl({ sandboxIdOrName, port });
+          const client = yield* HttpClient.HttpClient;
+          return yield* client.execute(
+            request.pipe(
+              HttpClientRequest.prependUrl(preview.url.replace(/\/$/, "")),
+              HttpClientRequest.setHeader("X-Daytona-Preview-Token", preview.token),
+            ),
+          );
+        }),
+      ),
+    );
+
   return {
     ...scopeModule(pick(sandboxes, SANDBOX_OPERATIONS), fixed, run),
-    sandboxId: sandbox.id,
-    name: sandbox.name,
-    toolboxProxyUrl: sandbox.toolboxProxyUrl,
     process: {
       ...scopeModule(process, {}, toolbox),
       createPty: (request) => socket(toolboxStreams.createPty(request)),
@@ -314,5 +549,33 @@ export const makeSandboxClient = (
     server: scopeModule(server, {}, toolbox),
     telemetry: scopeModule(telemetry, fixed, run),
     exec,
+    start,
+    files,
+    pty,
+    fetch,
   };
 };
+
+/** The handle for a sandbox whose identity is known (one just created or listed). */
+export const makeSandboxClient = (
+  sandbox: SandboxIdentity,
+  organizationId: Effect.Effect<string, never, RuntimeContext>,
+  run: Runner,
+): DaytonaSandbox => ({
+  ...makeSandboxMethods(Effect.succeed(sandbox), organizationId, run),
+  sandboxId: sandbox.id,
+  name: sandbox.name,
+  toolboxProxyUrl: sandbox.toolboxProxyUrl,
+});
+
+/** The handle for a sandbox declared at deploy, whose identity resolves at runtime. */
+export const makeConnectedSandbox = (
+  identity: Effect.Effect<SandboxIdentity, never, RuntimeContext>,
+  organizationId: Effect.Effect<string, never, RuntimeContext>,
+  run: Runner,
+): ConnectedSandbox => ({
+  ...makeSandboxMethods(identity, organizationId, run),
+  sandboxId: Effect.map(identity, (s) => s.id),
+  name: Effect.map(identity, (s) => s.name),
+  toolboxProxyUrl: Effect.map(identity, (s) => s.toolboxProxyUrl),
+});

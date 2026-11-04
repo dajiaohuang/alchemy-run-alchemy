@@ -6,6 +6,7 @@ import { CreateSandbox, type CreateSandboxClient } from "./CreateSandbox.ts";
 import { makeAccess } from "./DaytonaBindings.ts";
 import { definedLabels } from "./internal/Labels.ts";
 import { waitForState } from "./internal/Wait.ts";
+import { volumeIdOf } from "./MountVolume.ts";
 import { RuntimeObjects } from "./RuntimeObjects.ts";
 import { makeSandboxClient } from "./SandboxClient.ts";
 import type { Snapshot } from "./Snapshot.ts";
@@ -30,9 +31,8 @@ export const CreateSandboxHttp = Layer.effect(
       const ownerLabels = yield* objects.labels;
       const baseName = base ? yield* base.name : undefined;
 
-      const handle = Effect.fn(function* (s: sandboxes.Sandbox2) {
-        return makeSandboxClient(s, yield* organizationId, authorize);
-      });
+      const handle = (s: sandboxes.Sandbox2) =>
+        Effect.succeed(makeSandboxClient(s, organizationId, authorize));
 
       const client: CreateSandboxClient = {
         create: (input) =>
@@ -43,7 +43,22 @@ export const CreateSandboxHttp = Layer.effect(
                 ...(yield* ownerLabels),
               };
               const snapshot = input?.snapshot ?? (baseName ? yield* baseName : undefined);
-              const created = yield* sandboxes.createSandbox({ ...input, snapshot, labels });
+              const { mounts, ...request } = input ?? {};
+              const volumes = mounts
+                ? yield* Effect.forEach(mounts, (m) =>
+                    Effect.map(volumeIdOf(m.volume), (volumeId) => ({
+                      volumeId,
+                      mountPath: m.path,
+                      subpath: m.subpath,
+                    })),
+                  )
+                : undefined;
+              const created = yield* sandboxes.createSandbox({
+                ...request,
+                snapshot,
+                labels,
+                volumes,
+              });
               return yield* waitForState({
                 kind: "sandbox",
                 id: created.id,

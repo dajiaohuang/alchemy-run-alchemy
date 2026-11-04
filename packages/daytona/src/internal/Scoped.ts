@@ -59,43 +59,41 @@ const inputMembers = (op: object): ReadonlySet<string> | undefined => {
 /**
  * Wrap every operation of `module`: merge `fixed` into each input and run
  * the call through `run` (which supplies credentials and sandbox scope).
+ * `fixed` may be an Effect when the fields are only known at runtime (a
+ * sandbox declared at deploy).
  */
 export const scopeModule = <M extends object, F extends PropertyKey = SandboxFixed>(
   module: M,
-  fixed: Record<string, unknown>,
+  fixed: Record<string, unknown> | Effect.Effect<Record<string, unknown>, never, RuntimeContext>,
   run: <A, E>(
     effect: Effect.Effect<A, E, Credentials | HttpClient.HttpClient>,
   ) => Effect.Effect<A, E, RuntimeContext>,
-): ScopedModule<M, F> =>
-  Object.fromEntries(
+): ScopedModule<M, F> => {
+  const fields = Effect.isEffect(fixed) ? fixed : Effect.succeed(fixed);
+  return Object.fromEntries(
     Object.entries(module)
       .filter(([name, value]) => isOperation(name, value))
       .map(([name, op]) => {
         // Only the fixed fields the operation takes: the protocol sends any
         // member it doesn't model as a body, which a GET can't carry.
         let members: ReadonlySet<string> | undefined;
-        const fixedFor = () => {
-          members ??= inputMembers(op) ?? new Set(Object.keys(fixed));
-          return Object.fromEntries(Object.entries(fixed).filter(([key]) => members!.has(key)));
+        const fixedFor = (all: Record<string, unknown>) => {
+          members ??= inputMembers(op) ?? new Set(Object.keys(all));
+          return Object.fromEntries(Object.entries(all).filter(([key]) => members!.has(key)));
         };
+        const call = op as (
+          input: unknown,
+        ) => Effect.Effect<unknown, unknown, Credentials | HttpClient.HttpClient>;
         return [
           name,
           (input?: Record<string, unknown>) =>
-            run(
-              (
-                op as (
-                  input: unknown,
-                ) => Effect.Effect<unknown, unknown, Credentials | HttpClient.HttpClient>
-              )({
-                ...input,
-                ...fixedFor(),
-              }),
-            ),
+            Effect.flatMap(fields, (all) => run(call({ ...input, ...fixedFor(all) }))),
         ];
       }),
     // Object.fromEntries can't produce a mapped type; the entries are exactly
     // the module's operations, each wrapped with the signature ScopedModule gives it.
   ) as unknown as ScopedModule<M, F>;
+};
 
 /** The named operations of a module, as a module-shaped object. */
 export const pick = <M extends object, K extends keyof M>(

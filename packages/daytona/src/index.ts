@@ -13,6 +13,7 @@ export * from "./CreateVolumeHttp.ts";
 export * from "./Credentials.ts";
 export * from "./DaytonaBindings.ts";
 export * from "./IdentityProvider.ts";
+export * from "./MountVolume.ts";
 export * from "./Organization.ts";
 export * from "./OrganizationInvitation.ts";
 export * from "./OrganizationMember.ts";
@@ -29,9 +30,18 @@ export * from "./Runner.ts";
 export * from "./RuntimeObjects.ts";
 export * from "./Sandbox.ts";
 export * from "./Secret.ts";
-export * from "./Service.ts";
 export * from "./Snapshot.ts";
 export * from "./Volume.ts";
 export * from "./WarmPool.ts";
 export * from "./Webhooks.ts";
-export type { ConnectedSandbox, DaytonaSandbox, ExecOptions, ExecResult } from "./SandboxClient.ts";
+export type {
+  Command,
+  ConnectedSandbox,
+  DaytonaSandbox,
+  ExecOptions,
+  ExecResult,
+  PtyOpenOptions,
+  SandboxFiles,
+  SandboxProcess,
+  SandboxPty,
+} from "./SandboxClient.ts";

@@ -1,8 +1,16 @@
 import * as sandboxes from "@distilled.cloud/daytona/sandbox";
 import { Unowned } from "alchemy/AdoptPolicy";
+import type * as Bundle from "alchemy/Bundle/Bundle";
 import { deepEqual, isResolved } from "alchemy/Diff";
+import { Platform, type Main, type PlatformProps } from "alchemy/Platform";
 import * as Provider from "alchemy/Provider";
-import { Resource } from "alchemy/Resource";
+import type { Resource, ResourceBinding } from "alchemy/Resource";
+import {
+  createHostRuntimeContext,
+  type HostRuntimeContext,
+  type ServerHost,
+} from "alchemy/Runtime/Process";
+import { Stack } from "alchemy/Stack";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
@@ -14,6 +22,13 @@ import {
   userLabels,
 } from "./internal/Labels.ts";
 import { resolveName } from "./internal/Names.ts";
+import {
+  bundleProgram,
+  DEFAULT_PORT,
+  deployProgram,
+  isProgramRunning,
+  type ProgramState,
+} from "./internal/Program.ts";
 import { resolved, type Ref } from "./internal/Ref.ts";
 import { toMinutes, waitForState, waitUntilGone } from "./internal/Wait.ts";
 import type { Providers } from "./Providers.ts";
@@ -25,13 +40,23 @@ export type SandboxVolumeRef = { readonly volumeId: string };
 /** A secret, by name. Accepts a `Daytona.Secret` or `{ name }`. */
 export type SandboxSecretRef = { readonly name: string };
 
-export interface SandboxVolumeMount {
-  /** The volume to mount. */
+/** A volume mounted into a sandbox. */
+export interface SandboxMount {
+  /** The volume to mount: a `Daytona.Volume`. */
   volume: Ref<SandboxVolumeRef>;
   /** Absolute path in the sandbox. */
-  mountPath: string;
+  path: string;
   /** Mount only this directory of the volume. */
   subpath?: string;
+}
+
+/**
+ * What bindings attach to a sandbox that runs a program: environment
+ * variables for the process, and volumes to mount.
+ */
+export interface SandboxBinding {
+  env?: Record<string, any>;
+  mounts?: Array<{ volumeId: string; path: string; subpath?: string }>;
 }
 
 /** Another sandbox, by id. Accepts a `Daytona.Sandbox` or `{ sandboxId }`. */
@@ -40,7 +65,7 @@ export type SandboxLinkRef = { readonly sandboxId: string };
 /** Whether the sandbox should be running, stopped (disk kept) or archived (moved to object storage). */
 export type SandboxRunState = "started" | "stopped" | "archived";
 
-export interface SandboxProps {
+export interface SandboxProps extends PlatformProps {
   /**
    * Sandbox name, unique in the organization. If omitted, a unique name is
    * generated from the stack, stage and logical ID. Changing it replaces
@@ -56,8 +81,12 @@ export interface SandboxProps {
   snapshot?: Ref<SandboxSnapshot>;
   /** OS user commands run as. Changing it replaces the sandbox. */
   user?: string;
-  /** Environment variables. Changing them replaces the sandbox. */
-  env?: Record<string, string>;
+  /**
+   * Environment variables. On a sandbox without `main` they are the
+   * sandbox's, and changing them replaces it. On a sandbox with `main`
+   * they are the program's, and changing them restarts it.
+   */
+  env?: Record<string, any>;
   /**
    * Secrets exposed as environment variables, keyed by variable name. The
    * sandbox sees each secret's placeholder; Daytona swaps in the value only
@@ -85,8 +114,11 @@ export interface SandboxProps {
   spot?: boolean;
   /** Expose `/dev/kvm` (VM sandboxes). Changing it replaces the sandbox. */
   kvm?: boolean;
-  /** Volumes to mount. Changing them replaces the sandbox. */
-  volumes?: SandboxVolumeMount[];
+  /**
+   * Volumes to mount. A program's `Daytona.MountVolume` bindings add to
+   * them. Changing them replaces the sandbox.
+   */
+  mounts?: SandboxMount[];
   /** Stop after this long without activity. `0` never stops. Updated in place. @default "15 minutes" */
   autoStopInterval?: Duration.Input;
   /**
@@ -126,6 +158,27 @@ export interface SandboxProps {
   otelEndpointOverride?: string;
   /** Whether the sandbox should be running. Updated in place. @default "started" */
   state?: SandboxRunState;
+  /**
+   * Module entrypoint of a program to run in the sandbox, typically
+   * `import.meta.url` in the class form. Alchemy bundles it, uploads it
+   * into the sandbox and runs it with Node; a code change uploads it again
+   * and restarts the process, without replacing the sandbox. The snapshot
+   * needs Node.js 20 or later (Daytona's default snapshot has Node 24).
+   */
+  main?: string;
+  /**
+   * Port the program listens on. Written to `PORT`; the sandbox's preview
+   * URL of this port is `url`.
+   * @default 3000
+   */
+  port?: number;
+  /**
+   * Named export to load from `main`.
+   * @default "default"
+   */
+  handler?: string;
+  /** Bundler configuration for `main`. */
+  build?: Bundle.BundleConfig;
 }
 
 export interface SandboxAttributes {
@@ -161,21 +214,44 @@ export interface SandboxAttributes {
   public: boolean;
   /** Base URL of the sandbox's toolbox proxy. */
   toolboxProxyUrl: string;
+  /**
+   * Preview URL of the program's port, for a sandbox with `main`. It is
+   * open when the sandbox is `public`; otherwise send the preview token
+   * (`getPortPreviewUrl`) in `X-Daytona-Preview-Token`.
+   */
+  url: string | undefined;
+  /** The program the sandbox runs, for a sandbox with `main`. */
+  program: ProgramState | undefined;
 }
 
 export type Sandbox = Resource<
   "Daytona.Sandbox",
   SandboxProps,
   SandboxAttributes,
-  never,
+  SandboxBinding,
   Providers
 >;
+
+export type SandboxServices = ServerHost;
+
+/** A program's shape: a long-running server returning `{ fetch }`, or `host.run` loops. */
+export type SandboxShape = Main<SandboxServices>;
+
+export type SandboxRuntimeContext = HostRuntimeContext;
 
 /**
  * A long-lived Daytona sandbox: an isolated machine with its own
  * filesystem, processes and network, for a dev box, a preview environment
  * or a persistent agent workspace. Its disk survives stops; Daytona stops
  * it when idle and archives it later, and deploy starts it again.
+ *
+ * The class form runs an Effect program in the sandbox: give it `main`
+ * and an implementation, and Alchemy bundles the program, uploads it and
+ * runs it with Node, served on the sandbox's preview URL (`url`). A code
+ * change uploads the new bundle and restarts the process; the sandbox and
+ * its URL stay the same. The process lives as long as the sandbox runs,
+ * so a sandbox with `main` never auto-stops unless `autoStopInterval` says
+ * so; if it stopped anyway, the next deploy starts it and the program.
  *
  * For sandboxes created per request or per task, use
  * {@link CreateSandbox} at runtime instead; for one declared here, use
@@ -205,10 +281,33 @@ export type Sandbox = Resource<
  * ```typescript
  * export const Builder = Daytona.Sandbox("Builder", {
  *   snapshot: Base,
- *   volumes: [{ volume: Cache, mountPath: "/cache" }],
+ *   mounts: [{ volume: Cache, path: "/cache" }],
  *   secrets: { NPM_TOKEN: NpmToken },
  * });
  * ```
+ *
+ * ### Running a Program
+ * **Example:** An HTTP server with a mounted volume
+ * ```typescript
+ * export default class Agent extends Daytona.Sandbox<Agent>()(
+ *   "Agent",
+ *   { snapshot: Base, main: import.meta.url, public: true },
+ *   Effect.gen(function* () {
+ *     const data = yield* Daytona.MountVolume(Data, { path: "/data" });
+ *     const fs = yield* FileSystem.FileSystem;
+ *     return {
+ *       fetch: Effect.gen(function* () {
+ *         return yield* HttpServerResponse.json(yield* fs.readDirectory(data.path));
+ *       }),
+ *     };
+ *   }).pipe(Effect.provide(Daytona.MountVolumeLive)),
+ * ) {}
+ * ```
+ *
+ * The program reaches the internet as its sandbox does. Below Daytona's
+ * Tier 3, sandboxes reach only an allowlist of essential services
+ * (package registries, GitHub, AI APIs, Daytona's API), so bindings that
+ * manage sandboxes work but toolbox calls are refused.
  *
  * ### GPUs
  * A GPU sandbox boots from a GPU snapshot, such as Daytona's `daytona-gpu`
@@ -244,7 +343,10 @@ export type Sandbox = Resource<
  * @resource
  * @product Sandbox
  */
-export const Sandbox = Resource<Sandbox>("Daytona.Sandbox");
+export const Sandbox: Platform<Sandbox, SandboxServices, SandboxShape, SandboxRuntimeContext> =
+  Platform("Daytona.Sandbox", {
+    createRuntimeContext: createHostRuntimeContext("Daytona.Sandbox"),
+  });
 
 const resolveRef = <T>(ref: Ref<T>) => Effect.succeed(resolved(ref));
 
@@ -277,7 +379,54 @@ export const toSandboxAttributes = (s: SandboxInfo): SandboxAttributes => ({
   labels: userLabels(s.labels),
   public: s.public,
   toolboxProxyUrl: s.toolboxProxyUrl,
+  url: undefined,
+  program: undefined,
 });
+
+type BoundMount = NonNullable<SandboxBinding["mounts"]>[number];
+
+/** The bindings still attached (a removed binding arrives as a `delete`). */
+const activeBindings = (bindings: ReadonlyArray<ResourceBinding<SandboxBinding>>) =>
+  bindings.filter(
+    (binding: ResourceBinding<SandboxBinding> & { action?: string }) => binding.action !== "delete",
+  );
+
+/**
+ * Every volume the sandbox mounts: its `mounts` and what bindings added, in
+ * a stable order. At plan, a volume created in the same deploy has no id
+ * yet; it compares as unresolved, which differs from any mounted volume.
+ */
+const allMounts = Effect.fn(function* (
+  props: SandboxProps | undefined,
+  bindings: ReadonlyArray<ResourceBinding<SandboxBinding>> | ReadonlyArray<unknown>,
+) {
+  const declared = yield* Effect.forEach(props?.mounts ?? [], (m) =>
+    Effect.map(resolveRef(m.volume), (v): BoundMount => ({
+      volumeId: typeof v?.volumeId === "string" ? v.volumeId : "(unresolved)",
+      path: m.path,
+      subpath: m.subpath,
+    })),
+  );
+  const bound = activeBindings(bindings as ReadonlyArray<ResourceBinding<SandboxBinding>>)
+    .flatMap((b) => b.data?.mounts ?? [])
+    .map((m) => ({ ...m, volumeId: typeof m.volumeId === "string" ? m.volumeId : "(unresolved)" }));
+  const seen = new Set<string>();
+  return [...declared, ...bound]
+    .filter((m) => {
+      const key = `${m.volumeId}:${m.path}:${m.subpath ?? ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.path.localeCompare(b.path));
+});
+
+/** The program's environment: bindings' env, alchemy's, the port, then the props'. */
+const bindingEnv = (bindings: ReadonlyArray<ResourceBinding<SandboxBinding>>) =>
+  activeBindings(bindings).reduce<Record<string, any>>(
+    (acc, binding) => ({ ...acc, ...binding.data?.env }),
+    {},
+  );
 
 const isGone = (s: SandboxInfo) => s.state === "destroyed" || s.state === "destroying";
 
@@ -367,17 +516,13 @@ const resolveCreate = Effect.fn(function* (
   name: string,
   news: SandboxProps,
   labels: Record<string, string>,
+  mounts: ReadonlyArray<BoundMount>,
 ) {
   const snapshot = news.snapshot ? (yield* resolveRef(news.snapshot)).name : undefined;
-  const volumes = news.volumes
-    ? yield* Effect.forEach(news.volumes, (m) =>
-        Effect.map(resolveRef(m.volume), (v) => ({
-          volumeId: v.volumeId,
-          mountPath: m.mountPath,
-          subpath: m.subpath,
-        })),
-      )
-    : undefined;
+  const volumes =
+    mounts.length > 0
+      ? mounts.map((m) => ({ volumeId: m.volumeId, mountPath: m.path, subpath: m.subpath }))
+      : undefined;
   const secrets = news.secrets
     ? yield* Effect.forEach(Object.entries(news.secrets), ([env, ref]) =>
         Effect.map(resolveRef(ref), (s) => ({ [env]: s.name })),
@@ -394,7 +539,8 @@ const resolveCreate = Effect.fn(function* (
     ttlMinutes: toMinutes(news.ttl),
     queueTimeout: toMinutes(news.queueTimeout),
     user: news.user,
-    env: news.env,
+    // A program's env is the process's, written at deploy, not the sandbox's.
+    env: news.main === undefined ? news.env : undefined,
     labels,
     public: news.public,
     networkBlockAll: news.networkBlockAll,
@@ -406,7 +552,8 @@ const resolveCreate = Effect.fn(function* (
     kvm: news.kvm,
     volumes,
     secrets,
-    autoStopInterval: toMinutes(news.autoStopInterval),
+    // A program serves for as long as the sandbox runs: don't stop it when idle.
+    autoStopInterval: toMinutes(news.autoStopInterval ?? (news.main !== undefined ? 0 : undefined)),
     autoPauseInterval: toMinutes(news.autoPauseInterval),
     autoArchiveInterval: toMinutes(news.autoArchiveInterval),
     autoDeleteInterval: toMinutes(news.autoDeleteInterval),
@@ -416,153 +563,215 @@ const resolveCreate = Effect.fn(function* (
 export const SandboxProvider = () =>
   Provider.effect(
     Sandbox,
-    Effect.succeed({
-      stables: ["sandboxId", "organizationId", "toolboxProxyUrl"],
-      list: Effect.fn(function* () {
-        const all = yield* sandboxes.listSandboxes.items({}).pipe(Stream.runCollect);
-        return Array.from(all)
-          .filter(
-            (s) =>
-              !isGone(s) &&
-              Object.keys(s.labels ?? {}).some((k) => k.startsWith(ALCHEMY_LABEL_PREFIX)),
-          )
-          .map(toSandboxAttributes);
-      }),
-      diff: Effect.fn(function* ({ id, olds, news, output }) {
-        if (!isResolved(news) || output === undefined) return undefined;
-        const name = yield* resolveName(
-          id,
-          news.name,
-          news.name === undefined ? output.name : undefined,
-        );
-        const snapshot = news.snapshot ? (yield* resolveRef(news.snapshot)).name : undefined;
-        const replace =
-          name !== output.name ||
-          (snapshot !== undefined && snapshot !== output.snapshot) ||
-          news.user !== olds?.user ||
-          !deepEqual(news.env ?? {}, olds?.env ?? {}) ||
-          news.outboundProxyUrl !== olds?.outboundProxyUrl ||
-          (news.target !== undefined && news.target !== output.target) ||
-          news.spot !== olds?.spot ||
-          news.kvm !== olds?.kvm ||
-          news.otelEndpointOverride !== olds?.otelEndpointOverride ||
-          (news.linkedSandbox !== undefined &&
-            (yield* resolveRef(news.linkedSandbox)).sandboxId !== output.linkedSandboxId) ||
-          !deepEqual(
-            (news.volumes ?? []).map((v) => [v.mountPath, v.subpath]),
-            (olds?.volumes ?? []).map((v) => [v.mountPath, v.subpath]),
-          );
-        if (replace) return { action: "replace", deleteFirst: name === output.name } as const;
-      }),
-      read: Effect.fn(function* ({ id, olds, output }) {
-        const found = yield* getSandbox(
-          output?.sandboxId ?? (yield* resolveName(id, olds?.name, output?.name)),
-        );
-        if (found === undefined) return undefined;
-        const attrs = toSandboxAttributes(found);
-        return (yield* hasAlchemyLabels(id, found.labels)) ? attrs : Unowned(attrs);
-      }),
-      reconcile: Effect.fn(function* ({ id, news, olds, output, session }) {
-        const name = yield* resolveName(id, news.name, output?.name);
-        const labels = { ...(news.labels ?? {}), ...(yield* createInternalLabels(id)) };
-        const request = yield* resolveCreate(name, news, labels);
-
-        // Observe
-        let current = yield* getSandbox(output?.sandboxId ?? name);
-        const created = current === undefined;
-
-        // Ensure
-        if (current === undefined) {
-          yield* session.note(`Creating sandbox ${name}...`);
-          current = yield* sandboxes
-            .createSandbox(request)
-            .pipe(
-              Effect.catchTag("SandboxAlreadyExists", () =>
-                sandboxes.getSandbox({ sandboxIdOrName: name }),
-              ),
+    Effect.gen(function* () {
+      const stack = yield* Stack;
+      // The bundled program's bootstrap reads these to rebuild the Stack at runtime.
+      const alchemyEnv = {
+        ALCHEMY_STACK_NAME: stack.name,
+        ALCHEMY_STAGE: stack.stage,
+        ALCHEMY_PHASE: "runtime",
+        HOST: "0.0.0.0",
+      };
+      return {
+        stables: ["sandboxId", "organizationId", "toolboxProxyUrl"],
+        list: Effect.fn(function* () {
+          const all = yield* sandboxes.listSandboxes.items({}).pipe(Stream.runCollect);
+          return Array.from(all)
+            .filter(
+              (s) =>
+                !isGone(s) &&
+                Object.keys(s.labels ?? {}).some((k) => k.startsWith(ALCHEMY_LABEL_PREFIX)),
+            )
+            .map(toSandboxAttributes);
+        }),
+        diff: Effect.fn(function* ({ id, olds, news, output, oldBindings, newBindings }) {
+          if (output === undefined) return undefined;
+          // A program's props are partly unresolved at plan (its bindings' env
+          // holds Outputs), so each field is compared once it is known.
+          const props = news as SandboxProps;
+          const known = isResolved;
+          const name = known(props.name)
+            ? yield* resolveName(id, props.name, props.name === undefined ? output.name : undefined)
+            : output.name;
+          const snapshot =
+            props.snapshot && known(props.snapshot)
+              ? (yield* resolveRef(props.snapshot)).name
+              : undefined;
+          const linked =
+            props.linkedSandbox && known(props.linkedSandbox)
+              ? (yield* resolveRef(props.linkedSandbox)).sandboxId
+              : undefined;
+          const replace =
+            name !== output.name ||
+            (snapshot !== undefined && snapshot !== output.snapshot) ||
+            (known(props.user) && props.user !== olds?.user) ||
+            // A sandbox env is set at create; a program's restarts the program.
+            (props.main === undefined) !== (olds?.main === undefined) ||
+            (props.main === undefined &&
+              known(props.env) &&
+              !deepEqual(props.env ?? {}, olds?.env ?? {})) ||
+            (known(props.outboundProxyUrl) && props.outboundProxyUrl !== olds?.outboundProxyUrl) ||
+            (known(props.target) && props.target !== undefined && props.target !== output.target) ||
+            props.spot !== olds?.spot ||
+            props.kvm !== olds?.kvm ||
+            (known(props.otelEndpointOverride) &&
+              props.otelEndpointOverride !== olds?.otelEndpointOverride) ||
+            (linked !== undefined && linked !== output.linkedSandboxId) ||
+            !deepEqual(
+              yield* allMounts(props, Array.isArray(newBindings) ? newBindings : []),
+              yield* allMounts(olds, oldBindings ?? []),
             );
-          current = yield* waitForSandbox(current.id, "started");
-        }
-        const sandboxId = current.id;
-
-        // Sync labels against the observed set.
-        if (!deepEqual(definedLabels(current.labels), labels)) {
-          yield* sandboxes.replaceLabels({ sandboxIdOrName: sandboxId, labels });
-        }
-        // Sync network.
-        const network = {
-          networkBlockAll: news.networkBlockAll ?? false,
-          networkAllowList: fromCsv(request.networkAllowList),
-          domainAllowList: fromCsv(request.domainAllowList),
-        };
-        if (
-          network.networkBlockAll !== current.networkBlockAll ||
-          !deepEqual(network.networkAllowList, fromCsv(current.networkAllowList)) ||
-          !deepEqual(network.domainAllowList, fromCsv(current.domainAllowList))
-        ) {
-          yield* sandboxes.updateNetworkSettings({
-            sandboxIdOrName: sandboxId,
-            networkBlockAll: network.networkBlockAll,
-            networkAllowList: network.networkAllowList.join(","),
-            domainAllowList: network.domainAllowList.join(","),
-          });
-        }
-        // Sync public previews.
-        if ((news.public ?? false) !== current.public) {
-          yield* sandboxes.updatePublicStatus({
-            sandboxIdOrName: sandboxId,
-            isPublic: news.public ?? false,
-          });
-        }
-        // Sync lifecycle intervals that were declared.
-        const intervals = [
-          [request.autoStopInterval, current.autoStopInterval, sandboxes.setAutostopInterval],
-          [request.autoPauseInterval, current.autoPauseInterval, sandboxes.setAutoPauseInterval],
-          [
-            request.autoArchiveInterval,
-            current.autoArchiveInterval,
-            sandboxes.setAutoArchiveInterval,
-          ],
-          [request.autoDeleteInterval, current.autoDeleteInterval, sandboxes.setAutoDeleteInterval],
-        ] as const;
-        for (const [want, have, set] of intervals) {
-          if (want !== undefined && want !== have) {
-            yield* set({ sandboxIdOrName: sandboxId, interval: want });
+          if (replace) return { action: "replace", deleteFirst: name === output.name } as const;
+          // The bundle depends only on `main`, `handler` and `build`, which are plain.
+          if (typeof props.main === "string") {
+            // A code change, or a process that ended (the sandbox restarted),
+            // redeploys the program in place.
+            const { hash } = yield* bundleProgram({ ...props, main: props.main });
+            if (output.program === undefined || hash !== output.program.codeHash) {
+              return { action: "update" } as const;
+            }
+            if (!(yield* isProgramRunning(output.sandboxId, output.program))) {
+              return { action: "update" } as const;
+            }
           }
-        }
-        // Sync the TTL. Daytona reports only when it fires, and setting it
-        // restarts the clock, so it's written when the declared TTL changes
-        // (or on adoption).
-        if (
-          !created &&
-          request.ttlMinutes !== undefined &&
-          (olds === undefined || request.ttlMinutes !== toMinutes(olds.ttl))
-        ) {
-          yield* sandboxes.setTtl({ sandboxIdOrName: sandboxId, ttlMinutes: request.ttlMinutes });
-        } else if (!created && request.ttlMinutes === undefined && olds?.ttl !== undefined) {
-          yield* sandboxes.setTtl({ sandboxIdOrName: sandboxId, ttlMinutes: 0 });
-        }
-        // Sync secrets. Daytona doesn't report a sandbox's mounted secrets,
-        // so the declared set is written whenever it differs from the last
-        // deploy (or on adoption, when there is no last deploy).
-        if (request.secrets !== undefined || olds?.secrets !== undefined) {
-          const previous = olds?.secrets ? yield* resolveCreate(name, olds, labels) : undefined;
-          if (olds === undefined || !deepEqual(previous?.secrets ?? [], request.secrets ?? [])) {
-            yield* sandboxes.updateSandboxSecrets({
+        }),
+        read: Effect.fn(function* ({ id, olds, output }) {
+          const found = yield* getSandbox(
+            output?.sandboxId ?? (yield* resolveName(id, olds?.name, output?.name)),
+          );
+          if (found === undefined) return undefined;
+          // The program isn't visible on the sandbox; keep what the last deploy recorded.
+          const attrs = {
+            ...toSandboxAttributes(found),
+            url: output?.url,
+            program: output?.program,
+          };
+          return (yield* hasAlchemyLabels(id, found.labels)) ? attrs : Unowned(attrs);
+        }),
+        reconcile: Effect.fn(function* ({ id, news, olds, output, bindings, session }) {
+          const name = yield* resolveName(id, news.name, output?.name);
+          const labels = { ...(news.labels ?? {}), ...(yield* createInternalLabels(id)) };
+          const mounts = yield* allMounts(news, bindings);
+          const request = yield* resolveCreate(name, news, labels, mounts);
+
+          // Observe
+          let current = yield* getSandbox(output?.sandboxId ?? name);
+          const created = current === undefined;
+
+          // Ensure
+          if (current === undefined) {
+            yield* session.note(`Creating sandbox ${name}...`);
+            current = yield* sandboxes
+              .createSandbox(request)
+              .pipe(
+                Effect.catchTag("SandboxAlreadyExists", () =>
+                  sandboxes.getSandbox({ sandboxIdOrName: name }),
+                ),
+              );
+            current = yield* waitForSandbox(current.id, "started");
+          }
+          const sandboxId = current.id;
+
+          // Sync labels against the observed set.
+          if (!deepEqual(definedLabels(current.labels), labels)) {
+            yield* sandboxes.replaceLabels({ sandboxIdOrName: sandboxId, labels });
+          }
+          // Sync network.
+          const network = {
+            networkBlockAll: news.networkBlockAll ?? false,
+            networkAllowList: fromCsv(request.networkAllowList),
+            domainAllowList: fromCsv(request.domainAllowList),
+          };
+          if (
+            network.networkBlockAll !== current.networkBlockAll ||
+            !deepEqual(network.networkAllowList, fromCsv(current.networkAllowList)) ||
+            !deepEqual(network.domainAllowList, fromCsv(current.domainAllowList))
+          ) {
+            yield* sandboxes.updateNetworkSettings({
               sandboxIdOrName: sandboxId,
-              secrets: request.secrets ?? [],
+              networkBlockAll: network.networkBlockAll,
+              networkAllowList: network.networkAllowList.join(","),
+              domainAllowList: network.domainAllowList.join(","),
             });
           }
-        }
-        // Sync run state last, from a fresh observation.
-        const final = yield* syncRunState(
-          yield* sandboxes.getSandbox({ sandboxIdOrName: sandboxId }),
-          news.state ?? "started",
-        );
-        return toSandboxAttributes(final);
-      }),
-      delete: Effect.fn(function* ({ output }) {
-        yield* deleteSandboxById(output.sandboxId);
-      }),
+          // Sync public previews.
+          if ((news.public ?? false) !== current.public) {
+            yield* sandboxes.updatePublicStatus({
+              sandboxIdOrName: sandboxId,
+              isPublic: news.public ?? false,
+            });
+          }
+          // Sync lifecycle intervals that were declared.
+          const intervals = [
+            [request.autoStopInterval, current.autoStopInterval, sandboxes.setAutostopInterval],
+            [request.autoPauseInterval, current.autoPauseInterval, sandboxes.setAutoPauseInterval],
+            [
+              request.autoArchiveInterval,
+              current.autoArchiveInterval,
+              sandboxes.setAutoArchiveInterval,
+            ],
+            [
+              request.autoDeleteInterval,
+              current.autoDeleteInterval,
+              sandboxes.setAutoDeleteInterval,
+            ],
+          ] as const;
+          for (const [want, have, set] of intervals) {
+            if (want !== undefined && want !== have) {
+              yield* set({ sandboxIdOrName: sandboxId, interval: want });
+            }
+          }
+          // Sync the TTL. Daytona reports only when it fires, and setting it
+          // restarts the clock, so it's written when the declared TTL changes
+          // (or on adoption).
+          if (
+            !created &&
+            request.ttlMinutes !== undefined &&
+            (olds === undefined || request.ttlMinutes !== toMinutes(olds.ttl))
+          ) {
+            yield* sandboxes.setTtl({ sandboxIdOrName: sandboxId, ttlMinutes: request.ttlMinutes });
+          } else if (!created && request.ttlMinutes === undefined && olds?.ttl !== undefined) {
+            yield* sandboxes.setTtl({ sandboxIdOrName: sandboxId, ttlMinutes: 0 });
+          }
+          // Sync secrets. Daytona doesn't report a sandbox's mounted secrets,
+          // so the declared set is written whenever it differs from the last
+          // deploy (or on adoption, when there is no last deploy).
+          if (request.secrets !== undefined || olds?.secrets !== undefined) {
+            const previous = olds?.secrets
+              ? yield* resolveCreate(name, olds, labels, mounts)
+              : undefined;
+            if (olds === undefined || !deepEqual(previous?.secrets ?? [], request.secrets ?? [])) {
+              yield* sandboxes.updateSandboxSecrets({
+                sandboxIdOrName: sandboxId,
+                secrets: request.secrets ?? [],
+              });
+            }
+          }
+          // Sync run state last, from a fresh observation.
+          const final = yield* syncRunState(
+            yield* sandboxes.getSandbox({ sandboxIdOrName: sandboxId }),
+            news.state ?? "started",
+          );
+          const attrs = toSandboxAttributes(final);
+          // Deploy the program into the running sandbox.
+          if (news.main === undefined || final.state !== "started") return attrs;
+          const port = news.port ?? DEFAULT_PORT;
+          const program = yield* deployProgram({
+            id,
+            sandboxId,
+            toolboxProxyUrl: final.toolboxProxyUrl,
+            source: { ...news, main: news.main },
+            port,
+            env: { ...bindingEnv(bindings), ...alchemyEnv, PORT: String(port), ...news.env },
+            // A replaced sandbox runs nothing yet.
+            previous: output?.sandboxId === sandboxId ? output.program : undefined,
+            note: session.note,
+          });
+          return { ...attrs, url: program.url, program: program.state };
+        }),
+        delete: Effect.fn(function* ({ output }) {
+          yield* deleteSandboxById(output.sandboxId);
+        }),
+      };
     }),
   );
