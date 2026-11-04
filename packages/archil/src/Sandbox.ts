@@ -355,6 +355,31 @@ export type SandboxShape = Main<ServerHost>;
  * yield* fs.writeFileString(`${uploads.path}/${id}.txt`, body);
  * ```
  *
+ * ### Mount Clients From Other Bindings
+ * A binding that installs a filesystem client (an `alchemy/Mount`
+ * capability) into a program's image makes Alchemy build one: the
+ * sandbox's base plus the client's install lines, built with your local
+ * Docker and pushed to `push.repository` for Archil to pull. A different
+ * set of clients replaces the sandbox.
+ *
+ * **Example:** Give a program sandbox a repository for its derived image
+ * ```typescript
+ * export default class Indexer extends Archil.Sandbox<Indexer>()(
+ *   "Indexer",
+ *   {
+ *     main: import.meta.url,
+ *     push: {
+ *       repository: "ghcr.io/acme/indexer",
+ *       credentials: { server: "ghcr.io", username: "acme-bot", password: Alchemy.Secret("GHCR_TOKEN") },
+ *     },
+ *   },
+ *   Effect.gen(function* () {
+ *     const media = yield* Cloud.MountBucket(Media, { path: "/media" }); // installs a FUSE client
+ *     return { fetch: Effect.succeed(HttpServerResponse.text(media.path)) };
+ *   }),
+ * ) {}
+ * ```
+ *
  * ### Packaging
  * Alchemy bundles `main` with rolldown into one Node program. Packages
  * that can't be bundled (native modules, or ones that read their own files
