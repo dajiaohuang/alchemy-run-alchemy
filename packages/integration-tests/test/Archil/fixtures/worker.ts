@@ -161,6 +161,15 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
             yield* sandbox.files.write("/tmp/note.txt", "hi from worker");
             const out = yield* sandbox.exec("cat /tmp/note.txt");
             const text = yield* sandbox.files.readText("/tmp/note.txt");
+            // The rest of `files`: a directory, its listing, a stat, a removal.
+            yield* sandbox.files.makeDir("/tmp/tree/sub");
+            yield* sandbox.files.write("/tmp/tree/a.txt", "abc");
+            const listed = (yield* sandbox.files.list("/tmp/tree"))
+              .map((e) => `${e.type}:${e.path}`)
+              .sort();
+            const stat = yield* sandbox.files.stat("/tmp/tree/a.txt");
+            yield* sandbox.files.remove("/tmp/tree");
+            const removed = yield* sandbox.exec("test -e /tmp/tree");
             // An argument list is quoted; stdin is written, then closed.
             const piped = yield* sandbox.exec(["sh", "-c", "tr a-z A-Z"], { stdin: "piped in" });
             const failed = yield* sandbox.exec("exit 3");
@@ -172,7 +181,7 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
                   Stream.map((chunk) => new TextDecoder().decode(chunk.data)),
                   Stream.mkString,
                 );
-                const exit = yield* process.wait();
+                const exit = yield* process.wait;
                 return { output, exitCode: exit.exitCode };
               }),
             );
@@ -184,7 +193,7 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
                   Stream.map((bytes) => new TextDecoder().decode(bytes)),
                   Stream.mkString,
                 );
-                yield* pty.wait();
+                yield* pty.wait;
                 return output.trim();
               }),
             );
@@ -195,6 +204,9 @@ export default class ArchilWorker extends Cloudflare.Worker<ArchilWorker>()(
             return yield* HttpServerResponse.json({
               stdout: out.stdout,
               text,
+              listed,
+              stat: { type: stat.type, size: stat.size },
+              removed: removed.exitCode,
               piped: piped.stdout,
               failed: failed.exitCode,
               started,

@@ -220,6 +220,9 @@ describe("CreateSandbox", () => {
       const body = yield* json<{
         stdout: string;
         text: string;
+        listed: string[];
+        stat: { type: string; size: number };
+        removed: number;
         piped: string;
         failed: number;
         started: { output: string; exitCode: number };
@@ -229,6 +232,9 @@ describe("CreateSandbox", () => {
       expect(body).toEqual({
         stdout: "hi from worker",
         text: "hi from worker",
+        listed: ["directory:/tmp/tree/sub", "file:/tmp/tree/a.txt"],
+        stat: { type: "file", size: 3 },
+        removed: 1,
         piped: "PIPED IN",
         failed: 3,
         started: { output: "started", exitCode: 0 },

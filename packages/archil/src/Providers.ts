@@ -1,3 +1,4 @@
+import { DockerLive } from "@alchemy.run/docker/Docker";
 import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
 import { ProfileStoreLive } from "alchemy/Auth/Profile";
 import * as Command from "alchemy/Command";
@@ -72,6 +73,8 @@ export const providers = () =>
       ),
     ),
     Layer.provideMerge(Command.providers()),
+    // `BuildPlan.push` builds Dockerfile images locally for Archil to pull.
+    Layer.provideMerge(DockerLive),
     Layer.provideMerge(Credentials.fromAuthProvider()),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(ArchilAuth),

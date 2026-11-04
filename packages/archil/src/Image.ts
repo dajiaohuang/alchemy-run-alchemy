@@ -21,9 +21,9 @@ export interface ImageProps {
   image?: string;
   /**
    * A Dockerfile path (relative to the cwd) or `Dockerfile.inline` content.
-   * Archil has no builder of its own, so a Dockerfile image needs a
-   * registry to push to; until Alchemy can push a build plan, deploying one
-   * fails with {@link ImageRequiresBuild}.
+   * Archil has no builder of its own: Alchemy builds it with your local
+   * Docker and pushes it to `push.repository`, and Archil pulls it from
+   * there.
    */
   dockerfile?: string | InlineDockerfile;
   /** Build context for a `dockerfile` path. */
@@ -35,6 +35,20 @@ export interface ImageProps {
    * image only and doesn't store them.
    */
   registry?: ImageRegistry;
+  /**
+   * Where a Dockerfile image is pushed for Archil to pull: a repository
+   * (no tag; the build's hash is the tag) and credentials that can push to
+   * it and pull from it. Required for `dockerfile` images.
+   */
+  push?: ImagePush;
+}
+
+/** A registry repository Alchemy pushes built images to, for Archil to pull. */
+export interface ImagePush {
+  /** Repository without a tag, e.g. `ghcr.io/acme/agent`. */
+  repository: string;
+  /** Credentials that can push to and pull from the repository. */
+  credentials: ImageRegistry;
 }
 
 export interface ImageAttributes {
@@ -69,8 +83,9 @@ export class ImageRequiresBuild extends Data.TaggedError("Archil.ImageRequiresBu
  * or to pin the digest every sandbox boots.
  *
  * Props follow `@alchemy.run/docker`'s image source, like every Alchemy
- * image resource. Archil has no builder, so today only `image` references
- * deploy.
+ * image resource. Archil has no builder, so a Dockerfile is built with
+ * your local Docker and pushed to `push.repository`, and Archil pulls it
+ * from there.
  *
  * Archil has no API to delete an image, so destroying the resource only
  * removes it from Alchemy's state.
@@ -90,6 +105,18 @@ export class ImageRequiresBuild extends Data.TaggedError("Archil.ImageRequiresBu
  *     server: "ghcr.io",
  *     username: "acme-bot",
  *     password: Alchemy.Secret("GHCR_TOKEN"),
+ *   },
+ * });
+ * ```
+ *
+ * **Example:** Build a Dockerfile and push it for Archil to pull
+ * ```typescript
+ * export const Agent = Archil.Image("Agent", {
+ *   dockerfile: "./agent/Dockerfile",
+ *   context: "./agent",
+ *   push: {
+ *     repository: "ghcr.io/acme/agent",
+ *     credentials: { server: "ghcr.io", username: "acme-bot", password: Alchemy.Secret("GHCR_TOKEN") },
  *   },
  * });
  * ```
@@ -134,7 +161,7 @@ export const planImage = (props: ImageProps) =>
     props.image !== undefined
       ? { image: props.image }
       : { dockerfile: props.dockerfile, context: props.context, build: props.build },
-    { capabilities, registry: props.registry },
+    { capabilities, pull: props.registry },
   );
 
 /**
@@ -146,7 +173,7 @@ export const pullableSource = (plan: BuildPlan.BuildPlan) =>
     ? Effect.succeed(plan.base)
     : Effect.fail(
         new ImageRequiresBuild({
-          message: `Archil.Image can only pull a finished image; this Dockerfile adds ${plan.instructions.length} instruction(s) on top of ${plan.base}. Build and push it, then pass \`image\`.`,
+          message: `Archil.Image pulls finished images; this Dockerfile adds ${plan.instructions.length} instruction(s) on top of ${plan.base}. Set \`push: { repository, credentials }\` so Alchemy can build it and push it there.`,
         }),
       );
 
@@ -165,11 +192,33 @@ export const pullImage = Effect.fn(function* (
   return toImageAttributes(yield* waitForImage(data.image_id), hash, source);
 });
 
-/** Plan, then pull, an image. */
+/**
+ * The reference Archil pulls for a plan: its base when the plan adds
+ * nothing, else the plan built locally and pushed to `push`.
+ */
+export const publishPlan = Effect.fn(function* (
+  plan: BuildPlan.BuildPlan,
+  push: ImagePush | undefined,
+) {
+  if (plan.instructions.length === 0 && plan.files.length === 0) {
+    return { source: plan.base, credentials: undefined };
+  }
+  if (push === undefined) {
+    return yield* new ImageRequiresBuild({
+      message: `Archil.Image pulls finished images; this Dockerfile adds ${plan.instructions.length} instruction(s) on top of ${plan.base}. Set \`push: { repository, credentials }\` so Alchemy can build it and push it there.`,
+    });
+  }
+  const { imageRef } = yield* Effect.scoped(
+    BuildPlan.push(plan, { repository: push.repository, push: push.credentials }),
+  );
+  return { source: imageRef, credentials: push.credentials };
+});
+
+/** Plan, publish, then pull, an image. */
 export const buildImage = Effect.fn(function* (props: ImageProps) {
   const plan = yield* planImage(props);
-  const source = yield* pullableSource(plan);
-  return yield* pullImage(source, props.registry, plan.hash);
+  const published = yield* publishPlan(plan, props.push);
+  return yield* pullImage(published.source, published.credentials ?? props.registry, plan.hash);
 });
 
 export const ImageProvider = () =>
@@ -215,9 +264,16 @@ export const ImageProvider = () =>
             }
           }
           // Ensure
-          const source = yield* pullableSource(plan);
-          yield* session.note(`Pulling image ${source}...`);
-          return yield* pullImage(source, news.registry, plan.hash);
+          if (plan.instructions.length > 0 || plan.files.length > 0) {
+            yield* session.note(`Building and pushing image to ${news.push?.repository}...`);
+          }
+          const published = yield* publishPlan(plan, news.push);
+          yield* session.note(`Pulling image ${published.source}...`);
+          return yield* pullImage(
+            published.source,
+            published.credentials ?? news.registry,
+            plan.hash,
+          );
         }),
         // Archil has no image delete API.
         delete: () => Effect.void,

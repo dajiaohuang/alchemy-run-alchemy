@@ -4,7 +4,6 @@ export * from "./Branch.ts";
 export * from "./BranchDisk.ts";
 export * from "./Checkpoint.ts";
 export {
-  SandboxFetchFailed,
   SandboxPortNotExposed,
   type Command,
   type DiskDelegationsClient,
@@ -19,6 +18,8 @@ export {
   type SandboxHandle,
   type SandboxOps,
   type SandboxProcess,
+  type SandboxProcessExit,
+  type SandboxProcessOutput,
   type ShareError,
   type StartOptions,
 } from "./Clients.ts";
