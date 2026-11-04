@@ -97,6 +97,21 @@ describe("CreateSandbox", () => {
   );
 });
 
+describe("CreateSandbox computer use", () => {
+  // A desktop session bills like any running sandbox, and takes a while.
+  test.skipIf(!!process.env.FAST)(
+    "starts a desktop, moves the mouse, takes a screenshot",
+    Effect.gen(function* () {
+      const body = yield* get("/computer-use");
+      expect(body.status).toEqual("active");
+      expect(body.displays).toBeGreaterThan(0);
+      expect(body.mouse).toEqual({ x: 100, y: 120 });
+      expect(body.screenshotBytes).toBeGreaterThan(1000);
+    }),
+    { tags, timeout: 300_000 },
+  );
+});
+
 describe("ConnectSandbox", () => {
   test(
     "runs commands in the deployed sandbox and reads its preview URL",

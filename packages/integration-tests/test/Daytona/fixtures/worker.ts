@@ -57,6 +57,37 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
           });
         }
 
+        if (url.pathname === "/computer-use") {
+          const sandbox = yield* Effect.acquireRelease(
+            sandboxes.create({
+              name: `alchemy-desktop-${prefix}`,
+              labels: { purpose: "computer-use-test" },
+            }),
+            (s) => sandboxes.delete(s.sandboxId).pipe(Effect.ignore),
+          );
+          const desktop = sandbox.computerUse;
+          yield* desktop.startComputerUse();
+          // The X server and window manager take a few seconds to come up.
+          const status = yield* desktop.getComputerUseStatus().pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("2 seconds"),
+              until: (s) => s.status === "active",
+              times: 20,
+            }),
+          );
+          const display = yield* desktop.getDisplayInfo();
+          yield* desktop.moveMouse({ x: 100, y: 120 });
+          const mouse = yield* desktop.getMousePosition();
+          const screenshot = yield* desktop.takeScreenshot({ showCursor: true });
+          yield* desktop.stopComputerUse();
+          return yield* HttpServerResponse.json({
+            status: status.status,
+            displays: display.displays?.length ?? 0,
+            mouse: { x: mouse.x, y: mouse.y },
+            screenshotBytes: screenshot.screenshot?.length ?? 0,
+          });
+        }
+
         if (url.pathname === "/connect-sandbox") {
           const uname = yield* devBox.exec("uname -s");
           const workDir = yield* devBox.info.getWorkDir();

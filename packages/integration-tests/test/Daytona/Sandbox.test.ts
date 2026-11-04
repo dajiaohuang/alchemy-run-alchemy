@@ -2,13 +2,15 @@ import * as Daytona from "@alchemy.run/daytona";
 import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
 import * as sandboxes from "@distilled.cloud/daytona/sandbox";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 const { test } = Test.make({ providers: Daytona.providers() });
 
 const observe = (id: string) =>
   sandboxes.getSandbox({ sandboxIdOrName: id }).pipe(
-    Effect.map((s) => (s.state === "destroyed" ? undefined : s)),
+    // Daytona renames a sandbox on delete and destroys it asynchronously.
+    Effect.map((s) => (s.state === "destroyed" || s.state === "destroying" ? undefined : s)),
     Effect.catchTag("SandboxNotFound", () => Effect.undefined),
   );
 
@@ -105,4 +107,98 @@ test.provider.skipIf(!networkEntitled)(
       expect(yield* observe(created.sandboxId)).toBeUndefined();
     }),
   { tags: ["provider:daytona", "live"], timeout: 600_000 },
+);
+
+test.provider(
+  "link two ephemeral sandboxes on one runner, change and clear the TTL",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const deploy = (ttl?: Duration.Input) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const db = yield* Daytona.Sandbox("Db", { autoDeleteInterval: 0 });
+            const app = yield* Daytona.Sandbox("App", {
+              autoDeleteInterval: 0,
+              linkedSandbox: db,
+              ttl,
+            });
+            return { db, app };
+          }),
+        );
+
+      const first = yield* deploy("2 hours");
+      expect(first.app.linkedSandboxId).toEqual(first.db.sandboxId);
+      const firstDestroyAt = Date.parse(first.app.autoDestroyAt ?? "");
+      expect(firstDestroyAt - Date.now()).toBeGreaterThan(90 * 60_000);
+
+      // A longer TTL updates in place and moves the deadline out.
+      const longer = yield* deploy("3 hours");
+      expect(longer.app.sandboxId).toEqual(first.app.sandboxId);
+      expect(Date.parse(longer.app.autoDestroyAt ?? "")).toBeGreaterThan(firstDestroyAt);
+
+      // Removing it disables it.
+      yield* deploy();
+      const cleared = yield* sandboxes.getSandbox({ sandboxIdOrName: first.app.sandboxId });
+      expect(cleared.autoDestroyAt).toBeUndefined();
+
+      yield* stack.destroy();
+      expect(yield* observe(first.app.sandboxId)).toBeUndefined();
+      expect(yield* observe(first.db.sandboxId)).toBeUndefined();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 600_000 },
+);
+
+// GPU and Windows sandboxes bill at their own, higher rates.
+test.provider.skipIf(!!process.env.FAST)(
+  "a GPU sandbox on spot capacity",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const gpu = yield* stack.deploy(
+        Daytona.Sandbox("Gpu", {
+          snapshot: { name: "daytona-gpu" },
+          target: "earth",
+          gpu: 1,
+          gpuType: ["RTX-PRO-6000", "H100", "H200"],
+          spot: true,
+          autoStopInterval: "15 minutes",
+        }),
+      );
+      expect(gpu.gpu).toEqual(1);
+      expect(gpu.target).toEqual("earth");
+      expect(gpu.state).toEqual("started");
+
+      yield* stack.destroy();
+      expect(yield* observe(gpu.sandboxId)).toBeUndefined();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 600_000 },
+);
+
+test.provider.skipIf(!!process.env.FAST)(
+  "a Windows sandbox, stopped in place",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const windows = (state?: "stopped") =>
+        stack.deploy(
+          Daytona.Sandbox("Windows", {
+            snapshot: { name: "windows-small" },
+            target: "us-west-4",
+            autoStopInterval: "15 minutes",
+            state,
+          }),
+        );
+      const created = yield* windows();
+      expect(created.sandboxClass).toEqual("windows");
+      expect(created.state).toEqual("started");
+
+      const stopped = yield* windows("stopped");
+      expect(stopped.sandboxId).toEqual(created.sandboxId);
+      expect(stopped.state).toEqual("stopped");
+
+      yield* stack.destroy();
+      expect(yield* observe(created.sandboxId)).toBeUndefined();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 900_000 },
 );

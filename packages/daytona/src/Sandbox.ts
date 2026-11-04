@@ -34,6 +34,9 @@ export interface SandboxVolumeMount {
   subpath?: string;
 }
 
+/** Another sandbox, by id. Accepts a `Daytona.Sandbox` or `{ sandboxId }`. */
+export type SandboxLinkRef = { readonly sandboxId: string };
+
 /** Whether the sandbox should be running, stopped (disk kept) or archived (moved to object storage). */
 export type SandboxRunState = "started" | "stopped" | "archived";
 
@@ -94,6 +97,30 @@ export interface SandboxProps {
   autoArchiveInterval?: Duration.Input;
   /** Delete after being stopped this long. Updated in place. */
   autoDeleteInterval?: Duration.Input;
+  /**
+   * Destroy the sandbox this long after it is created (or after the deploy
+   * that last changed it), whatever its state. Changing it restarts the
+   * clock from now. `0` disables it, unless the region caps sandbox lifespan.
+   */
+  ttl?: Duration.Input;
+  /**
+   * Give up if no runner takes the sandbox within this long. Daytona honors
+   * it only when the organization has a default queue timeout. Only used
+   * when the sandbox is created.
+   */
+  queueTimeout?: Duration.Input;
+  /**
+   * Schedule the sandbox on the same runner as this one, so the two share
+   * a local network. Both must be ephemeral (`autoDeleteInterval: 0`), and
+   * neither can have GPUs. Changing it replaces the sandbox.
+   */
+  linkedSandbox?: Ref<SandboxLinkRef>;
+  /**
+   * Send the sandbox's OpenTelemetry data here instead of Daytona's
+   * collector. It then doesn't show in Daytona's dashboard or the
+   * telemetry API. Changing it replaces the sandbox.
+   */
+  otelEndpointOverride?: string;
   /** Whether the sandbox should be running. Updated in place. @default "started" */
   state?: SandboxRunState;
 }
@@ -119,6 +146,12 @@ export interface SandboxAttributes {
   disk: number;
   /** GPUs. */
   gpu: number;
+  /** Sandbox class: `container`, `linux-vm` or `windows`, set by the snapshot. */
+  sandboxClass: sandboxes.SandboxSandboxClass | undefined;
+  /** When the TTL destroys the sandbox, if one is set. */
+  autoDestroyAt: string | undefined;
+  /** ID of the sandbox it shares a runner with. */
+  linkedSandboxId: string | undefined;
   /** Labels you set (alchemy's ownership labels excluded). */
   labels: Record<string, string>;
   /** Whether previews are public. */
@@ -176,6 +209,33 @@ export type Sandbox = Resource<
  * });
  * ```
  *
+ * ### GPUs
+ * **Example:** One H100, falling back to an H200, on spot capacity
+ * ```typescript
+ * export const Trainer = Daytona.Sandbox("Trainer", {
+ *   target: "earth",
+ *   gpu: 1,
+ *   gpuType: ["H100", "H200"],
+ *   spot: true,
+ * });
+ * ```
+ *
+ * ### Limiting Its Lifetime
+ * **Example:** Destroyed two hours after it is created
+ * ```typescript
+ * export const Scratch = Daytona.Sandbox("Scratch", { ttl: "2 hours" });
+ * ```
+ *
+ * ### Sharing a Runner
+ * **Example:** A database and an app on one local network
+ * ```typescript
+ * export const Db = Daytona.Sandbox("Db", { autoDeleteInterval: 0 });
+ * export const App = Daytona.Sandbox("App", {
+ *   autoDeleteInterval: 0,
+ *   linkedSandbox: Db,
+ * });
+ * ```
+ *
  * @resource
  * @product Sandbox
  */
@@ -206,6 +266,9 @@ export const toSandboxAttributes = (s: SandboxInfo): SandboxAttributes => ({
   memory: s.memory,
   disk: s.disk,
   gpu: s.gpu,
+  sandboxClass: s.sandboxClass,
+  autoDestroyAt: s.autoDestroyAt,
+  linkedSandboxId: s.linkedSandboxId,
   labels: userLabels(s.labels),
   public: s.public,
   toolboxProxyUrl: s.toolboxProxyUrl,
@@ -315,9 +378,16 @@ const resolveCreate = Effect.fn(function* (
         Effect.map(resolveRef(ref), (s) => ({ [env]: s.name })),
       )
     : undefined;
+  const linkedSandbox = news.linkedSandbox
+    ? (yield* resolveRef(news.linkedSandbox)).sandboxId
+    : undefined;
   return {
     name,
     snapshot,
+    linkedSandbox,
+    otelEndpointOverride: news.otelEndpointOverride,
+    ttlMinutes: toMinutes(news.ttl),
+    queueTimeout: toMinutes(news.queueTimeout),
     user: news.user,
     env: news.env,
     labels,
@@ -378,6 +448,9 @@ export const SandboxProvider = () =>
           !deepEqual(news.gpuType ?? [], olds?.gpuType ?? []) ||
           news.spot !== olds?.spot ||
           news.kvm !== olds?.kvm ||
+          news.otelEndpointOverride !== olds?.otelEndpointOverride ||
+          (news.linkedSandbox !== undefined &&
+            (yield* resolveRef(news.linkedSandbox)).sandboxId !== output.linkedSandboxId) ||
           !deepEqual(
             (news.volumes ?? []).map((v) => [v.mountPath, v.subpath]),
             (olds?.volumes ?? []).map((v) => [v.mountPath, v.subpath]),
@@ -399,6 +472,7 @@ export const SandboxProvider = () =>
 
         // Observe
         let current = yield* getSandbox(output?.sandboxId ?? name);
+        const created = current === undefined;
 
         // Ensure
         if (current === undefined) {
@@ -458,6 +532,18 @@ export const SandboxProvider = () =>
           if (want !== undefined && want !== have) {
             yield* set({ sandboxIdOrName: sandboxId, interval: want });
           }
+        }
+        // Sync the TTL. Daytona reports only when it fires, and setting it
+        // restarts the clock, so it's written when the declared TTL changes
+        // (or on adoption).
+        if (
+          !created &&
+          request.ttlMinutes !== undefined &&
+          (olds === undefined || request.ttlMinutes !== toMinutes(olds.ttl))
+        ) {
+          yield* sandboxes.setTtl({ sandboxIdOrName: sandboxId, ttlMinutes: request.ttlMinutes });
+        } else if (!created && request.ttlMinutes === undefined && olds?.ttl !== undefined) {
+          yield* sandboxes.setTtl({ sandboxIdOrName: sandboxId, ttlMinutes: 0 });
         }
         // Sync secrets. Daytona doesn't report a sandbox's mounted secrets,
         // so the declared set is written whenever it differs from the last
