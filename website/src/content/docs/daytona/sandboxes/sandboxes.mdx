@@ -130,6 +130,10 @@ Effect.gen(function* () {
 
 The volume joins the sandbox's `mounts`. Daytona mounts volumes when it creates a sandbox, so adding one replaces the program's sandbox.
 
+## Install a mount client
+
+A mount binding that needs a client in the image, such as an `alchemy/Mount` capability, makes the sandbox boot from a derived snapshot: its snapshot plus the client's install lines, built on Daytona. The derived snapshot is named from a hash of its Dockerfile and deleted with the sandbox; a change to it replaces the sandbox. Daytona sandboxes provide FUSE, so FUSE clients work; a client that needs NFS fails the deploy with `MountUnsupported`.
+
 ## What the program can reach
 
 The program reaches the internet the way its sandbox does. Below Daytona's Tier 3, sandboxes reach only an allowlist of essential services (package registries, GitHub, AI APIs, Daytona's API), so bindings that manage sandboxes work but toolbox calls are refused. From Tier 3, sandboxes have full internet access.

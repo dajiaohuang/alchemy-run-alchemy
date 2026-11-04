@@ -328,6 +328,12 @@ export type SandboxRuntimeContext = HostRuntimeContext;
  * ) {}
  * ```
  *
+ * A mount binding that needs a client in the image (an `alchemy/Mount`
+ * capability) makes the sandbox boot from a derived snapshot: its snapshot
+ * plus the client's install lines, built on Daytona, named from a hash and
+ * deleted with the sandbox. Sandboxes provide FUSE; a client that needs
+ * NFS fails with `MountUnsupported`.
+ *
  * The program reaches the internet as its sandbox does. Below Daytona's
  * Tier 3, sandboxes reach only an allowlist of essential services
  * (package registries, GitHub, AI APIs, Daytona's API), so bindings that

@@ -24,10 +24,12 @@ yield* sandbox.exec(["git", "commit", "-m", message], { cwd: "/home/daytona/repo
 
 ```typescript
 const server = yield* sandbox.start(["python3", "-m", "http.server", "8080"], { cwd: "/srv" });
-yield* server.output.pipe(Stream.runForEach((piece) => Console.log(piece.stream, piece.text)));
+yield* server.output.pipe(
+  Stream.runForEach((out) => Console.log(out.fd, new TextDecoder().decode(out.data))),
+);
 ```
 
-`start` runs the command in its own session and returns while it runs: `output` streams stdout and stderr, `write` types into its stdin, `wait` resolves with its exit code, and `kill` ends it. Closing the scope only detaches.
+`start` runs the command in its own session and returns while it runs: `output` streams stdout and stderr, `write` types into its stdin, `wait` resolves with its exit code, and `kill()` ends it (Daytona takes no signal). Closing the scope only detaches.
 
 ## Keep a shell session
 

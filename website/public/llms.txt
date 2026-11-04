@@ -38,7 +38,7 @@ The noun graph and its semantics: Stacks of Resources and Actions, data flow via
 - [Resources](https://alchemy.run/infrastructure-as-code/resource) — Resources are named cloud entities with input properties and output attributes.
 - [Actions](https://alchemy.run/infrastructure-as-code/action) — A node in the dependency graph that runs an Effect during apply when its inputs change.
 - [Inputs & Outputs](https://alchemy.run/infrastructure-as-code/outputs) — Output<T> is alchemy's lazy reference type — the lazy values that flow between resources, get composed with .pipe, mapped, interpolated, and resolved during deploy.
-- [References](https://alchemy.run/infrastructure-as-code/references) — Read an already-deployed Resource or Stack at plan time — Resource.ref by Logical ID with optional stack/stage props, or import a Stack tag and depend on its outputs.
+- [References](https://alchemy.run/infrastructure-as-code/references) — Read an already-deployed Resource or Stack at plan time — Resource.ref by Logical ID with optional stack/stage props, Resource.lookup for resources Alchemy doesn't manage, or import a Stack tag and depend on its outputs.
 - [Resource Lifecycle](https://alchemy.run/infrastructure-as-code/resource-lifecycle) — How alchemy plans, applies, replaces, and destroys resources — and how to think about idempotency and recovery.
 - [Renaming Resources](https://alchemy.run/infrastructure-as-code/renaming) — Migrate a resource's state across a logical ID change instead of replacing it.
 - [Providers](https://alchemy.run/infrastructure-as-code/provider) — Providers implement the lifecycle operations for a resource type — reconcile, delete, diff, read, and more.
@@ -710,6 +710,37 @@ Turso SQLite databases as Stack resources: groups, databases, migrations, connec
 - [Tokens](https://alchemy.run/turso/tokens) — Create tokens for apps that run outside your Stack.
 - [Team & organization](https://alchemy.run/turso/organization) — Invite teammates and change your Turso organization's settings.
 
+## Daytona
+
+Daytona sandboxes from Workers and Lambda: snapshots (images, Dockerfile builds, warm bases), volumes, secrets the sandbox can't read, the in-sandbox toolbox, scoped API keys, and organization settings.
+
+- [Daytona](https://alchemy.run/daytona) — Run code in Daytona sandboxes from your Workers, with snapshots, volumes and secrets declared in the same Stack.
+- [Setup](https://alchemy.run/daytona/setup) — Sign Alchemy in to Daytona, or give it an API key.
+
+## Daytona — Tutorial
+
+- [Part 1: Your First Snapshot](https://alchemy.run/daytona/tutorial/part-1) — Declare the snapshot your sandboxes boot from and deploy it.
+- [Part 2: Run Code in a Sandbox](https://alchemy.run/daytona/tutorial/part-2) — Add a Worker that creates a sandbox per request, runs a command, and deletes it.
+- [Part 3: A Sandbox per User](https://alchemy.run/daytona/tutorial/part-3) — Give each user a sandbox with their own volume, so their files survive the sandbox.
+- [Part 4: Testing](https://alchemy.run/daytona/tutorial/part-4) — Deploy the Stack in a test, call the Worker, and destroy it.
+- [Part 5: Stages and CI](https://alchemy.run/daytona/tutorial/part-5) — Deploy a copy of the app per stage, and from CI.
+
+## Daytona — Sandboxes
+
+- [Sandboxes](https://alchemy.run/daytona/sandboxes/sandboxes) — Create sandboxes per request or per user from a Worker, or declare a long-lived dev box in your Stack.
+- [Snapshots](https://alchemy.run/daytona/sandboxes/snapshots) — Pull an image, build a Dockerfile on Daytona, or capture a warm base that sandboxes start from.
+- [Toolbox](https://alchemy.run/daytona/sandboxes/toolbox) — Run commands, edit files, use git and language servers, open previews and SSH into a sandbox.
+- [Volumes](https://alchemy.run/daytona/sandboxes/volumes) — Keep files in volumes that outlive sandboxes, shared or one per user.
+
+## Daytona — Security
+
+- [API keys](https://alchemy.run/daytona/security/api-keys) — See which key each binding gets, and create keys for CI or other programs.
+- [Network & secrets](https://alchemy.run/daytona/security/network-and-secrets) — Limit what a sandbox can reach, and give it credentials it can use but not read.
+
+## Daytona — Organization
+
+- [Organization](https://alchemy.run/daytona/organization/organization) — Manage roles, members, SSO, settings, telemetry export, webhooks and your own compute for a Daytona organization.
+
 ## Better Auth
 
 Better Auth as an Effect service on Workers and Lambda: a tutorial, sign-in providers, database layers, and guides for config, middleware, secondary storage, migrations, and upgrades.
@@ -955,4 +986,4 @@ A domain-driven design framework: model commands, events, aggregates, views, pro
 
 Service-level API reference, generated from JSDoc on the source `.ts` files via `bun scripts/generate-api-reference.ts`. Each page groups resources and capabilities by service, with a heading per resource and examples extracted from source JSDoc.
 
-The service-level pages are indexed in [llms-full.txt](https://alchemy.run/llms-full.txt), which repeats this entire file plus one link per service. Warning: it is large (~211 KB) — only fetch it when you need to locate a specific resource's reference page.
+The service-level pages are indexed in [llms-full.txt](https://alchemy.run/llms-full.txt), which repeats this entire file plus one link per service. Warning: it is large (~215 KB) — only fetch it when you need to locate a specific resource's reference page.
