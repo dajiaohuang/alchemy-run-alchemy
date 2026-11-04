@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Stream from "effect/Stream";
-import { API_PORT, Box, NotesDisk } from "./shared.ts";
+import { API_PORT, NotesDisk } from "./shared.ts";
 
 const cors = {
   "access-control-allow-origin": "*",
@@ -21,18 +21,18 @@ interface Note {
 }
 
 /**
- * Effect HTTP API in the shared sandbox. Each note is a JSON file under
+ * Effect HTTP API in its own Archil sandbox. Each note is a JSON file under
  * `notes/` on an Archil disk, read and written through ReadWriteDisk.
  */
-export default class Api extends Archil.Service<Api>()(
+export default class Api extends Archil.Sandbox<Api>()(
   "Api",
-  { sandbox: Box, main: import.meta.url, port: API_PORT },
+  { main: import.meta.url, port: API_PORT },
   Effect.gen(function* () {
     const notes = yield* Archil.ReadWriteDisk(NotesDisk);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
-        const path = new URL(request.url, "http://service").pathname;
+        const path = new URL(request.url, "http://api").pathname;
         if (request.method === "OPTIONS") return yield* json({}, 204);
         if (path === "/health") return yield* json({ ok: true });
         if (path === "/notes" && request.method === "GET") {

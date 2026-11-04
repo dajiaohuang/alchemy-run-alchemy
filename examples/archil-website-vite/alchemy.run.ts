@@ -3,7 +3,7 @@ import * as Alchemy from "alchemy";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
-import { Box, NotesDisk } from "./src/shared.ts";
+import { NotesDisk } from "./src/shared.ts";
 
 export default Alchemy.Stack(
   "ArchilWebsiteViteExample",
@@ -12,11 +12,9 @@ export default Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const sandbox = yield* Box;
     const disk = yield* NotesDisk;
     const api = yield* Api;
     const web = yield* Archil.Website.Vite("Web", {
-      sandbox,
       env: {
         VITE_API_URL: Output.map(api.url, (url) => url ?? ""),
       },
@@ -28,7 +26,7 @@ export default Alchemy.Stack(
     return {
       url: web.url,
       apiUrl: api.url,
-      sandboxId: sandbox.sandboxId,
+      apiSandboxId: api.sandboxId,
       diskId: disk.diskId,
     };
   }),

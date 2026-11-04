@@ -50,7 +50,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         if (action === "run") {
           const sandbox = yield* sandboxes.create({
             name: `run-${user}`,
-            mounts: [{ disk: home.diskId, path: "/home/user" }],
+            mounts: [{ disk: home, path: "/home/user" }],
             idleTtlSeconds: 120,
           });
           const result = yield* sandbox.exec("wc -l /home/user/notes.md");

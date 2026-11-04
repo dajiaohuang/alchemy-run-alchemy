@@ -1,12 +1,12 @@
 {
-  "name": "archil-service",
+  "name": "archil-sandbox",
   "version": "0.0.0",
   "private": true,
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/archil-service"
+    "directory": "examples/archil-sandbox"
   },
   "type": "module",
   "scripts": {
