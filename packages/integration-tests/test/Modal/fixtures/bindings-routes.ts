@@ -1,9 +1,11 @@
 import * as Modal from "@alchemy.run/modal";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { Agents, Base, Coder, Jobs, Results, Token, Workspace } from "./resources.ts";
 
 const BindingsLive = Layer.mergeAll(
@@ -123,6 +125,44 @@ export const bindingRoutes = Effect.gen(function* () {
             return { stdout: run.stdout, exitCode: run.exitCode, size: stat.size, type: stat.type };
           }).pipe(Effect.ensuring(Effect.ignore(sandbox.terminate())));
           yield* volumes.delete(`mount-${key}`);
+          return yield* HttpServerResponse.json(out);
+        }
+        case "/process": {
+          // A started process streams as it runs; stdin is written mid-run.
+          const sandbox = yield* appSandboxes.create({
+            image: "debian:bookworm-slim",
+            timeout: "5 minutes",
+          });
+          const out = yield* Effect.gen(function* () {
+            const process = yield* sandbox.start(
+              "echo one; sleep 2; echo two >&2; read line; echo got=$line",
+            );
+            const decoder = new TextDecoder();
+            const chunks: Array<{ fd: string; text: string; at: number }> = [];
+            const started = Date.now();
+            const collect = Stream.runForEach(process.output, (chunk) =>
+              Effect.sync(() =>
+                chunks.push({
+                  fd: chunk.fd,
+                  text: decoder.decode(chunk.data),
+                  at: Date.now() - started,
+                }),
+              ),
+            );
+            const collecting = yield* Effect.forkChild(collect);
+            yield* Effect.sleep("4 seconds");
+            yield* process.write("hello\n");
+            const { exitCode } = yield* process.wait;
+            yield* Fiber.join(collecting);
+            const pty = yield* sandbox.pty.open({ cols: 80, rows: 24 });
+            yield* pty.write("echo pty-$((40+2))\nexit\n");
+            const screen = yield* Stream.runFold(
+              pty.output,
+              () => "",
+              (text, data) => text + decoder.decode(data),
+            ).pipe(Effect.timeout("30 seconds"));
+            return { exitCode, chunks, pty: screen.includes("pty-42") };
+          }).pipe(Effect.scoped, Effect.ensuring(Effect.ignore(sandbox.terminate())));
           return yield* HttpServerResponse.json(out);
         }
         case "/sandbox-named": {

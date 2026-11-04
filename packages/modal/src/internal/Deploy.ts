@@ -3,12 +3,14 @@ import * as app from "@distilled.cloud/modal/app";
 import * as mount from "@distilled.cloud/modal/mount";
 import * as workspace from "@distilled.cloud/modal/workspace";
 import type * as Bundle from "alchemy/Bundle/Bundle";
+import { type MountCapability, mountInstallLines } from "alchemy/Mount";
 import { sha256, sha256Object } from "alchemy/Util/sha256";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import { buildImage, ImageBuildOps, type ImageBuildSpec } from "../ImageBuild.ts";
 import { checkCommands, lowerPlan, MODAL_CAPABILITIES } from "../ImagePlan.ts";
+import { checkModalMounts } from "../Mounts.ts";
 import { ENTRYPOINT_PATH, ENTRYPOINT_SOURCE } from "./Entrypoint.ts";
 
 /*
@@ -133,10 +135,17 @@ export const planRuntimeImage = Effect.fn(function* (
   input: RuntimeImageInput,
   port: number,
   bootstrap: ((importPath: string) => string) | undefined,
+  capabilities: ReadonlyArray<MountCapability> = [],
 ) {
+  yield* checkModalMounts(target, capabilities);
   const plan = yield* BuildPlan.plan(
     { main: input.main, image: input.image, handler: input.handler, build: input.build },
-    { capabilities: { ...MODAL_CAPABILITIES, target }, port, bootstrap },
+    {
+      capabilities: { ...MODAL_CAPABILITIES, target },
+      port,
+      bootstrap,
+      install: mountInstallLines(capabilities),
+    },
   );
   const extra = yield* checkCommands(input.commands ?? []);
   const lowered = yield* lowerPlan(plan, extra);

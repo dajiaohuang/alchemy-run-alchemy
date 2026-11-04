@@ -3,6 +3,7 @@ import * as image from "@distilled.cloud/modal/image";
 import * as secret from "@distilled.cloud/modal/secret";
 import type * as Bundle from "alchemy/Bundle/Bundle";
 import { deepEqual, isResolved } from "alchemy/Diff";
+import { mountInstallLines } from "alchemy/Mount";
 import { Platform, type Main, type PlatformProps } from "alchemy/Platform";
 import * as Provider from "alchemy/Provider";
 import type { Resource } from "alchemy/Resource";
@@ -20,7 +21,16 @@ import { buildImage, ImageBuildOps } from "./ImageBuild.ts";
 import { checkCommands, lowerPlan, MODAL_CAPABILITIES } from "./ImagePlan.ts";
 import { envNameOf, objectName } from "./internal.ts";
 import { resolveDeclarations } from "./internal/Declared.ts";
-import { boundMounts, type ModalMounts, type Mount, modalMountsOf } from "./Mounts.ts";
+import {
+  boundCapabilities,
+  boundMounts,
+  checkModalMounts,
+  type ModalMounts,
+  type Mount,
+  type MountBindings,
+  type MountContract,
+  modalMountsOf,
+} from "./Mounts.ts";
 import type { Providers } from "./Providers.ts";
 import { putSecret } from "./Secret.ts";
 
@@ -96,7 +106,7 @@ export type Sandbox = Resource<
   "Modal.Sandbox",
   SandboxProps,
   SandboxAttributes,
-  { env?: Record<string, any>; mounts?: Mount[] },
+  { env?: Record<string, any>; mounts?: MountContract },
   Providers
 >;
 
@@ -282,7 +292,15 @@ export const SandboxProvider = () =>
       const stack = yield* Stack;
 
       /** Plan the program's image (bundle + bootstrap) with the shared BuildPlan. */
-      const prepare = Effect.fn(function* (news: SandboxProps, port: number) {
+      const prepare = Effect.fn(function* (
+        news: SandboxProps,
+        port: number,
+        bindings: MountBindings,
+      ) {
+        // Other providers' mount clients go into the image; Modal can't
+        // provide FUSE or NFS, so those that need it fail here.
+        const capabilities = boundCapabilities(bindings);
+        yield* checkModalMounts("Modal.Sandbox", capabilities);
         const plan = yield* BuildPlan.plan(
           {
             main: news.main,
@@ -294,6 +312,7 @@ export const SandboxProvider = () =>
             capabilities: { ...MODAL_CAPABILITIES, target: "Modal.Sandbox" },
             port,
             bootstrap: news.isExternal ? undefined : bootstrapEntry(news.handler ?? "default"),
+            install: mountInstallLines(capabilities),
           },
         );
         const extra = yield* checkCommands(news.commands ?? []);
@@ -310,7 +329,7 @@ export const SandboxProvider = () =>
             return undefined;
           }
           if (appOf(news.app).appId !== output.appId) return { action: "replace" } as const;
-          const { hash } = yield* prepare(news, news.port ?? DEFAULT_PORT);
+          const { hash } = yield* prepare(news, news.port ?? DEFAULT_PORT, newBindings);
           if (hash !== output.hash) return { action: "update" } as const;
           const mounts = yield* modalMountsOf([
             ...(news.mounts ?? []),
@@ -350,7 +369,7 @@ export const SandboxProvider = () =>
           );
 
           // Ensure the image: Modal reuses a cached build for the same inputs.
-          const { spec, hash, command } = yield* prepare(news, port);
+          const { spec, hash, command } = yield* prepare(news, port, bindings);
           const imageId =
             output !== undefined && output.hash === hash && output.appId === app.appId
               ? output.imageId

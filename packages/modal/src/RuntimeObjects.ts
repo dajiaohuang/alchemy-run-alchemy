@@ -1,19 +1,19 @@
 import * as Binding from "alchemy/Binding";
-import { isResolved } from "alchemy/Diff";
-import { createPhysicalName } from "alchemy/PhysicalName";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import { CurrentRuntimeContext, sanitizeKey } from "alchemy/RuntimeContext";
+import * as Shared from "alchemy/RuntimeObjects";
 import * as Effect from "effect/Effect";
 import { DictsOps, makeDictsClient } from "./CreateDictHttp.ts";
 import { makeQueuesClient, QueuesOps } from "./CreateQueueHttp.ts";
 import { makeSecretsClient, SecretsOps } from "./CreateSecretHttp.ts";
 import { makeVolumesClient, VolumesOps } from "./CreateVolumeHttp.ts";
 import type { Environment } from "./Environment.ts";
+import { environmentNames } from "./internal.ts";
 import type { Providers } from "./Providers.ts";
 
 /** What happens to objects a runtime created when the stack is destroyed. */
-export type OnDestroy = "delete" | "retain";
+export type OnDestroy = Shared.OnDestroy;
 
 /** Kinds of object the `Create*` bindings create at runtime. */
 export type RuntimeObjectKind = "volume" | "dict" | "queue" | "secret";
@@ -28,30 +28,14 @@ export interface CreateOptions {
   readonly onDestroy?: OnDestroy;
 }
 
-export interface RuntimeObjectsProps {
-  /** The kind of object the runtime creates. */
-  kind: RuntimeObjectKind;
-  /** The environment it creates them in; `undefined` is the workspace default. */
-  environment?: string;
-  /** @default "delete" */
-  onDestroy?: OnDestroy;
-}
-
-export interface RuntimeObjectsAttributes {
-  /**
-   * Name prefix stamped on every object the runtime creates
-   * (`<prefix>-<name>`); the `Create*` clients add and strip it.
-   */
-  prefix: string;
-  kind: RuntimeObjectKind;
-  environment: string | undefined;
-  onDestroy: OnDestroy;
-}
+export type RuntimeObjectsProps = Shared.RuntimeObjectsProps<RuntimeObjectKind>;
+export type RuntimeObjectsAttributes = Shared.RuntimeObjectsAttributes<RuntimeObjectKind>;
 
 /**
  * The volumes, dicts, queues or secrets one runtime creates by name with a
- * `Create*` binding. Each name is stamped with this resource's prefix, and
- * destroying it deletes every stamped object unless `onDestroy` is
+ * `Create*` binding. Modal objects carry only a name, so each is stamped
+ * with this resource's prefix (`<prefix>-<name>`), and destroying it deletes
+ * every stamped object, in every environment, unless `onDestroy` is
  * `"retain"`. The `Create*` bindings declare it for their runtime; you don't
  * declare it yourself.
  *
@@ -70,7 +54,7 @@ export type RuntimeObjects = Resource<
 
 /** The name a stamped object gets. */
 export const stampedName = (prefix: string | undefined, name: string) =>
-  prefix === undefined ? name : `${prefix}-${name}`;
+  prefix === undefined ? name : Shared.runtimeName(prefix, name);
 
 /** A stamped object's name without the prefix, or `undefined` when it isn't stamped with it. */
 export const unstampedName = (prefix: string | undefined, name: string) =>
@@ -105,7 +89,7 @@ export const RuntimeStamp = Effect.gen(function* () {
         const kindName = `${kind[0]!.toUpperCase()}${kind.slice(1)}`;
         const objects = yield* Objects(
           `${host.LogicalId}${kindName}Objects${environment?.LogicalId ?? ""}`,
-          { kind, environment: environment?.name, onDestroy: options?.onDestroy },
+          { kinds: [kind], onDestroy: options?.onDestroy },
         );
         yield* runtime.set(key, objects.prefix);
       }
@@ -141,44 +125,21 @@ export const sweepRuntimeObjects = Effect.fn(function* (
   }
 });
 
-export const RuntimeObjectsProvider = () =>
-  Provider.effect(
-    RuntimeObjects,
-    Effect.gen(function* () {
-      return {
-        stables: ["prefix"],
-        diff: Effect.fn(function* ({ news, output }) {
-          if (!isResolved(news) || output === undefined) return undefined;
-          // Objects already stamped live in the old kind's environment.
-          if (news.kind !== output.kind || news.environment !== output.environment) {
-            return { action: "replace" } as const;
-          }
-          return undefined;
-        }),
-        read: Effect.fn(function* ({ output }) {
-          return output;
-        }),
-        reconcile: Effect.fn(function* ({ id, news, output }) {
-          const prefix =
-            output?.prefix ??
-            (yield* createPhysicalName({
-              id,
-              maxLength: 24,
-              suffixLength: 8,
-              delimiter: "-",
-              lowercase: true,
-            }));
-          return {
-            prefix,
-            kind: news.kind,
-            environment: news.environment,
-            onDestroy: news.onDestroy ?? "delete",
-          };
-        }),
-        delete: Effect.fn(function* ({ output }) {
-          if (output.onDestroy === "retain") return;
-          yield* sweepRuntimeObjects(output.kind, output.environment, output.prefix);
-        }),
-      };
-    }),
+/**
+ * Delete every object a {@link RuntimeObjects} stamped: its kinds, in every
+ * environment of the workspace (the prefix is unique to one runtime).
+ */
+export const sweepStamped = Effect.fn(function* (attrs: RuntimeObjectsAttributes) {
+  const environments = yield* environmentNames;
+  yield* Effect.forEach(
+    environments,
+    (environment) =>
+      Effect.forEach(attrs.kinds, (kind) => sweepRuntimeObjects(kind, environment, attrs.prefix), {
+        discard: true,
+      }),
+    { concurrency: 4, discard: true },
   );
+});
+
+export const RuntimeObjectsProvider = () =>
+  Provider.effect(RuntimeObjects, Effect.succeed(Shared.lifecycle(sweepStamped)));

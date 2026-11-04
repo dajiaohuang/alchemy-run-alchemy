@@ -9,7 +9,14 @@ import * as Redacted from "effect/Redacted";
 import type { ContainerProps, Ref } from "../Container.ts";
 import { gpuConfig } from "../ImageBuild.ts";
 import { envNameOf, objectName, seconds } from "../internal.ts";
-import { boundMounts, type ModalMounts, type Mount, modalMountsOf } from "../Mounts.ts";
+import {
+  boundCapabilities,
+  boundMounts,
+  type ModalMounts,
+  type Mount,
+  type MountBindings,
+  modalMountsOf,
+} from "../Mounts.ts";
 import type { Providers } from "../Providers.ts";
 import { putSecret } from "../Secret.ts";
 import { resolveDeclarations } from "./Declared.ts";
@@ -176,11 +183,7 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
   Effect.gen(function* () {
     const stack = yield* Stack;
 
-    const prepare = Effect.fn(function* (
-      id: string,
-      news: P,
-      bindings: ReadonlyArray<{ readonly data: { readonly mounts?: ReadonlyArray<Mount> } }>,
-    ) {
+    const prepare = Effect.fn(function* (id: string, news: P, bindings: MountBindings) {
       const port = news.port ?? DEFAULT_PORT;
       const tag = news.name ?? id;
       const app = appOf(news.app);
@@ -191,6 +194,7 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
         news,
         port,
         news.isExternal ? undefined : kind.bootstrap(news.handler ?? "default"),
+        boundCapabilities(bindings),
       );
       // The props' mounts, then the ones `Modal.MountVolume` / `MountBucket` bound.
       const mounts = yield* modalMountsOf([...(news.mounts ?? []), ...boundMounts(bindings)]);
@@ -228,7 +232,7 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
         id: string;
         news: Input<P>;
         output: RuntimeAttributes | undefined;
-        newBindings: Input<ReadonlyArray<{ readonly data: { readonly mounts?: Mount[] } }>>;
+        newBindings: Input<MountBindings>;
       }) {
         if (!isResolved(news) || !isResolved(newBindings) || output === undefined) {
           return undefined;
@@ -256,7 +260,7 @@ export const runtimeLifecycle = <P extends ContainerProps>(kind: RuntimeKind<P>)
         news: P;
         output: RuntimeAttributes | undefined;
         session: { note: (message: string) => Effect.Effect<void> };
-        bindings: ReadonlyArray<{ readonly data: { readonly mounts?: ReadonlyArray<Mount> } }>;
+        bindings: MountBindings;
       }) {
         const { port, tag, app, image, definition, secretIds, hash } = yield* prepare(
           id,

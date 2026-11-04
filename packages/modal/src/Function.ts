@@ -16,7 +16,7 @@ import {
   runtimeLifecycle,
   type RuntimeAttributes,
 } from "./internal/Runtime.ts";
-import type { Mount } from "./Mounts.ts";
+import type { MountContract } from "./Mounts.ts";
 import type { Providers } from "./Providers.ts";
 import type { DurationInput } from "./SandboxClient.ts";
 
@@ -92,7 +92,7 @@ export type Function = Resource<
   "Modal.Function",
   FunctionProps,
   FunctionAttributes,
-  { env?: Record<string, any>; mounts?: Mount[] },
+  { env?: Record<string, any>; mounts?: MountContract },
   Providers
 >;
 

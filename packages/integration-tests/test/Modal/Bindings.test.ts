@@ -169,6 +169,31 @@ for (const host of hosts) {
         { tags: tags(host, "sandbox"), timeout: 300_000 },
       );
 
+      routerTest(
+        "start a process, stream its output, write its stdin, and open a PTY",
+        Effect.gen(function* () {
+          const body = yield* get<{
+            exitCode: number;
+            chunks: Array<{ fd: string; text: string; at: number }>;
+            pty: boolean;
+          }>(host, "/process");
+          expect(body.exitCode).toBe(0);
+          const text = (fd: string) =>
+            body.chunks
+              .filter((c) => c.fd === fd)
+              .map((c) => c.text)
+              .join("");
+          expect(text("stdout")).toBe("one\ngot=hello\n");
+          expect(text("stderr")).toBe("two\n");
+          // "one" streamed before the command finished, not at exit.
+          const one = body.chunks.find((c) => c.text.includes("one"))!;
+          const got = body.chunks.find((c) => c.text.includes("got="))!;
+          expect(got.at - one.at).toBeGreaterThan(2_000);
+          expect(body.pty).toBe(true);
+        }),
+        { tags: tags(host, "sandbox"), timeout: 300_000 },
+      );
+
       test(
         "find a sandbox by name",
         Effect.gen(function* () {

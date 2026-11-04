@@ -1,4 +1,5 @@
 import type * as sandbox from "@distilled.cloud/modal/sandbox";
+import { checkMountSupport, collectMountCapabilities, type MountCapability } from "alchemy/Mount";
 import * as Output from "alchemy/Output";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -183,7 +184,47 @@ export const modalMountsOf = (
     return { volumeMounts, cloudBucketMounts };
   });
 
-/** The `mounts` a host's bindings contributed, in binding order. */
-export const boundMounts = (
-  bindings: ReadonlyArray<{ readonly data: { readonly mounts?: ReadonlyArray<Mount> } }>,
-): ReadonlyArray<Mount> => bindings.flatMap((binding) => binding.data.mounts ?? []);
+/**
+ * What a Modal runtime's `mounts` binding contract holds: volume and bucket
+ * entries (`Modal.MountVolume`, `Modal.MountBucket`), and the install lines
+ * of other providers' mount clients (`alchemy/Mount`).
+ */
+export type MountContract = ReadonlyArray<Mount | MountCapability>;
+
+/** A host's binding data, for its `mounts` slice. */
+export type MountBindings = ReadonlyArray<{ readonly data: { readonly mounts?: MountContract } }>;
+
+const isCapability = (entry: Mount | MountCapability): entry is MountCapability =>
+  "install" in entry && "id" in entry;
+
+/** The volume and bucket entries a host's bindings contributed, in binding order. */
+export const boundMounts = (bindings: MountBindings): ReadonlyArray<Mount> =>
+  bindings.flatMap((binding) =>
+    (binding.data.mounts ?? []).filter((entry): entry is Mount => !isCapability(entry)),
+  );
+
+/** The mount clients other providers' bindings asked the host's image to install. */
+export const boundCapabilities = (bindings: MountBindings): ReadonlyArray<MountCapability> =>
+  collectMountCapabilities(
+    bindings.map((binding) => ({
+      data: { mounts: (binding.data.mounts ?? []).filter(isCapability) },
+    })),
+  );
+
+/**
+ * What a Modal container provides to mount clients. Modal runs containers
+ * under gVisor without `CAP_SYS_ADMIN`: `/dev/fuse` exists, but `mount`
+ * fails with permission denied, for FUSE and NFS alike.
+ */
+export const MODAL_MOUNT_SUPPORT = { fuse: false, nfs: false } as const;
+
+/** Fail when a mount client needs what a Modal container can't provide. */
+export const checkModalMounts = (host: string, capabilities: ReadonlyArray<MountCapability>) => {
+  const unsupported = checkMountSupport(
+    host,
+    capabilities,
+    MODAL_MOUNT_SUPPORT,
+    "Mount Modal volumes and cloud buckets with Modal.MountVolume and Modal.MountBucket instead.",
+  );
+  return unsupported === undefined ? Effect.void : Effect.fail(unsupported);
+};
