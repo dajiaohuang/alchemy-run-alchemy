@@ -97,6 +97,25 @@ describe("CreateSandbox", () => {
   );
 });
 
+describe("CreateSandbox lifecycle", () => {
+  test.skipIf(!!process.env.FAST)(
+    "signed preview, SSH access and signing keys; fork and pause refused for containers",
+    Effect.gen(function* () {
+      expect(yield* get("/sandbox-lifecycle")).toEqual({
+        page: { status: 200, body: "signed-ok" },
+        ssh: true,
+        key: true,
+        rotated: true,
+        // Daytona Cloud forks only some sandbox classes; the default snapshot's isn't one.
+        fork: "ForkNotSupported",
+        // Container sandboxes can't pause either.
+        pause: "PauseNotSupported",
+      });
+    }),
+    { tags, timeout: 300_000 },
+  );
+});
+
 describe("CreateSandbox resources", () => {
   test(
     "resources on create fail with SandboxResourcesFromSnapshot",
@@ -125,6 +144,79 @@ describe("CreateSandbox computer use", () => {
 });
 
 describe("ConnectSandbox", () => {
+  test(
+    "files: upload text and bytes, find, search, replace, download, move, chmod, delete",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/files")).toEqual({
+        listed: ["a.txt", "b.bin"],
+        found: [{ file: "a.txt", line: 1 }],
+        searched: ["a.txt"],
+        text: "hello daytona\n",
+        bytes: [0, 1, 2, 255],
+        moved: { name: "c.txt", permissions: "0600" },
+        gone: "gone",
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "processes: a stateful session, async logs, a code run, a resized PTY",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/processes")).toEqual({
+        echoed: "hi",
+        asyncLogs: "done",
+        listed: true,
+        commands: 3,
+        code: "42",
+        pty: true,
+        resized: { cols: 120, rows: 40 },
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "git: init, commit, branch, history, clone",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/git")).toEqual({
+        empty: "GitReferenceNotFound",
+        status: { branch: "main", clean: true },
+        hash: 40,
+        branches: ["feature", "main"],
+        current: "feature",
+        history: ["first"],
+        cloned: true,
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "language server: symbols and completions for a TypeScript file",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/lsp")).toEqual({ symbols: ["greet"], completes: true });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "interpreter contexts, listening ports, version, home and metrics",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/system")).toMatchObject({
+        context: "python",
+        listed: true,
+        inUse: true,
+        ports: true,
+        home: expect.stringMatching(/^\//),
+        version: true,
+        cpus: expect.any(Number),
+        memory: true,
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
   test(
     "runs commands in the deployed sandbox and reads its preview URL",
     Effect.gen(function* () {

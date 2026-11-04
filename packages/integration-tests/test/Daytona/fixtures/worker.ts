@@ -2,11 +2,13 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Daytona from "@alchemy.run/daytona";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as HttpClient from "effect/http/HttpClient";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
 import { DevBox } from "./resources.ts";
+import * as Toolbox from "./toolbox.ts";
 
 export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
   "DaytonaWorker",
@@ -23,6 +25,7 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
     const organization = yield* Daytona.ReadOrganization();
     const usage = yield* Daytona.ReadUsage();
     const audit = yield* Daytona.ReadAuditLogs();
+    const http = yield* HttpClient.HttpClient;
 
     return {
       fetch: Effect.gen(function* () {
@@ -54,6 +57,79 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
             size: info.size,
             found: found?.sandboxId === sandbox.sandboxId,
             listed: listed.some((s) => s.id === sandbox.sandboxId),
+          });
+        }
+
+        if (url.pathname.startsWith("/toolbox/")) {
+          const run = {
+            files: Toolbox.files,
+            processes: Toolbox.processes,
+            git: Toolbox.git,
+            lsp: Toolbox.lsp,
+            system: Toolbox.system,
+          }[url.pathname.slice("/toolbox/".length)];
+          if (run === undefined) return HttpServerResponse.text("not found", { status: 404 });
+          return yield* HttpServerResponse.json(yield* run(devBox, prefix));
+        }
+
+        if (url.pathname === "/sandbox-lifecycle") {
+          const sandbox = yield* Effect.acquireRelease(
+            sandboxes.create({
+              name: `alchemy-lifecycle-${prefix}`,
+              labels: { purpose: "lifecycle-test" },
+            }),
+            (s) => sandboxes.delete(s.sandboxId).pipe(Effect.ignore),
+          );
+          // Serve a page on a port and reach it through a signed preview URL.
+          yield* sandbox.process.createSession({ sessionId: "web" });
+          yield* sandbox.exec("mkdir -p /tmp/site && echo signed-ok > /tmp/site/index.html");
+          yield* sandbox.process.sessionExecuteCommand({
+            sessionId: "web",
+            command: "cd /tmp/site && python3 -m http.server 8080",
+            runAsync: true,
+          });
+          yield* sandbox.ports.isPortInUse({ port: 8080 }).pipe(
+            Effect.repeat({
+              schedule: Schedule.spaced("1 second"),
+              until: (r) => r.isInUse === true,
+              times: 15,
+            }),
+          );
+          const signed = yield* sandbox.getSignedPortPreviewUrl({
+            port: 8080,
+            expiresInSeconds: 120,
+          });
+          const page = yield* http
+            .get(signed.url)
+            .pipe(Effect.flatMap((r) => Effect.map(r.text, (body) => ({ status: r.status, body }))))
+            .pipe(
+              Effect.repeat({
+                schedule: Schedule.spaced("1 second"),
+                until: (r) => r.status === 200,
+                times: 10,
+              }),
+            );
+          yield* sandbox.expireSignedPortPreviewUrl({ port: 8080, token: signed.token });
+
+          const ssh = yield* sandbox.createSshAccess({ expiresInMinutes: 5 });
+          yield* sandbox.revokeSshAccess({ token: ssh.token });
+
+          const key = yield* sandbox.getSandboxSigningKey();
+          const rotated = yield* sandbox.rotateSigningKey();
+
+          const fork = yield* sandbox
+            .forkSandbox({ name: `alchemy-fork-${prefix}` })
+            .pipe(Effect.flip);
+
+          const pause = yield* sandbox.pauseSandbox().pipe(Effect.flip);
+
+          return yield* HttpServerResponse.json({
+            page: { status: page.status, body: page.body.trim() },
+            ssh: ssh.sshCommand.includes("ssh"),
+            key: typeof key === "string" && key.length > 0,
+            rotated: rotated !== undefined,
+            fork: fork._tag,
+            pause: pause._tag,
           });
         }
 
