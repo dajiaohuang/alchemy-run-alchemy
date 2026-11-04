@@ -6,6 +6,7 @@ import { Resource } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import type { Providers } from "./Providers.ts";
 
 export class DiskUserUnexpectedResponse extends Data.TaggedError(
@@ -157,8 +158,7 @@ export const DiskUser = Resource<DiskUser>("Archil.DiskUser");
 const userNickname = (id: string, nickname: string | undefined) =>
   nickname ? Effect.succeed(nickname) : createPhysicalName({ id, maxLength: 64, delimiter: "-" });
 
-/** The authorized user on a disk with this nickname or principal. */
-export const findDiskUser = Effect.fn(function* (
+const lookupDiskUser = Effect.fn(function* (
   diskId: string,
   match: { nickname?: string; principal?: string; identifier?: string },
 ) {
@@ -169,6 +169,29 @@ export const findDiskUser = Effect.fn(function* (
       : match.principal !== undefined
         ? user.principal === match.principal
         : user.nickname === match.nickname,
+  );
+});
+
+/**
+ * The authorized user on a disk with this identifier, nickname or principal.
+ *
+ * For a few seconds after a user is added, some `getDisk` reads still list
+ * the disk without it (removals show at once). So a listed user exists, but
+ * a user we created (`match.identifier`) counts as missing only after reads
+ * across that window all miss it.
+ */
+export const findDiskUser = Effect.fn(function* (
+  diskId: string,
+  match: { nickname?: string; principal?: string; identifier?: string },
+) {
+  const first = yield* lookupDiskUser(diskId, match);
+  if (first || match.identifier === undefined) return first;
+  return yield* lookupDiskUser(diskId, match).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("500 millis"),
+      until: (user) => user !== undefined,
+      times: 14,
+    }),
   );
 });
 
