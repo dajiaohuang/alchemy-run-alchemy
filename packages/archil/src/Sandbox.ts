@@ -1,7 +1,15 @@
+import * as BuildPlan from "@alchemy.run/docker/BuildPlan";
 import * as archil from "@distilled.cloud/archil";
 import { Unowned } from "alchemy/AdoptPolicy";
 import * as Bundle from "alchemy/Bundle/Bundle";
 import { deepEqual, isResolved } from "alchemy/Diff";
+import {
+  checkMountSupport,
+  collectMountCapabilities,
+  mountEnv,
+  mountInstallLines,
+  type MountCapability,
+} from "alchemy/Mount";
 import { Platform, type Main, type PlatformProps } from "alchemy/Platform";
 import * as Provider from "alchemy/Provider";
 import type { Resource, ResourceBinding } from "alchemy/Resource";
@@ -14,6 +22,13 @@ import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import type { Disk } from "./Disk.ts";
+import {
+  capabilities as imageCapabilities,
+  ImageRequiresBuild,
+  publishPlan,
+  pullImage,
+  type ImagePush,
+} from "./Image.ts";
 import {
   deletableSandboxStates,
   findSandboxByName,
@@ -53,10 +68,15 @@ export interface SandboxMountBinding extends DiskMountOptions {
   readonly diskId: string;
 }
 
-/** What bindings attach to a sandbox: its program's environment, and disks to mount. */
+/**
+ * What bindings attach to a sandbox: its program's environment, disks it
+ * mounts natively (`SandboxMountBinding`), and filesystem clients other
+ * mount bindings install into its image (`MountCapability`, from
+ * `alchemy/Mount`).
+ */
 export interface SandboxBinding {
   env?: Record<string, any>;
-  mounts?: ReadonlyArray<SandboxMountBinding>;
+  mounts?: ReadonlyArray<SandboxMountBinding | MountCapability>;
 }
 
 export interface SandboxProps extends PlatformProps {
@@ -146,6 +166,13 @@ export interface SandboxProps extends PlatformProps {
    * Their content is part of `code.hash`, so a change redeploys.
    */
   extraFiles?: ReadonlyArray<ProgramExtraFile>;
+  /**
+   * Where Alchemy pushes the sandbox's derived image, for Archil to pull.
+   * Only needed when a binding installs a filesystem client (an
+   * `alchemy/Mount` capability) into the program's image: Alchemy builds
+   * the base image plus those install lines with your local Docker.
+   */
+  push?: ImagePush;
 }
 
 export interface SandboxAttributes {
@@ -169,6 +196,11 @@ export interface SandboxAttributes {
   port: number | undefined;
   /** Content hash of the deployed program, when the sandbox runs one. */
   code: { hash: string } | undefined;
+  /**
+   * The image Alchemy built for the sandbox (its base plus the install
+   * lines its bindings contribute), when it needed one.
+   */
+  derivedImage: { imageId: string; hash: string } | undefined;
 }
 
 export type Sandbox = Resource<
@@ -424,6 +456,7 @@ export const toSandboxAttributes = (
   sandbox: archil.Sandbox,
   ports: ReadonlyArray<{ port: number; hostname: string }>,
   program?: { readonly port: number; readonly code: { hash: string } },
+  derivedImage?: { readonly imageId: string; readonly hash: string },
 ): SandboxAttributes => {
   const endpoints = ports.map((e) => ({ port: e.port, hostname: e.hostname }));
   const primary = (program && endpoints.find((e) => e.port === program.port)) ?? endpoints[0];
@@ -439,6 +472,7 @@ export const toSandboxAttributes = (
     url: primary ? `https://${primary.hostname}` : undefined,
     port: program?.port,
     code: program?.code,
+    derivedImage: derivedImage && { imageId: derivedImage.imageId, hash: derivedImage.hash },
   };
 };
 
@@ -446,12 +480,13 @@ export const toSandboxAttributes = (
 export const observeSandbox = Effect.fn(function* (
   sandbox: archil.Sandbox,
   program?: { readonly port: number; readonly code: { hash: string } },
+  derivedImage?: { readonly imageId: string; readonly hash: string },
 ) {
   const ports = yield* archil.listSandboxPorts({ sid: sandbox.sandbox_id }).pipe(
     Effect.map(({ data }) => data.ports ?? []),
     Effect.catchTag("SandboxNotFound", () => Effect.succeed([])),
   );
-  return toSandboxAttributes(sandbox, ports, program);
+  return toSandboxAttributes(sandbox, ports, program, derivedImage);
 });
 
 /** The create request for sandbox props, with mounts already on the wire. */
@@ -541,7 +576,7 @@ const desiredMounts = Effect.fn(function* (
   const wire = yield* toSandboxMounts(`Archil.Sandbox ${id}`, mounts ?? []);
   for (const binding of activeBindings(bindings)) {
     for (const mount of binding.data?.mounts ?? []) {
-      wire.push(yield* toSandboxMount(mount.diskId, mount));
+      if (!isCapability(mount)) wire.push(yield* toSandboxMount(mount.diskId, mount));
     }
   }
   // A binding and the props can name the same mount; keep one.
@@ -552,6 +587,65 @@ const desiredMounts = Effect.fn(function* (
     seen.add(key);
     return true;
   });
+});
+
+const isCapability = (mount: SandboxMountBinding | MountCapability): mount is MountCapability =>
+  "install" in mount;
+
+/** The filesystem clients bindings install into the sandbox's image. */
+const boundCapabilities = (bindings: ReadonlyArray<ResourceBinding<SandboxBinding>>) =>
+  collectMountCapabilities(
+    activeBindings(bindings).map((b) => ({
+      data: { mounts: (b.data?.mounts ?? []).filter(isCapability) },
+    })),
+  );
+
+/** The reference a derived image builds on: the `image`'s source, or `baseImage`. */
+const baseReference = Effect.fn(function* (props: SandboxProps) {
+  if (props.image === undefined) return props.baseImage ?? "node:24-bookworm";
+  const { data } = yield* archil.getImage({ image_id: props.image });
+  return data.canonical_source ?? data.source;
+});
+
+/**
+ * The plan for a sandbox's derived image: its base plus the install lines
+ * of the capabilities bound onto it. `undefined` when nothing is bound, so
+ * the sandbox boots its base directly. Archil sandboxes run as root with
+ * `/dev/fuse` and NFS, so every requirement is met.
+ */
+const planDerivedImage = Effect.fn(function* (
+  id: string,
+  props: SandboxProps,
+  capabilities: ReadonlyArray<MountCapability>,
+) {
+  if (capabilities.length === 0) return undefined;
+  const unsupported = checkMountSupport(`Archil.Sandbox ${id}`, capabilities, {
+    fuse: true,
+    nfs: true,
+  });
+  if (unsupported) return yield* unsupported;
+  return yield* BuildPlan.plan(
+    { image: yield* baseReference(props) },
+    { capabilities: imageCapabilities, install: mountInstallLines(capabilities) },
+  );
+});
+
+/** Build, push and pull a derived image, or keep the one `output` already has. */
+const ensureDerivedImage = Effect.fn(function* (
+  id: string,
+  plan: BuildPlan.BuildPlan,
+  push: ImagePush | undefined,
+  existing: { readonly imageId: string; readonly hash: string } | undefined,
+) {
+  if (existing?.hash === plan.hash) return existing;
+  if (push === undefined) {
+    return yield* new ImageRequiresBuild({
+      message: `Archil.Sandbox ${id}: a binding installs a filesystem client into its image, so Alchemy has to build one. Set \`push: { repository, credentials }\` for Archil to pull it from.`,
+    });
+  }
+  const published = yield* publishPlan(plan, push);
+  const image = yield* pullImage(published.source, published.credentials, plan.hash);
+  return { imageId: image.imageId, hash: plan.hash };
 });
 
 const sortedMounts = (mounts: ReadonlyArray<archil.SandboxMount>) =>
@@ -657,7 +751,7 @@ export const SandboxProvider = () =>
             .filter((s) => isAlchemyName(s.name) && s.status !== "deleted")
             .map((sandbox) => toSandboxAttributes(sandbox, []));
         }),
-        diff: Effect.fn(function* ({ id, olds, news, output }) {
+        diff: Effect.fn(function* ({ id, olds, news, output, newBindings }) {
           if (!isResolved(news)) return undefined;
           const name = output?.name ?? (yield* sandboxName(id, olds?.name));
           if (news.name !== undefined && news.name !== name) {
@@ -669,6 +763,19 @@ export const SandboxProvider = () =>
             const held = exclusiveDisks(olds);
             const deleteFirst = [...exclusiveDisks(news)].some((d) => held.has(d));
             return { action: "replace", deleteFirst } as const;
+          }
+          // A new set of installed clients builds a new image: a new sandbox.
+          if (output !== undefined && isResolved(newBindings)) {
+            const plan = yield* planDerivedImage(
+              id,
+              news,
+              boundCapabilities(newBindings as ReadonlyArray<ResourceBinding<SandboxBinding>>),
+            );
+            if (plan?.hash !== output.derivedImage?.hash) {
+              const held = exclusiveDisks(olds);
+              const deleteFirst = [...exclusiveDisks(news)].some((d) => held.has(d));
+              return { action: "replace", deleteFirst } as const;
+            }
           }
           if (news.main !== undefined) {
             const { hash } = yield* bundleProgram(
@@ -698,7 +805,7 @@ export const SandboxProvider = () =>
             output?.port !== undefined && output.code !== undefined
               ? { port: output.port, code: output.code }
               : undefined;
-          const attrs = yield* observeSandbox(sandbox, program);
+          const attrs = yield* observeSandbox(sandbox, program, output?.derivedImage);
           if (output === undefined && olds?.name !== undefined && !isAlchemyName(sandbox.name)) {
             return Unowned(attrs);
           }
@@ -707,17 +814,32 @@ export const SandboxProvider = () =>
         reconcile: Effect.fn(function* ({ id, news, output, bindings, session }) {
           const name = output?.name ?? (yield* sandboxName(id, news.name));
           const mounts = yield* desiredMounts(id, news.mounts, bindings);
+          const capabilities = boundCapabilities(bindings);
           const hosted = news.main !== undefined;
           // Observe
           let sandbox =
             (output ? yield* getSandbox(output.sandboxId) : undefined) ??
             (yield* findSandboxByName(name));
           // Ensure
+          const derivedPlan = yield* planDerivedImage(id, news, capabilities);
+          let derivedImage = output?.derivedImage;
+          if (derivedPlan !== undefined) {
+            if (derivedPlan.hash !== derivedImage?.hash) {
+              yield* session.note(`Building the image for sandbox ${name}...`);
+            }
+            derivedImage = yield* ensureDerivedImage(id, derivedPlan, news.push, derivedImage);
+          } else {
+            derivedImage = undefined;
+          }
           if (!sandbox) {
             yield* session.note(`Creating sandbox ${name}...`);
             const request = toCreateSandboxRequest(
               name,
-              { ...news, env: hosted ? undefined : news.env },
+              {
+                ...news,
+                image: derivedImage?.imageId ?? news.image,
+                env: hosted ? undefined : news.env,
+              },
               mounts,
             );
             sandbox = yield* archil.createSandbox(request).pipe(
@@ -777,7 +899,7 @@ export const SandboxProvider = () =>
               name: PROGRAM,
               port,
               program: bundled,
-              env: { ...bindingEnv, ...alchemyEnv, ...news.env },
+              env: { ...mountEnv(capabilities), ...bindingEnv, ...alchemyEnv, ...news.env },
             });
             yield* exposePort(sid, port);
             program = { port, code: { hash: bundled.hash } };
@@ -792,7 +914,7 @@ export const SandboxProvider = () =>
           }
           // Return
           const final = yield* getSandbox(sid);
-          return yield* observeSandbox(final ?? sandbox, program);
+          return yield* observeSandbox(final ?? sandbox, program, derivedImage);
         }),
         delete: Effect.fn(function* ({ output }) {
           yield* deleteSandbox(output.sandboxId);
