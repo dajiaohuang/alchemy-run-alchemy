@@ -5,11 +5,12 @@ import type * as Redacted from "effect/Redacted";
 import type { SecretsOps } from "./CreateSecretHttp.ts";
 import type { Environment } from "./Environment.ts";
 import type { ErrorOf, OpError } from "./internal.ts";
+import type { CreateOptions } from "./RuntimeObjects.ts";
 import type { lookupSecret, putSecret } from "./Secret.ts";
 import type { SecretAttributes } from "./Secret.ts";
 
 /** Write, find, list and delete secrets by name in one environment. */
-export interface SecretsClient {
+export interface SecretsClientOf<R> {
   /**
    * Create or overwrite the secret named `name` with `env`. Returns its
    * attributes, to pass as a sandbox `secrets` entry or in an outbound
@@ -18,11 +19,9 @@ export interface SecretsClient {
   put(
     name: string,
     env: Record<string, string | Redacted.Redacted<string>>,
-  ): Effect.Effect<SecretAttributes, ErrorOf<typeof putSecret>, RuntimeContext>;
+  ): Effect.Effect<SecretAttributes, ErrorOf<typeof putSecret>, R>;
   /** The secret named `name` (its variable names, never its values), or `undefined`. */
-  get(
-    name: string,
-  ): Effect.Effect<SecretAttributes | undefined, ErrorOf<typeof lookupSecret>, RuntimeContext>;
+  get(name: string): Effect.Effect<SecretAttributes | undefined, ErrorOf<typeof lookupSecret>, R>;
   /** Delete the secret named `name` (no-op when missing). */
   delete(
     name: string,
@@ -30,11 +29,14 @@ export interface SecretsClient {
     void,
     | ErrorOf<typeof lookupSecret>
     | Exclude<OpError<SecretsOps, "delete">, { readonly _tag: "SecretNotFound" }>,
-    RuntimeContext
+    R
   >;
   /** Names of every secret in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, OpError<SecretsOps, "list">, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<SecretsOps, "list">, R>;
 }
+
+/** A SecretsClient whose calls run inside a deployed runtime. */
+export type SecretsClient = SecretsClientOf<RuntimeContext>;
 
 /**
  * Store secrets by name at runtime, such as one per user, and hand them to
@@ -96,7 +98,7 @@ export interface SecretsClient {
 export interface CreateSecret extends Binding.Service<
   CreateSecret,
   "Modal.CreateSecret",
-  (environment?: Environment) => Effect.Effect<SecretsClient>
+  (environment?: Environment, options?: CreateOptions) => Effect.Effect<SecretsClient>
 > {}
 
 export const CreateSecret = Binding.Service<CreateSecret>("Modal.CreateSecret");

@@ -7,6 +7,7 @@ import type { ErrorOf, OpError } from "./internal.ts";
 import type { ensureQueue, lookupQueue } from "./Queue.ts";
 import type { QueueAttributes } from "./Queue.ts";
 import type { ReadWriteQueueClient } from "./QueueClient.ts";
+import type { CreateOptions } from "./RuntimeObjects.ts";
 
 /** A queue created or found at runtime: its attributes plus a read-write client. */
 export interface QueueHandle extends ReadWriteQueueClient {
@@ -17,15 +18,11 @@ export interface QueueHandle extends ReadWriteQueueClient {
 }
 
 /** Get, create, list and delete queues by name in one environment. */
-export interface QueuesClient {
+export interface QueuesClientOf<R> {
   /** The queue named `name`, created when missing (Modal's own get-or-create). */
-  getOrCreate(
-    name: string,
-  ): Effect.Effect<QueueHandle, ErrorOf<typeof ensureQueue>, RuntimeContext>;
+  getOrCreate(name: string): Effect.Effect<QueueHandle, ErrorOf<typeof ensureQueue>, R>;
   /** The queue named `name`, or `undefined`. */
-  get(
-    name: string,
-  ): Effect.Effect<QueueHandle | undefined, ErrorOf<typeof lookupQueue>, RuntimeContext>;
+  get(name: string): Effect.Effect<QueueHandle | undefined, ErrorOf<typeof lookupQueue>, R>;
   /** Delete the queue named `name` (no-op when missing). */
   delete(
     name: string,
@@ -33,11 +30,14 @@ export interface QueuesClient {
     void,
     | ErrorOf<typeof lookupQueue>
     | Exclude<OpError<QueuesOps, "delete">, { readonly _tag: "QueueNotFound" }>,
-    RuntimeContext
+    R
   >;
   /** Names of every queue in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, OpError<QueuesOps, "list">, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<QueuesOps, "list">, R>;
 }
+
+/** A QueuesClient whose calls run inside a deployed runtime. */
+export type QueuesClient = QueuesClientOf<RuntimeContext>;
 
 /**
  * Create queues by name at runtime: one per user, session or task.
@@ -84,7 +84,7 @@ export interface QueuesClient {
 export interface CreateQueue extends Binding.Service<
   CreateQueue,
   "Modal.CreateQueue",
-  (environment?: Environment) => Effect.Effect<QueuesClient>
+  (environment?: Environment, options?: CreateOptions) => Effect.Effect<QueuesClient>
 > {}
 
 export const CreateQueue = Binding.Service<CreateQueue>("Modal.CreateQueue");

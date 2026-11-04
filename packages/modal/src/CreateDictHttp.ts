@@ -2,14 +2,15 @@ import * as dict from "@distilled.cloud/modal/dict";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { makeOpenModalBinding } from "./BindingHttp.ts";
-import { CreateDict, type DictHandle, type DictsClient } from "./CreateDict.ts";
+import { CreateDict, type DictHandle, type DictsClientOf } from "./CreateDict.ts";
 import { ensureDict, lookupDict, type DictAttributes } from "./Dict.ts";
 import { DictOps, makeReadWriteDictClient } from "./DictClient.ts";
 import type { Environment } from "./Environment.ts";
 import { environmentOf, listAll, operations } from "./internal.ts";
+import { type CreateOptions, RuntimeStamp, stampedName, unstampedName } from "./RuntimeObjects.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const DictsOps = operations({
+export const DictsOps = operations({
   getOrCreate: dict.dictGetOrCreate,
   delete: dict.deleteDict,
   list: dict.listDict,
@@ -18,10 +19,10 @@ const DictsOps = operations({
 
 export type DictsOps = Effect.Success<typeof DictsOps>;
 
-const handleOf = (attributes: DictAttributes, ops: DictsOps): DictHandle => ({
+const handleOf = (attributes: DictAttributes, ops: DictsOps, name: string): DictHandle => ({
   ...makeReadWriteDictClient(Effect.succeed(attributes.dictId), ops.client),
   dictId: Effect.succeed(attributes.dictId),
-  name: attributes.name,
+  name,
   attributes,
 });
 
@@ -29,19 +30,20 @@ const handleOf = (attributes: DictAttributes, ops: DictsOps): DictHandle => ({
 export const makeDictsClient = (
   environment: Effect.Effect<string | undefined>,
   ops: DictsOps,
-): DictsClient => ({
+  prefix: Effect.Effect<string | undefined> = Effect.succeed(undefined),
+): DictsClientOf<never> => ({
   getOrCreate: (name) =>
-    Effect.flatMap(environment, (env) => ensureDict(ops.getOrCreate, name, env)).pipe(
-      Effect.map((attributes) => handleOf(attributes, ops)),
-    ),
+    Effect.flatMap(Effect.all([environment, prefix]), ([env, stamp]) =>
+      ensureDict(ops.getOrCreate, stampedName(stamp, name), env),
+    ).pipe(Effect.map((attributes) => handleOf(attributes, ops, name))),
   get: (name) =>
-    Effect.flatMap(environment, (env) => lookupDict(ops.getOrCreate, name, env)).pipe(
-      Effect.map((attributes) => (attributes ? handleOf(attributes, ops) : undefined)),
-    ),
+    Effect.flatMap(Effect.all([environment, prefix]), ([env, stamp]) =>
+      lookupDict(ops.getOrCreate, stampedName(stamp, name), env),
+    ).pipe(Effect.map((attributes) => (attributes ? handleOf(attributes, ops, name) : undefined))),
   delete: (name) =>
     Effect.gen(function* () {
       const env = yield* environment;
-      const found = yield* lookupDict(ops.getOrCreate, name, env);
+      const found = yield* lookupDict(ops.getOrCreate, stampedName(yield* prefix, name), env);
       if (!found) return;
       yield* ops
         .delete({ dictId: found.dictId })
@@ -50,6 +52,7 @@ export const makeDictsClient = (
   list: () =>
     Effect.gen(function* () {
       const env = yield* environment;
+      const stamp = yield* prefix;
       const items = yield* listAll(
         (pagination) =>
           ops
@@ -57,7 +60,10 @@ export const makeDictsClient = (
             .pipe(Effect.map((response) => response.dicts ?? [])),
         (item) => item.createdAt,
       );
-      return items.flatMap((item) => (item.name ? [item.name] : []));
+      return items.flatMap((item) => {
+        const own = item.name ? unstampedName(stamp, item.name) : undefined;
+        return own ? [own] : [];
+      });
     }),
 });
 
@@ -71,14 +77,18 @@ export const makeDictsClient = (
  */
 export const CreateDictHttp = Layer.effect(
   CreateDict,
-  makeOpenModalBinding({
-    tag: "Modal.CreateDict",
-    operations: DictsOps,
-    role: "contributor",
-    environmentOf: (environment?: Environment) => environment?.name,
-    make: Effect.fn(function* (ops, environment?: Environment) {
-      const name = environment ? yield* environment.name : Effect.succeed(undefined);
-      return makeDictsClient(name, ops);
-    }),
+  Effect.gen(function* () {
+    const runtimeStamp = yield* RuntimeStamp;
+    return yield* makeOpenModalBinding({
+      tag: "Modal.CreateDict",
+      operations: DictsOps,
+      role: "contributor",
+      environmentOf: (environment?: Environment, _options?: CreateOptions) => environment?.name,
+      make: Effect.fn(function* (ops, environment?: Environment, options?: CreateOptions) {
+        const name = environment ? yield* environment.name : Effect.succeed(undefined);
+        const stamp = yield* runtimeStamp("dict", environment, options);
+        return makeDictsClient(name, ops, stamp);
+      }),
+    });
   }),
 );

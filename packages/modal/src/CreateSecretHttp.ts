@@ -2,13 +2,14 @@ import * as secret from "@distilled.cloud/modal/secret";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { makeOpenModalBinding } from "./BindingHttp.ts";
-import { CreateSecret, type SecretsClient } from "./CreateSecret.ts";
+import { CreateSecret, type SecretsClientOf } from "./CreateSecret.ts";
 import type { Environment } from "./Environment.ts";
 import { environmentOf, listAll, operations } from "./internal.ts";
+import { type CreateOptions, RuntimeStamp, stampedName, unstampedName } from "./RuntimeObjects.ts";
 import { lookupSecret, putSecret } from "./Secret.ts";
 
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
-const SecretsOps = operations({
+export const SecretsOps = operations({
   getOrCreate: secret.secretGetOrCreate,
   delete: secret.deleteSecret,
   list: secret.listSecret,
@@ -20,13 +21,20 @@ export type SecretsOps = Effect.Success<typeof SecretsOps>;
 export const makeSecretsClient = (
   environment: Effect.Effect<string | undefined>,
   ops: SecretsOps,
-): SecretsClient => ({
-  put: (name, env) => Effect.flatMap(environment, (e) => putSecret(ops.getOrCreate, name, e, env)),
-  get: (name) => Effect.flatMap(environment, (e) => lookupSecret(ops.getOrCreate, name, e)),
+  prefix: Effect.Effect<string | undefined> = Effect.succeed(undefined),
+): SecretsClientOf<never> => ({
+  put: (name, env) =>
+    Effect.flatMap(Effect.all([environment, prefix]), ([e, stamp]) =>
+      putSecret(ops.getOrCreate, stampedName(stamp, name), e, env),
+    ),
+  get: (name) =>
+    Effect.flatMap(Effect.all([environment, prefix]), ([e, stamp]) =>
+      lookupSecret(ops.getOrCreate, stampedName(stamp, name), e),
+    ),
   delete: (name) =>
     Effect.gen(function* () {
       const env = yield* environment;
-      const found = yield* lookupSecret(ops.getOrCreate, name, env);
+      const found = yield* lookupSecret(ops.getOrCreate, stampedName(yield* prefix, name), env);
       if (!found) return;
       yield* ops
         .delete({ secretId: found.secretId })
@@ -35,6 +43,7 @@ export const makeSecretsClient = (
   list: () =>
     Effect.gen(function* () {
       const env = yield* environment;
+      const stamp = yield* prefix;
       const items = yield* listAll(
         (pagination) =>
           ops
@@ -44,7 +53,8 @@ export const makeSecretsClient = (
       );
       return items.flatMap((item) => {
         const name = item.label ?? item.metadata?.name;
-        return name ? [name] : [];
+        const own = name ? unstampedName(stamp, name) : undefined;
+        return own ? [own] : [];
       });
     }),
 });
@@ -59,14 +69,18 @@ export const makeSecretsClient = (
  */
 export const CreateSecretHttp = Layer.effect(
   CreateSecret,
-  makeOpenModalBinding({
-    tag: "Modal.CreateSecret",
-    operations: SecretsOps,
-    role: "contributor",
-    environmentOf: (environment?: Environment) => environment?.name,
-    make: Effect.fn(function* (ops, environment?: Environment) {
-      const name = environment ? yield* environment.name : Effect.succeed(undefined);
-      return makeSecretsClient(name, ops);
-    }),
+  Effect.gen(function* () {
+    const runtimeStamp = yield* RuntimeStamp;
+    return yield* makeOpenModalBinding({
+      tag: "Modal.CreateSecret",
+      operations: SecretsOps,
+      role: "contributor",
+      environmentOf: (environment?: Environment, _options?: CreateOptions) => environment?.name,
+      make: Effect.fn(function* (ops, environment?: Environment, options?: CreateOptions) {
+        const name = environment ? yield* environment.name : Effect.succeed(undefined);
+        const stamp = yield* runtimeStamp("secret", environment, options);
+        return makeSecretsClient(name, ops, stamp);
+      }),
+    });
   }),
 );

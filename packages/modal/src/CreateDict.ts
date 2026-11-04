@@ -7,6 +7,7 @@ import type { DictAttributes } from "./Dict.ts";
 import type { ReadWriteDictClient } from "./DictClient.ts";
 import type { Environment } from "./Environment.ts";
 import type { ErrorOf, OpError } from "./internal.ts";
+import type { CreateOptions } from "./RuntimeObjects.ts";
 
 /** A dict created or found at runtime: its attributes plus a read-write client. */
 export interface DictHandle extends ReadWriteDictClient {
@@ -17,13 +18,11 @@ export interface DictHandle extends ReadWriteDictClient {
 }
 
 /** Get, create, list and delete dicts by name in one environment. */
-export interface DictsClient {
+export interface DictsClientOf<R> {
   /** The dict named `name`, created when missing (Modal's own get-or-create). */
-  getOrCreate(name: string): Effect.Effect<DictHandle, ErrorOf<typeof ensureDict>, RuntimeContext>;
+  getOrCreate(name: string): Effect.Effect<DictHandle, ErrorOf<typeof ensureDict>, R>;
   /** The dict named `name`, or `undefined`. */
-  get(
-    name: string,
-  ): Effect.Effect<DictHandle | undefined, ErrorOf<typeof lookupDict>, RuntimeContext>;
+  get(name: string): Effect.Effect<DictHandle | undefined, ErrorOf<typeof lookupDict>, R>;
   /** Delete the dict named `name` (no-op when missing). */
   delete(
     name: string,
@@ -31,11 +30,14 @@ export interface DictsClient {
     void,
     | ErrorOf<typeof lookupDict>
     | Exclude<OpError<DictsOps, "delete">, { readonly _tag: "DictNotFound" }>,
-    RuntimeContext
+    R
   >;
   /** Names of every dict in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, OpError<DictsOps, "list">, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<DictsOps, "list">, R>;
 }
+
+/** A DictsClient whose calls run inside a deployed runtime. */
+export type DictsClient = DictsClientOf<RuntimeContext>;
 
 /**
  * Create dicts by name at runtime: one per user, session or task.
@@ -82,7 +84,7 @@ export interface DictsClient {
 export interface CreateDict extends Binding.Service<
   CreateDict,
   "Modal.CreateDict",
-  (environment?: Environment) => Effect.Effect<DictsClient>
+  (environment?: Environment, options?: CreateOptions) => Effect.Effect<DictsClient>
 > {}
 
 export const CreateDict = Binding.Service<CreateDict>("Modal.CreateDict");

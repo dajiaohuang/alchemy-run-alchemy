@@ -4,6 +4,7 @@ import type * as Effect from "effect/Effect";
 import type { VolumesOps } from "./CreateVolumeHttp.ts";
 import type { Environment } from "./Environment.ts";
 import type { ErrorOf, OpError } from "./internal.ts";
+import type { CreateOptions } from "./RuntimeObjects.ts";
 import type { ensureVolume, lookupVolume } from "./Volume.ts";
 import type { VolumeAttributes } from "./Volume.ts";
 import type { ReadWriteVolumeClient } from "./VolumeClient.ts";
@@ -17,15 +18,11 @@ export interface VolumeHandle extends ReadWriteVolumeClient {
 }
 
 /** Get, create, list and delete volumes by name in one environment. */
-export interface VolumesClient {
+export interface VolumesClientOf<R> {
   /** The volume named `name`, created when missing (Modal's own get-or-create). */
-  getOrCreate(
-    name: string,
-  ): Effect.Effect<VolumeHandle, ErrorOf<typeof ensureVolume>, RuntimeContext>;
+  getOrCreate(name: string): Effect.Effect<VolumeHandle, ErrorOf<typeof ensureVolume>, R>;
   /** The volume named `name`, or `undefined`. */
-  get(
-    name: string,
-  ): Effect.Effect<VolumeHandle | undefined, ErrorOf<typeof lookupVolume>, RuntimeContext>;
+  get(name: string): Effect.Effect<VolumeHandle | undefined, ErrorOf<typeof lookupVolume>, R>;
   /** Delete the volume named `name` (no-op when missing). */
   delete(
     name: string,
@@ -33,11 +30,14 @@ export interface VolumesClient {
     void,
     | ErrorOf<typeof lookupVolume>
     | Exclude<OpError<VolumesOps, "delete">, { readonly _tag: "VolumeNotFound" }>,
-    RuntimeContext
+    R
   >;
   /** Names of every volume in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, OpError<VolumesOps, "list">, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<VolumesOps, "list">, R>;
 }
+
+/** A VolumesClient whose calls run inside a deployed runtime. */
+export type VolumesClient = VolumesClientOf<RuntimeContext>;
 
 /**
  * Create volumes by name at runtime: one per user, session or task.
@@ -85,7 +85,7 @@ export interface VolumesClient {
 export interface CreateVolume extends Binding.Service<
   CreateVolume,
   "Modal.CreateVolume",
-  (environment?: Environment) => Effect.Effect<VolumesClient>
+  (environment?: Environment, options?: CreateOptions) => Effect.Effect<VolumesClient>
 > {}
 
 export const CreateVolume = Binding.Service<CreateVolume>("Modal.CreateVolume");
