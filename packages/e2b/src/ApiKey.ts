@@ -41,9 +41,9 @@ export interface ApiKey extends Resource<
  * and secret in the team. Mint a separate key per app or CI system so you
  * can revoke one without the others.
  *
- * E2B manages API keys with a personal access token, not an API key: set
- * `accessToken` (and `teamId`) in the E2B profile, or `E2B_ACCESS_TOKEN` and
- * `E2B_TEAM_ID` in CI. E2B shows the key once, at creation; Alchemy keeps it
+ * E2B mints API keys only with a personal access token: set `accessToken`
+ * in the E2B profile, or `E2B_ACCESS_TOKEN` in CI. The team defaults to the
+ * token's default team. E2B shows the key once, at creation; Alchemy keeps it
  * in state as a `Redacted` value. A key whose value was lost is replaced.
  *
  * ### Creating an API key

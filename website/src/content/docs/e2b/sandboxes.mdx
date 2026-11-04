@@ -10,7 +10,7 @@ You create sandboxes at runtime with `E2B.CreateSandbox`. Pass a template or sna
 const sandboxes = yield* E2B.CreateSandbox(Agent);
 ```
 
-Provide `E2B.CreateSandboxHttp` on the Worker. The Worker gets your E2B API key as a secret.
+Provide `E2B.CreateSandboxHttp` on the Worker. The Worker gets its own E2B API key as a secret, revoked when the Worker is destroyed.
 
 ## One sandbox per request
 

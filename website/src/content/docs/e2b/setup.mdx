@@ -1,13 +1,19 @@
 ---
 title: Setup
-description: Give Alchemy an E2B API key.
+description: Give Alchemy your E2B access token.
 ---
 
 import PackageManagers from "../../../components/PackageManagers.astro";
 
-Sign up at [e2b.dev](https://e2b.dev), then copy an API key from the [dashboard](https://e2b.dev/dashboard?tab=keys). It starts with `e2b_`.
+Sign up at [e2b.dev](https://e2b.dev), then log in with the E2B CLI:
 
-E2B API keys are not scoped: a key reaches every sandbox, template, volume, and secret in the team. Use a separate team for tests.
+```sh
+npx @e2b/cli auth login
+```
+
+That writes your access token (`sk_e2b_…`) to `~/.e2b/config.json` as `accessToken`. It is the only credential Alchemy needs: it finds your team from it and mints a separate API key for each host that uses a binding.
+
+E2B keys are not scoped: a key reaches every sandbox, template, volume, and secret in the team. Use a separate team for tests.
 
 ## Add the provider
 
@@ -24,25 +30,25 @@ import * as E2B from "@alchemy.run/e2b";
 providers: Layer.mergeAll(Cloudflare.providers(), E2B.providers()),
 ```
 
-## Store the key in a profile
+## Store the token in a profile
 
 ```sh
 alchemy profile edit --add E2B
 ```
 
-Paste the API key when asked. Leave the access token and team id blank unless you manage [API keys](/e2b/api-keys) from your Stack.
+Paste the access token when asked. Leave the team id blank to use your default team, and the API key blank.
 
 See [Profiles](/environments/profiles) to learn how profiles work.
 
 ## Use environment variables in CI
 
-Set `E2B_API_KEY` and Alchemy uses it instead of your profile:
+Set `E2B_ACCESS_TOKEN` and Alchemy uses it instead of your profile:
 
 ```sh
-E2B_API_KEY=e2b_... alchemy deploy
+E2B_ACCESS_TOKEN=sk_e2b_... alchemy deploy
 ```
 
-`E2B.ApiKey` also needs `E2B_ACCESS_TOKEN` and `E2B_TEAM_ID`.
+An API key (`E2B_API_KEY`) is enough to deploy resources, but bindings and `E2B.ApiKey` need the access token: only it can mint keys.
 
 ## Next steps
 

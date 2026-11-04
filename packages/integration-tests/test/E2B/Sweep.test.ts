@@ -2,6 +2,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as E2B from "@alchemy.run/e2b";
 import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
+import * as apiKeys from "@distilled.cloud/e2b/api_keys";
 import * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import * as secrets from "@distilled.cloud/e2b/secrets";
 import * as Effect from "effect/Effect";
@@ -14,11 +15,21 @@ import E2BWorker from "./fixtures/worker.ts";
 const providers = Layer.mergeAll(E2B.providers(), Cloudflare.providers());
 const { test } = Test.make({ providers });
 
+/** The ids of the per-host API keys bindings mint. */
+const hostKeyIds = apiKeys
+  .listApiKeys({})
+  .pipe(
+    Effect.map(
+      (all) => new Set(all.filter((key) => key.name.includes("e2bhostkey")).map((key) => key.id)),
+    ),
+  );
+
 test.provider(
-  "destroying a host kills the sandboxes and deletes the secrets it created at runtime",
+  "destroying a host kills its runtime sandboxes and secrets and revokes its minted key",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
+      const before = yield* hostKeyIds;
       const { url } = yield* stack.deploy(
         Effect.gen(function* () {
           yield* BindingAgent;
@@ -42,6 +53,12 @@ test.provider(
       const left = (yield* res.json) as { sandboxId: string; secretId: string };
       expect(res.status).toBe(200);
 
+      // The Worker ran on its own minted key, not the deployer's credentials.
+      const minted = [...(yield* hostKeyIds)].filter((id) => !before.has(id));
+      expect(minted.length).toBeGreaterThan(0);
+      const used = (yield* apiKeys.listApiKeys({})).filter((key) => minted.includes(key.id));
+      expect(used.some((key) => key.lastUsed !== null && key.lastUsed !== undefined)).toBe(true);
+
       const alive = yield* sandboxes.getSandbox({ sandboxID: left.sandboxId });
       expect(alive.metadata?.["alchemy::host"]).toBe("E2BWorker");
 
@@ -57,6 +74,9 @@ test.provider(
         Effect.catchTag("NotFound", () => Effect.succeed("gone")),
       );
       expect(secret).toBe("gone");
+      // Destroying the host revokes its key.
+      const after = yield* hostKeyIds;
+      expect(minted.filter((id) => after.has(id))).toEqual([]);
     }),
   {
     tags: ["provider:e2b", "provider:e2b:sweep", "provider:cloudflare", "live"],

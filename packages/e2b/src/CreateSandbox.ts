@@ -67,8 +67,9 @@ export interface SandboxesClient {
  * metadata, and the sandboxes still running or paused when the host is
  * destroyed are killed (`onDestroy: "retain"` keeps them).
  *
- * E2B API keys are not scoped: the host gets the team key the stack deploys
- * with, as a `Redacted` value.
+ * The host gets its own E2B API key, minted at deploy and revoked when the
+ * host is destroyed. E2B keys are not scoped, so the key reaches the whole
+ * team; it is never the deployer's own.
  *
  * ### Creating sandboxes
  * **Example:** One sandbox per request, killed when the request ends

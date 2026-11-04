@@ -78,4 +78,6 @@ Both kinds return the same handles, and their calls take E2B's own parameters.
 
 ## Access
 
-E2B keys are not scoped, so every host that uses a binding gets your team's API key, as a `Redacted` value. Data calls inside a sandbox use the sandbox's own token, and volume files use the volume's own token.
+Every host that uses a binding gets its own E2B API key. Alchemy mints it at deploy with your access token and revokes it when the host is destroyed. Your own credentials never reach the host.
+
+E2B keys are not scoped, so a host's key still reaches the whole team. Data calls inside a sandbox use the sandbox's own token, and volume files use the volume's own token.

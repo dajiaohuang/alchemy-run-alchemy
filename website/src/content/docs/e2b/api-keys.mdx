@@ -5,15 +5,11 @@ description: Create E2B API keys for your apps and CI.
 
 E2B keys are not scoped: each one reaches the whole team. Use one key per app or CI system so you can revoke one without the others.
 
+Bindings already do this for you: each host gets its own key, revoked when the host is destroyed.
+
 ## Set up access
 
-E2B manages API keys with a personal access token, not an API key. Add it to your profile:
-
-```sh
-alchemy profile edit --add E2B
-```
-
-Enter the access token (`sk_e2b_…`) and team id when asked. In CI, set `E2B_ACCESS_TOKEN` and `E2B_TEAM_ID`.
+E2B mints API keys only with a personal access token, the one [setup](/e2b/setup) stores in your profile. In CI, set `E2B_ACCESS_TOKEN`.
 
 ## Create a key
 

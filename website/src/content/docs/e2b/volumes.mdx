@@ -45,7 +45,7 @@ const report = yield* reports.readText("/report.json");
 const entries = yield* reports.list("/");
 ```
 
-Provide `E2B.ReadVolumeHttp`. The client uses the volume's own token, looked up with your API key.
+Provide `E2B.ReadVolumeHttp`. The client uses the volume's own token, looked up with the host's API key.
 
 ## Write files without a sandbox
 

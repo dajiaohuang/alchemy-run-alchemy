@@ -7,7 +7,7 @@ import type { ReadVolumeClient } from "./VolumeFiles.ts";
  * Read a {@link Volume}'s files from outside any sandbox: a report a sandbox wrote, a dataset to inspect.
  *
  * The client talks to E2B's volume content API with the volume's own token,
- * looked up once through the team key the host is bound with.
+ * looked up once through the host's API key.
  *
  * ### Using the client
  * **Example:** In a Worker
