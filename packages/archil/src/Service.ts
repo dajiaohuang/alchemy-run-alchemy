@@ -14,7 +14,13 @@ import { Stack } from "alchemy/Stack";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { getSandbox } from "./internal/archil.ts";
-import { bundleProgram, deployService, removeService } from "./internal/hosted.ts";
+import {
+  bundleProgram,
+  deployService,
+  removeService,
+  type ServiceBuildOptions,
+  type ServiceExtraFile,
+} from "./internal/hosted.ts";
 import type { Providers } from "./Providers.ts";
 import type { Sandbox } from "./Sandbox.ts";
 
@@ -52,8 +58,19 @@ export interface ServiceProps extends PlatformProps {
    * attributes. Merged after the environment bindings add.
    */
   env?: Record<string, any>;
-  /** Bundler options for `main` (rolldown `input` / `output`). */
-  build?: Bundle.BundleConfig;
+  /**
+   * Bundler options for `main` (rolldown `input` / `output`), and
+   * `install`: packages to `npm install` next to the program instead of
+   * bundling them.
+   */
+  build?: ServiceBuildOptions;
+  /**
+   * Host files or directories uploaded with the program, e.g. a site's
+   * built assets. With `extraFiles`, an async `main` is treated as a
+   * complete Node program and uploaded as built instead of bundled.
+   * Their content is part of `code.hash`, so a change redeploys.
+   */
+  extraFiles?: ReadonlyArray<ServiceExtraFile>;
 }
 
 export interface ServiceAttributes {
@@ -299,7 +316,7 @@ export const ServiceProvider = () =>
             sid,
             name,
             port,
-            files: program.files,
+            program,
             env: { ...bindingEnv, ...alchemyEnv, ...news.env },
           });
           const hostname = yield* exposePort(sid, port);

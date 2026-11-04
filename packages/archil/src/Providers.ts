@@ -1,6 +1,11 @@
 import { CredentialsStoreLive } from "alchemy/Auth/Credentials";
 import { ProfileStoreLive } from "alchemy/Auth/Profile";
+import * as Command from "alchemy/Command";
 import * as Provider from "alchemy/Provider";
+import {
+  Server as WebsiteServer,
+  ServerProvider as WebsiteServerProvider,
+} from "alchemy/Website/Server";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import { ApiToken, ApiTokenProvider } from "./ApiToken.ts";
@@ -50,6 +55,7 @@ export const providers = () =>
       Sandbox,
       SandboxPortToken,
       Service,
+      WebsiteServer,
     ]),
   ).pipe(
     Layer.provide(
@@ -65,8 +71,10 @@ export const providers = () =>
         SandboxProvider(),
         SandboxPortTokenProvider(),
         ServiceProvider(),
+        WebsiteServerProvider(),
       ),
     ),
+    Layer.provideMerge(Command.providers()),
     Layer.provideMerge(Credentials.fromAuthProvider()),
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(ArchilAuth),

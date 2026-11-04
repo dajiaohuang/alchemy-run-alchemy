@@ -344,6 +344,9 @@
       "path": "./examples/cloudflare-archil-workspaces/tsconfig.json"
     },
     {
+      "path": "./examples/archil-website-vite/tsconfig.json"
+    },
+    {
       "path": "./examples/cloudflare-secrets-store/tsconfig.json"
     },
     {

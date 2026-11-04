@@ -44,6 +44,7 @@ const examples = [
   "./examples/cloudflare-tanstack-start-solid",
   "./examples/cloudflare-neon-drizzle",
   "./examples/cloudflare-archil-workspaces",
+  "./examples/archil-website-vite",
   "./examples/cloudflare-vue",
   "./examples/cloudflare-website-solidstart",
   "./examples/cloudflare-foldkit-spa",

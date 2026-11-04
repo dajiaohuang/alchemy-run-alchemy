@@ -31,6 +31,7 @@
     ".": "./src/index.ts",
     "./Bootstrap": "./src/Bootstrap.ts",
     "./AWS": "./src/AWS/index.ts",
+    "./Website": "./src/Website/index.ts",
     "./*": "./src/*.ts",
     "./package.json": "./package.json"
   },
@@ -52,6 +53,12 @@
         "bun": "./src/AWS/index.ts",
         "worker": "./src/AWS/index.ts",
         "default": "./lib/AWS/index.js"
+      },
+      "./Website": {
+        "types": "./lib/Website/index.d.ts",
+        "bun": "./src/Website/index.ts",
+        "worker": "./src/Website/index.ts",
+        "default": "./lib/Website/index.js"
       },
       "./internal/*": null,
       "./*": {
