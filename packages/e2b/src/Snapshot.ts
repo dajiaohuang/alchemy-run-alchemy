@@ -1,5 +1,4 @@
 import * as crypto from "node:crypto";
-import * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import * as templates from "@distilled.cloud/e2b/templates";
 import { Unowned } from "alchemy/AdoptPolicy";
 import { isResolved } from "alchemy/Diff";

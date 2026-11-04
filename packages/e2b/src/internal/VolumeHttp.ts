@@ -7,21 +7,26 @@
  * lookup is not cached, so the next call retries it.
  */
 import { volumeConnectionFor } from "@distilled.cloud/e2b";
+import type { VolumeConnection } from "@distilled.cloud/e2b/Credentials";
 import * as volumeContent from "@distilled.cloud/e2b/volume_content";
 import * as volumes from "@distilled.cloud/e2b/volumes";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import type { ReadWriteVolumeClient } from "../VolumeFiles.ts";
 import type { E2BAuth } from "./Bindings.ts";
 
 const decoder = new TextDecoder();
 
+/** The volume-token connection plus an HTTP client: what volume-content calls need. */
+type VolumeLayer = Layer.Layer<VolumeConnection | HttpClient.HttpClient>;
+
 export const makeVolumeFiles = (
   auth: E2BAuth,
   volumeIdOf: Effect.Effect<string>,
 ): ReadWriteVolumeClient => {
-  let cached: { readonly volumeId: string; readonly layer: Layer.Layer<never> } | undefined;
+  let cached: { readonly volumeId: string; readonly layer: VolumeLayer } | undefined;
   /** The volume-token connection, looked up once. */
   const connection = Effect.suspend(() =>
     cached !== undefined
@@ -31,10 +36,7 @@ export const makeVolumeFiles = (
             Effect.map((volume) => {
               cached = {
                 volumeId,
-                layer: Layer.mergeAll(
-                  volumeConnectionFor(volume),
-                  FetchHttpClient.layer,
-                ) as Layer.Layer<never>,
+                layer: Layer.mergeAll(volumeConnectionFor(volume), FetchHttpClient.layer),
               };
               return cached;
             }),
@@ -42,10 +44,10 @@ export const makeVolumeFiles = (
         ),
   );
   /** Runs a volume-content call, given the volume id, with the volume's token. */
-  const inVolume = <A, E, R>(call: (volumeID: string) => Effect.Effect<A, E, R>) =>
-    Effect.flatMap(connection, ({ volumeId, layer }) =>
-      call(volumeId).pipe(Effect.provide(layer)),
-    ) as Effect.Effect<A, E | Effect.Error<typeof connection>, never>;
+  const inVolume = <A, E>(
+    call: (volumeID: string) => Effect.Effect<A, E, Layer.Success<VolumeLayer>>,
+  ) =>
+    Effect.flatMap(connection, ({ volumeId, layer }) => call(volumeId).pipe(Effect.provide(layer)));
 
   return {
     read: (path) => inVolume((volumeID) => volumeContent.readVolumeFile({ volumeID, path })),

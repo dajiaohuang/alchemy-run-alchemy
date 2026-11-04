@@ -1,6 +1,5 @@
 import * as webhooks from "@distilled.cloud/e2b/webhooks";
 import { Unowned } from "alchemy/AdoptPolicy";
-import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";

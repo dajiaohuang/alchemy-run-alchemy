@@ -110,10 +110,10 @@ export const makeSandboxHandle = (
     FetchHttpClient.layer,
   );
   /** An envd call against this sandbox. */
-  const inSandbox = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(Effect.provide(connection)) as Effect.Effect<A, E, never>;
-  const streamInSandbox = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
-    stream.pipe(Stream.provide(connection)) as Stream.Stream<A, E, never>;
+  const inSandbox = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof connection>>) =>
+    effect.pipe(Effect.provide(connection));
+  const streamInSandbox = <A, E>(stream: Stream.Stream<A, E, Layer.Success<typeof connection>>) =>
+    stream.pipe(Stream.provide(connection));
   const trafficToken =
     info.trafficAccessToken === undefined || info.trafficAccessToken === null
       ? undefined
@@ -128,22 +128,20 @@ export const makeSandboxHandle = (
     info,
     commands: {
       run: (command, options) =>
-        collect(streamInSandbox(process.startProcess(shell(command, options)))),
+        process.startProcess(shell(command, options)).pipe(streamInSandbox, collect),
       exec: (argv, options) =>
-        collect(
-          streamInSandbox(
-            process.startProcess({
-              process: {
-                cmd: argv[0],
-                args: argv.slice(1),
-                ...(options?.envs ? { envs: options.envs } : {}),
-                ...(options?.cwd ? { cwd: options.cwd } : {}),
-              },
-              ...(options?.tag ? { tag: options.tag } : {}),
-              ...(options?.stdin ? { stdin: true } : {}),
-            }),
-          ),
-        ),
+        process
+          .startProcess({
+            process: {
+              cmd: argv[0],
+              args: argv.slice(1),
+              ...(options?.envs ? { envs: options.envs } : {}),
+              ...(options?.cwd ? { cwd: options.cwd } : {}),
+            },
+            ...(options?.tag ? { tag: options.tag } : {}),
+            ...(options?.stdin ? { stdin: true } : {}),
+          })
+          .pipe(streamInSandbox, collect),
       start: (command, options) => streamInSandbox(process.startProcess(shell(command, options))),
       connect: (selector) => streamInSandbox(process.connectProcess({ process: selector })),
       list: () =>
