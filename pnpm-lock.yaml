@@ -8667,10 +8667,16 @@ importers:
       '@distilled.cloud/core':
         specifier: workspace:*
         version: link:../../submodules/distilled/packages/core
+      rolldown:
+        specifier: 1.2.13
+        version: 1.2.13
     devDependencies:
       '@alchemy.run/aws':
         specifier: workspace:*
         version: link:../aws
+      '@effect/platform-node':
+        specifier: 'catalog:'
+        version: 4.1.0(effect@4.1.0)(redis@6.2.1)
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.3
@@ -11092,6 +11098,9 @@ importers:
 
   submodules/distilled/packages/archil:
     dependencies:
+      '@distilled.cloud/aws4signer':
+        specifier: workspace:*
+        version: link:../aws4signer
       '@distilled.cloud/core':
         specifier: workspace:*
         version: link:../core

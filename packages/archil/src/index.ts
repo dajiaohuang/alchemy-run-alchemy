@@ -43,4 +43,6 @@ export * from "./RuntimeObjects.ts";
 export * from "./Sandbox.ts";
 export * from "./SandboxOptions.ts";
 export * from "./SandboxPortToken.ts";
+export * from "./Service.ts";
+export type { InferEnv } from "./InferEnv.ts";
 export * from "./WriteDisk.ts";

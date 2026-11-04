@@ -51,7 +51,11 @@ export interface SandboxProps {
   vcpuCount?: number;
   /** Memory in MiB, 256–65536. Changing it replaces the sandbox. @default 2048 */
   memSizeMiB?: number;
-  /** TCP ports to serve publicly. Updated in place. */
+  /**
+   * TCP ports to serve publicly. Updated in place. When set, it is the
+   * whole list: ports not in it are unexposed, including ports an
+   * `Archil.Service` exposed, so leave it unset when services run here.
+   */
   ports?: number[];
   /**
    * Let services inside the sandbox publish their own ingress.
