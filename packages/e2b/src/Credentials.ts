@@ -50,7 +50,8 @@ export const withTeamId = Effect.fn(function* (config: Config) {
 /**
  * Build a `Credentials` layer that resolves E2B credentials via the current
  * Alchemy profile, or directly from environment variables in CI. An access
- * token without a team id gets its default team's id.
+ * token without a team id gets its default team's id. A browser login's
+ * token is re-resolved (and refreshed) before it expires.
  */
 export const fromAuthProvider = () =>
   Layer.effect(
@@ -65,14 +66,16 @@ export const fromAuthProvider = () =>
           domain: creds.domain,
           apiBaseUrl: apiBaseUrlFor(creds.domain),
         }),
+        { expiresAt: (creds) => creds.expires },
       );
-      // The lookup runs once; a failed one is retried on the next call.
-      let resolved: Config | undefined;
+      // The team lookup runs once; a failed one is retried on the next call.
+      let teamId: string | undefined;
       return Effect.gen(function* () {
-        if (resolved !== undefined) return resolved;
-        const config = yield* Effect.flatMap(resolve, withTeamId);
-        resolved = config;
-        return config;
+        const config = yield* resolve;
+        if (teamId !== undefined && (config.teamId ?? "") === "") return { ...config, teamId };
+        const withTeam = yield* withTeamId(config);
+        teamId = withTeam.teamId;
+        return withTeam;
       });
     }),
   );
