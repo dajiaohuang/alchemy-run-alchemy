@@ -10,6 +10,9 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
 import { Service } from "../Service.ts";
+// Outputs stand in for plain prop values here: the engine resolves them
+// before reconcile, but Output<T> isn't assignable to T in the props type,
+// so those props are cast.
 import {
   DEFAULT_WEBSITE_PORT,
   resolveWebsiteSandbox,

@@ -19,6 +19,10 @@ import type { Providers } from "../Providers.ts";
 import { Sandbox } from "../Sandbox.ts";
 import { Service } from "../Service.ts";
 
+// Outputs stand in for plain prop values here: the engine resolves them
+// before reconcile, but Output<T> isn't assignable to T in the props type,
+// so those props are cast.
+
 /**
  * A resource-valued prop: the resource itself, or an Effect that produces
  * it (so `yield* Sandbox(...)` and `Sandbox(...)` both type-check).

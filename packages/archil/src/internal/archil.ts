@@ -93,11 +93,14 @@ export const listAllDisks = (name?: string) =>
       ),
   );
 
-/** Find a disk by exact name. */
+/**
+ * Find a live disk by exact name. Archil keeps listing a deleted disk under
+ * its name for a while, so those are skipped.
+ */
 export const findDiskByName = Effect.fn(function* (name: string) {
   return Option.getOrUndefined(
     yield* listAllDisks(name).pipe(
-      Stream.filter((disk) => disk.name === name),
+      Stream.filter((disk) => disk.name === name && disk.status !== "deleted"),
       Stream.runHead,
     ),
   );

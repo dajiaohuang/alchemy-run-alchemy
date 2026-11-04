@@ -34,11 +34,13 @@ test.provider(
       // The branch holds what the checkpoint captured; a later write on the
       // root doesn't reach it.
       yield* archil.execDisk({ id: seed.diskId, command: "echo changed > /mnt/archil/marker.txt" });
-      const root = yield* Objects.getObjectText({ disk: seed.diskId }, "marker.txt");
+      const root = yield* Objects.getObjectText({ disk: seed.diskId }, "marker.txt").pipe(
+        Effect.provide(Objects.ObjectCredentialsFromApiKey),
+      );
       const forked = yield* Objects.getObjectText(
         { disk: seed.diskId, branch: branch.name },
         "marker.txt",
-      );
+      ).pipe(Effect.provide(Objects.ObjectCredentialsFromApiKey));
       expect(root.trim()).toBe("changed");
       expect(forked.trim()).toBe("seeded");
 

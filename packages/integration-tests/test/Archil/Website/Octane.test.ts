@@ -78,10 +78,9 @@ test.provider(
 
       expect(yield* fs.readFileString(configPath)).toBe(raw);
       const url = deployed.site.url;
-      expect(url).toBeDefined();
       expect(url).toMatch(/^https:\/\//);
-      expect(deployed.site.service).toBeDefined();
-      expect(deployed.site.sandbox).toBeDefined();
+      expect(deployed.site.service!.port).toBe(3000);
+      expect(deployed.site.service!.sandboxId).toBe(deployed.site.sandbox!.sandboxId);
 
       yield* expectUrlContains(`${url!}/`, "OCTANE_AWS_PAGE_MARKER", {
         timeout: "90 seconds",

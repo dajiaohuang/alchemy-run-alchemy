@@ -355,7 +355,10 @@ export const ensureDisk = Effect.fn(function* (
   storage: DiskStorage | undefined,
   knownId?: string,
 ) {
-  const observed = (knownId ? yield* getDisk(knownId) : undefined) ?? (yield* findDiskByName(name));
+  const found = (knownId ? yield* getDisk(knownId) : undefined) ?? (yield* findDiskByName(name));
+  // A disk still being deleted (an earlier destroy) holds the name: let it go.
+  if (found?.status === "deleting") yield* waitForDiskGone(found.id);
+  const observed = found?.status === "deleting" ? undefined : found;
   if (observed) return yield* waitForDisk(observed.id);
   const created = yield* archil
     .createDisk({ name, mounts: storage ? [toMountConfig(storage)] : undefined })

@@ -26,7 +26,8 @@ export default class Api extends Archil.Service<Api>()(
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
         const key = new URL(request.url, "http://api").pathname.slice(1);
-        return HttpServerResponse.text(yield* files.getText(key));
+        const text = yield* files.getText(key);
+        return HttpServerResponse.text(text);
       }).pipe(Effect.orDie),
     };
   }).pipe(Effect.provide(Archil.ReadWriteDiskHttp)),

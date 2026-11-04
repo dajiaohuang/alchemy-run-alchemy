@@ -15,14 +15,16 @@ export default class Api extends Archil.Service<Api>()(
         const request = yield* HttpServerRequest;
         const key = new URL(request.url, "http://api").pathname.slice(1);
         if (request.method === "PUT") {
-          yield* files.put(key, yield* request.text);
+          const body = yield* request.text;
+          yield* files.put(key, body);
           return HttpServerResponse.empty({ status: 201 });
         }
         const file = yield* files.head(key);
         if (file === undefined) {
           return HttpServerResponse.text("not found", { status: 404 });
         }
-        return HttpServerResponse.text(yield* files.getText(key));
+        const text = yield* files.getText(key);
+        return HttpServerResponse.text(text);
       }).pipe(
         Effect.catch((error) =>
           Effect.succeed(HttpServerResponse.text(String(error), { status: 500 })),
