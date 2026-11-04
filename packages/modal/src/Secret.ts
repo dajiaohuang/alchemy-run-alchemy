@@ -15,6 +15,7 @@ import {
   listAll,
   objectName,
 } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class SecretUnexpectedResponse extends Data.TaggedError("Modal.SecretUnexpectedResponse")<{
@@ -119,7 +120,7 @@ export interface SecretAttributes {
  * @resource
  * @product Secret
  */
-export const Secret = Resource<Secret>("Modal.Secret");
+export const Secret = declarable<Secret>()(Resource<Secret>("Modal.Secret"));
 
 export type Secret = Resource<"Modal.Secret", SecretProps, SecretAttributes, never, Providers>;
 

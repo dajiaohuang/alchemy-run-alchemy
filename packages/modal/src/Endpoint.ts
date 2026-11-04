@@ -15,6 +15,7 @@ import {
   type EnvironmentInput,
   objectName,
 } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 /** Provisioning failed, was cancelled, or didn't finish in time. */
@@ -181,7 +182,7 @@ export interface EndpointAttributes {
  * @resource
  * @product Endpoint
  */
-export const Endpoint = Resource<Endpoint>("Modal.Endpoint");
+export const Endpoint = declarable<Endpoint>()(Resource<Endpoint>("Modal.Endpoint"));
 
 export type Endpoint = Resource<
   "Modal.Endpoint",

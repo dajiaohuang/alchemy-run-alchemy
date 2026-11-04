@@ -14,6 +14,7 @@ import {
   listAll,
   objectName,
 } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class VolumeUnexpectedResponse extends Data.TaggedError("Modal.VolumeUnexpectedResponse")<{
@@ -122,7 +123,7 @@ export interface VolumeAttributes {
  * @resource
  * @product Volume
  */
-export const Volume = Resource<Volume>("Modal.Volume");
+export const Volume = declarable<Volume>()(Resource<Volume>("Modal.Volume"));
 
 export type Volume = Resource<"Modal.Volume", VolumeProps, VolumeAttributes, never, Providers>;
 

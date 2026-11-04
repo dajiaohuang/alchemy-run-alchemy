@@ -14,6 +14,7 @@ import {
   objectName,
   stringMap,
 } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import { createModalInternalTags, hasModalAlchemyTags, isAlchemyTagged } from "./internal/Tags.ts";
 import type { Providers } from "./Providers.ts";
 
@@ -116,7 +117,7 @@ import * as Schedule from "effect/Schedule";
  * @resource
  * @product App
  */
-export const App = Resource<App>("Modal.App");
+export const App = declarable<App>()(Resource<App>("Modal.App"));
 
 export type App = Resource<"Modal.App", AppProps, AppAttributes, never, Providers>;
 

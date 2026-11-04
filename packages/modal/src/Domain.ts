@@ -4,6 +4,7 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class DomainUnexpectedResponse extends Data.TaggedError("Modal.DomainUnexpectedResponse")<{
@@ -74,7 +75,7 @@ export interface DomainAttributes {
  * @resource
  * @product Domain
  */
-export const Domain = Resource<Domain>("Modal.Domain");
+export const Domain = declarable<Domain>()(Resource<Domain>("Modal.Domain"));
 
 export type Domain = Resource<"Modal.Domain", DomainProps, DomainAttributes, never, Providers>;
 

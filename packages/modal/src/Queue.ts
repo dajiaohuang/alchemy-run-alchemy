@@ -14,6 +14,7 @@ import {
   listAll,
   objectName,
 } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class QueueUnexpectedResponse extends Data.TaggedError("Modal.QueueUnexpectedResponse")<{
@@ -104,7 +105,7 @@ export interface QueueAttributes {
  * @resource
  * @product Queue
  */
-export const Queue = Resource<Queue>("Modal.Queue");
+export const Queue = declarable<Queue>()(Resource<Queue>("Modal.Queue"));
 
 export type Queue = Resource<"Modal.Queue", QueueProps, QueueAttributes, never, Providers>;
 

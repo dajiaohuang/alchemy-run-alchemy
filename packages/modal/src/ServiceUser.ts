@@ -8,6 +8,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { type EnvironmentInput, envNameOf, objectName, seconds } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 import type { DurationInput } from "./SandboxClient.ts";
 
@@ -121,7 +122,7 @@ export interface ServiceUserAttributes {
  * @resource
  * @product Workspace
  */
-export const ServiceUser = Resource<ServiceUser>("Modal.ServiceUser");
+export const ServiceUser = declarable<ServiceUser>()(Resource<ServiceUser>("Modal.ServiceUser"));
 
 export type ServiceUser = Resource<
   "Modal.ServiceUser",

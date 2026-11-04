@@ -4,6 +4,7 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import { envNameOf } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 import {
   createPersistentSandbox,
@@ -67,7 +68,9 @@ export interface PersistentSandboxAttributes {
  * @resource
  * @product Sandbox
  */
-export const PersistentSandbox = Resource<PersistentSandbox>("Modal.PersistentSandbox");
+export const PersistentSandbox = declarable<PersistentSandbox>()(
+  Resource<PersistentSandbox>("Modal.PersistentSandbox"),
+);
 
 export type PersistentSandbox = Resource<
   "Modal.PersistentSandbox",

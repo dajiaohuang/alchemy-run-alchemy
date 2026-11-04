@@ -7,6 +7,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { objectName } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class WebhookTokenUnexpectedResponse extends Data.TaggedError(
@@ -92,7 +93,9 @@ export interface WebhookTokenAttributes {
  * @resource
  * @product WebhookToken
  */
-export const WebhookToken = Resource<WebhookToken>("Modal.WebhookToken");
+export const WebhookToken = declarable<WebhookToken>()(
+  Resource<WebhookToken>("Modal.WebhookToken"),
+);
 
 export type WebhookToken = Resource<
   "Modal.WebhookToken",

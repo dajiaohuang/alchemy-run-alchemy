@@ -14,6 +14,7 @@ import {
   listAll,
   objectName,
 } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class DictUnexpectedResponse extends Data.TaggedError("Modal.DictUnexpectedResponse")<{
@@ -104,7 +105,7 @@ export interface DictAttributes {
  * @resource
  * @product Dict
  */
-export const Dict = Resource<Dict>("Modal.Dict");
+export const Dict = declarable<Dict>()(Resource<Dict>("Modal.Dict"));
 
 export type Dict = Resource<"Modal.Dict", DictProps, DictAttributes, never, Providers>;
 

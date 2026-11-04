@@ -5,6 +5,7 @@ import { Resource } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { type EnvironmentInput, envNameOf, environmentOf, seconds } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class FunctionAutoscalerUnexpectedResponse extends Data.TaggedError(
@@ -89,7 +90,9 @@ export interface FunctionAutoscalerAttributes {
  * @resource
  * @product Function
  */
-export const FunctionAutoscaler = Resource<FunctionAutoscaler>("Modal.FunctionAutoscaler");
+export const FunctionAutoscaler = declarable<FunctionAutoscaler>()(
+  Resource<FunctionAutoscaler>("Modal.FunctionAutoscaler"),
+);
 
 export type FunctionAutoscaler = Resource<
   "Modal.FunctionAutoscaler",

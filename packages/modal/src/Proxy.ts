@@ -12,6 +12,7 @@ import {
   isGeneratedName,
   objectName,
 } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class ProxyUnexpectedResponse extends Data.TaggedError("Modal.ProxyUnexpectedResponse")<{
@@ -88,7 +89,7 @@ export interface ProxyAttributes {
  * @resource
  * @product Proxy
  */
-export const Proxy = Resource<Proxy>("Modal.Proxy");
+export const Proxy = declarable<Proxy>()(Resource<Proxy>("Modal.Proxy"));
 
 export type Proxy = Resource<"Modal.Proxy", ProxyProps, ProxyAttributes, never, Providers>;
 

@@ -3,6 +3,7 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import { envNameOf, type EnvironmentInput } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export interface WorkspaceSettingsProps {
@@ -63,7 +64,9 @@ export interface WorkspaceSettingsAttributes {
  * @resource
  * @product Workspace
  */
-export const WorkspaceSettings = Resource<WorkspaceSettings>("Modal.WorkspaceSettings");
+export const WorkspaceSettings = declarable<WorkspaceSettings>()(
+  Resource<WorkspaceSettings>("Modal.WorkspaceSettings"),
+);
 
 export type WorkspaceSettings = Resource<
   "Modal.WorkspaceSettings",

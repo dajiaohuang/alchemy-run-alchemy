@@ -5,6 +5,7 @@ import { Resource } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { isGeneratedName, objectName } from "./internal.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 
 export class EnvironmentUnexpectedResponse extends Data.TaggedError(
@@ -156,7 +157,7 @@ export interface EnvironmentAttributes {
  * @resource
  * @product Environment
  */
-export const Environment = Resource<Environment>("Modal.Environment");
+export const Environment = declarable<Environment>()(Resource<Environment>("Modal.Environment"));
 
 export type Environment = Resource<
   "Modal.Environment",

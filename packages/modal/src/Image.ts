@@ -9,6 +9,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import { buildImage, ImageBuildOps, type ImageBuildSpec } from "./ImageBuild.ts";
 import { checkCommands, lowerPlan, MODAL_CAPABILITIES } from "./ImagePlan.ts";
+import { declarable } from "./internal/Declared.ts";
 import type { Providers } from "./Providers.ts";
 import { createSandbox, SandboxOps } from "./SandboxClient.ts";
 
@@ -153,7 +154,7 @@ export interface ImageAttributes {
  * @resource
  * @product Image
  */
-export const Image = Resource<Image>("Modal.Image");
+export const Image = declarable<Image>()(Resource<Image>("Modal.Image"));
 
 export type Image = Resource<"Modal.Image", ImageProps, ImageAttributes, never, Providers>;
 
