@@ -46,14 +46,14 @@ export default class Api extends Cloudflare.Worker<Api>()(
 ```diff lang="typescript"
 // alchemy.run.ts
 +import Api from "./src/Api.ts";
- import { Base } from "./src/Images.ts";
+import { Base } from "./src/Images.ts";
 
-   Effect.gen(function* () {
-     const base = yield* Base;
+  Effect.gen(function* () {
+    const base = yield* Base;
 -    return { snapshot: base.name };
 +    const api = yield* Api;
 +    return { url: api.url.as<string>(), snapshot: base.name };
-   }),
+  }),
 ```
 
 ## Call it

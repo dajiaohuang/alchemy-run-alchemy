@@ -9,7 +9,7 @@ sidebar:
 
 ```diff lang="typescript"
 // src/Api.ts
-     const sandboxes = yield* Daytona.CreateSandbox(Base);
+    const sandboxes = yield* Daytona.CreateSandbox(Base);
 +    const volumes = yield* Daytona.CreateVolume({ onDestroy: "delete", prefix: "user-" });
 ```
 
