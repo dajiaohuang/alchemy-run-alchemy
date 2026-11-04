@@ -41,11 +41,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
 +        (sandbox) => Effect.ignore(sandbox.kill()),
 +      );
 +      yield* sandbox.files.write("main.mjs", code);
-+      return yield* sandbox.commands.run("node main.mjs");
++      return yield* sandbox.exec("node main.mjs");
 +    });
 ```
 
-The sandbox has no internet access and is killed when the request ends. `commands.run` returns `stdout`, `stderr`, and `exitCode`.
+The sandbox has no internet access and is killed when the request ends. `exec` returns `stdout`, `stderr`, and `exitCode`.
 
 ## Serve it
 
@@ -79,7 +79,7 @@ The sandbox has no internet access and is killed when the request ends. `command
 +            metadata: { user },
 +            timeout: 600,
 +            autoPause: true,
-+            volumeMounts: [{ name: home.name, path: "/home/user/work" }],
++            mounts: [{ volume: home, path: "/home/user/work" }],
 +          });
 +    });
 ```

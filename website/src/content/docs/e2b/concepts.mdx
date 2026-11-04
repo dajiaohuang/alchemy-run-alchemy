@@ -21,7 +21,7 @@ A snapshot is a template after some work: a repository cloned, its dependencies 
 
 ```typescript
 const warm = yield* E2B.Snapshot("Warm", {
-  template: agent.templateId,
+  template: Agent,
   run: ["git clone https://github.com/my-org/app", "cd app && npm ci"],
 });
 ```

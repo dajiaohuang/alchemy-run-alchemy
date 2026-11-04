@@ -51,7 +51,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         );
         const code = yield* request.text;
         yield* sandbox.files.write("main.mjs", code);
-        const result = yield* sandbox.commands.run("node main.mjs");
+        const result = yield* sandbox.exec("node main.mjs");
         return yield* HttpServerResponse.json(result);
       }).pipe(Effect.scoped, Effect.orDie),
     };

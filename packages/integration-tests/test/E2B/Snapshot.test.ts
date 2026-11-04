@@ -22,7 +22,7 @@ const expectTemplateGone = (templateId: string) =>
 const program = (run: string[]) =>
   Effect.gen(function* () {
     const base = yield* E2B.Template("SnapshotBase", { fromTemplate: "base" });
-    return yield* E2B.Snapshot("Warm", { template: base.templateId, run });
+    return yield* E2B.Snapshot("Warm", { template: base, run });
   });
 
 test.provider(

@@ -60,13 +60,20 @@ export interface Volume extends Resource<
  * ```
  *
  * ### Mounting a Volume
- * **Example:** Mount the volume into every sandbox
+ * **Example:** Mount it into a declared sandbox
  * ```typescript
- * const sandboxes = yield* E2B.CreateSandbox(Agent);
- * const cache = yield* Cache;
- * const sandbox = yield* sandboxes.create({
- *   volumeMounts: [{ name: cache.name, path: "/cache" }],
+ * export const Builder = E2B.Sandbox("Builder", {
+ *   template: Agent,
+ *   mounts: [{ volume: Cache, path: "/cache" }],
  * });
+ * ```
+ *
+ * **Example:** Mount it into the sandboxes a Worker creates
+ * ```typescript
+ * const cache = yield* E2B.MountVolume(Cache, { path: "/cache" });
+ * const sandboxes = yield* E2B.CreateSandbox(Agent);
+ * // in fetch:
+ * const sandbox = yield* sandboxes.create({ mounts: [cache] });
  * ```
  *
  * ### Reading files from outside a sandbox

@@ -6,13 +6,18 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import { declarable } from "./internal/Declared.ts";
 import { e2bName, isGeneratedName } from "./internal/Ownership.ts";
 import { takeSnapshot } from "./internal/SnapshotBuild.ts";
 import type { Providers } from "./Providers.ts";
+import type { SandboxTemplate } from "./Sandbox.ts";
 
 export interface SnapshotProps {
-  /** The template the snapshot starts from: a `Template`'s id or name. */
-  template: string;
+  /**
+   * The `E2B.Template` (or `E2B.Snapshot`) the snapshot starts from.
+   * Rebuilding it takes the snapshot again.
+   */
+  template: SandboxTemplate;
   /**
    * Shell commands run in order (`bash -l -c`) before the snapshot is taken:
    * clone a repository, install dependencies, warm a cache. A non-zero exit
@@ -79,9 +84,10 @@ export interface Snapshot extends Resource<
  * ### Creating a Snapshot
  * **Example:** A repository with its dependencies installed
  * ```typescript
- * const agent = yield* E2B.Template("Agent", { image: "node:22-bookworm" });
- * const warm = yield* E2B.Snapshot("Warm", {
- *   template: agent.templateId,
+ * export const Agent = E2B.Template("Agent", { image: "node:22-bookworm" });
+ *
+ * export const Warm = E2B.Snapshot("Warm", {
+ *   template: Agent,
  *   run: [
  *     "git clone https://github.com/alchemy-run/alchemy /home/user/alchemy",
  *     "cd /home/user/alchemy && pnpm install",
@@ -94,7 +100,7 @@ export interface Snapshot extends Resource<
  * ```typescript
  * const sandboxes = yield* E2B.CreateSandbox(Warm);
  * const sandbox = yield* sandboxes.create({ timeout: 600 });
- * yield* sandbox.commands.run("cd alchemy && pnpm test");
+ * yield* sandbox.exec("cd alchemy && pnpm test");
  * ```
  *
  * ### Referencing a snapshot the stack doesn't manage
@@ -110,14 +116,15 @@ export interface Snapshot extends Resource<
  * @resource
  * @product Snapshot
  */
-export const Snapshot = Resource<Snapshot>("E2B.Snapshot");
+export const Snapshot = declarable<Snapshot>()(Resource<Snapshot>("E2B.Snapshot"));
 
 const setupHashOf = (props: SnapshotProps) =>
   crypto
     .createHash("sha256")
     .update(
       JSON.stringify({
-        template: props.template,
+        template: props.template.templateId,
+        build: props.template.buildId ?? props.template.setupHash,
         run: props.run,
         envs: props.envs,
         cwd: props.cwd,
@@ -190,7 +197,10 @@ export const SnapshotProvider = () =>
           // Ensure — snapshotting under an existing name adds a new build to
           // the same template.
           yield* session.note(`Snapshotting ${name}...`);
-          const snapshot = yield* takeSnapshot(name, news);
+          const snapshot = yield* takeSnapshot(name, {
+            ...news,
+            template: news.template.templateId,
+          });
           const template = yield* observe(name);
           return {
             snapshotId: snapshot.snapshotID,

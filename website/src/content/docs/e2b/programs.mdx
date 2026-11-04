@@ -48,10 +48,8 @@ export default Alchemy.Stack(
   "Program",
   { providers: E2B.providers(), state: Alchemy.localState() },
   Effect.gen(function* () {
-    const program = yield* Program;
     const sandbox = yield* E2B.Sandbox("ProgramSandbox", {
-      template: program.templateId,
-      build: program.buildId,
+      template: Program,
       network: { allowPublicTraffic: true },
     });
     return { url: Output.interpolate`https://3000-${sandbox.sandboxId}.${sandbox.domain}` };
@@ -59,7 +57,7 @@ export default Alchemy.Stack(
 );
 ```
 
-An `E2B.Sandbox` gives the program a stable URL. The sandbox pauses when it is idle and the next request resumes it, memory included. `build` replaces the sandbox when the program is rebuilt.
+An `E2B.Sandbox` gives the program a stable URL. The sandbox pauses when it is idle and the next request resumes it, memory included. A new build of the program replaces the sandbox.
 
 ## Bindings inside the sandbox
 
@@ -109,4 +107,4 @@ A `main` without an Effect is bundled and run as-is. It must listen on `PORT`.
 
 ## Deploys
 
-A deploy rebuilds the template when the program's bundle changes. Sandboxes already running keep the old build, except an `E2B.Sandbox` given the template's `buildId`, which is replaced by one on the new build.
+A deploy rebuilds the template when the program's bundle changes. Sandboxes already running keep the old build, except an `E2B.Sandbox` declared from the template, which is replaced by one on the new build.

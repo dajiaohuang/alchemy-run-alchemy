@@ -39,44 +39,42 @@ With `autoPause`, E2B pauses the sandbox instead of killing it when the timeout 
 ```typescript
 // src/DevBox.ts
 import * as E2B from "@alchemy.run/e2b";
-import * as Effect from "effect/Effect";
 import { Agent } from "./Agent.ts";
 
-export const DevBox = Effect.gen(function* () {
-  const agent = yield* Agent;
-  return yield* E2B.Sandbox("DevBox", { template: agent.templateId, timeout: "10 minutes" });
-});
+export const DevBox = E2B.Sandbox("DevBox", { template: Agent, timeout: "10 minutes" });
 ```
 
-`E2B.Sandbox` declares one sandbox that lives as long as the stack. It runs for `timeout` after it starts or resumes, then E2B pauses it with its memory and files. A request to one of its URLs resumes it.
+`E2B.Sandbox` declares one sandbox that lives as long as the stack. It runs for `timeout` after it starts or resumes, then E2B pauses it with its memory and files. The next request to it resumes it. A rebuilt `Agent` replaces it.
 
 ```typescript
 // in the Worker's construction
-const declared = yield* DevBox;
-const devBox = yield* E2B.ConnectSandbox(declared);
+const devBox = yield* E2B.ConnectSandbox(DevBox);
 // in fetch
-const sandbox = yield* devBox.connect();
+const result = yield* devBox.exec("git pull && npm test", { cwd: "/home/user/repo" });
 ```
 
-`connect` resumes the sandbox if it is paused and returns the same handle as `create`. Provide `E2B.ConnectSandboxHttp` on the Worker.
+`ConnectSandbox` returns the same handle as `create`, with `sandboxId` read at runtime. Provide `E2B.ConnectSandboxHttp` on the Worker.
+
+With `autoResume: false`, calls into a paused sandbox fail with `SandboxNotRunning` until you call `devBox.resume()`.
 
 ## Run commands
 
 ```typescript
-const result = yield* sandbox.commands.run("npm test", { cwd: "/home/user/app" });
+const result = yield* sandbox.exec("npm test", { cwd: "/home/user/app" });
 // { stdout, stderr, exitCode, pid, error }
 ```
 
-A non-zero exit code is returned, not failed. `commands.exec(["node", "--version"])` runs an argument vector without a shell.
+A non-zero exit code is returned, not failed. `exec(["node", "--version"])` runs an argument vector without a shell. `stdin` feeds the command, and `timeout` kills it and fails with `E2B.ExecTimedOut`.
 
 ## Stream output
 
 ```typescript
-const events = sandbox.commands.start("npm run build");
-// a Stream of Start, Stdout, Stderr, then End with the exit code
+const build = yield* sandbox.start("npm run build");
+yield* build.output.pipe(Stream.runForEach((chunk) => Effect.log(chunk._tag)));
+const { exitCode } = yield* build.wait;
 ```
 
-Interrupting the stream detaches; the process keeps running. Re-attach with `commands.connect({ pid })` or stop it with `commands.kill({ pid })`.
+`start` returns a `Process` with its `output`, `write`, `kill` and `wait`. Closing the scope detaches; the process keeps running. Re-attach with `sandbox.processes.attach({ pid })`.
 
 ## Files
 
@@ -91,9 +89,12 @@ const entries = yield* sandbox.files.list("/home/user/app");
 ## Pseudo-terminals
 
 ```typescript
-const pty = sandbox.pty.create({ cols: 120, rows: 40 });
-yield* sandbox.pty.sendInput({ pid }, "ls\n");
+const pty = yield* sandbox.pty.open({ cols: 120, rows: 40 });
+yield* pty.write("ls\n");
+yield* pty.resize({ cols: 160, rows: 48 });
 ```
+
+`pty.output` streams the terminal's bytes. Closing the scope detaches.
 
 ## Ports
 

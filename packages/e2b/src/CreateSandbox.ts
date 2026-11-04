@@ -95,7 +95,7 @@ export interface SandboxesClient {
  *   sandboxes.create({ timeout: 120 }),
  *   (sandbox) => Effect.ignore(sandbox.kill()),
  * );
- * const result = yield* sandbox.commands.run("node --version");
+ * const result = yield* sandbox.exec("node --version");
  * ```
  *
  * **Example:** A long-lived sandbox per task, found by metadata
@@ -104,6 +104,38 @@ export interface SandboxesClient {
  * const sandbox = existing
  *   ? yield* sandboxes.connect(existing.sandboxID)
  *   : yield* sandboxes.create({ metadata: { task }, autoPause: true, timeout: 1800 });
+ * ```
+ *
+ * ### Running commands
+ * `exec` runs to completion and returns `{ exitCode, stdout, stderr }`; a
+ * non-zero exit is returned, not failed. A string runs in a login shell, an
+ * array runs directly.
+ *
+ * **Example:** A shell line, an argument vector, stdin and a timeout
+ * ```typescript
+ * const test = yield* sandbox.exec("npm test", { cwd: "/home/user/app" });
+ * const version = yield* sandbox.exec(["node", "--version"]);
+ * const sorted = yield* sandbox.exec("sort", { stdin: "b\na\n" });
+ * const slow = yield* sandbox.exec("make", { timeout: "2 minutes" }); // E2B.ExecTimedOut
+ * ```
+ *
+ * **Example:** Stream a process, then wait for it
+ * ```typescript
+ * const build = yield* sandbox.start("npm run build", { cwd: "/home/user/app" });
+ * yield* build.output.pipe(
+ *   Stream.runForEach((chunk) => Effect.log(new TextDecoder().decode(chunk.data))),
+ * );
+ * const { exitCode } = yield* build.wait;
+ * ```
+ *
+ * Closing the scope detaches: the process keeps running, and
+ * `sandbox.processes.attach({ pid })` picks it up again.
+ *
+ * **Example:** A terminal
+ * ```typescript
+ * const pty = yield* sandbox.pty.open({ cols: 120, rows: 40 });
+ * yield* pty.write("ls\n");
+ * yield* pty.resize({ cols: 160, rows: 48 });
  * ```
  *
  * ### Network and secrets

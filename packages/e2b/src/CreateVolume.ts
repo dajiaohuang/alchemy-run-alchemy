@@ -8,7 +8,7 @@ import type { ReadWriteVolumeClient } from "./VolumeFiles.ts";
 export interface VolumeHandle {
   /** E2B's volume id. */
   readonly volumeId: string;
-  /** The volume's name; sandboxes mount it with `volumeMounts: [{ name, path }]`. */
+  /** The volume's name. Mount it with `mounts: [{ volume, path }]`. */
   readonly name: string;
   /** The volume's files, readable and writable without a sandbox. */
   readonly files: ReadWriteVolumeClient;
@@ -49,7 +49,7 @@ export interface VolumesClient {
  * // in fetch:
  * const home = yield* volumes.getOrCreate(`user-${user}`);
  * const sandbox = yield* sandboxes.create({
- *   volumeMounts: [{ name: home.name, path: "/home/user/work" }],
+ *   mounts: [{ volume: home, path: "/home/user/work" }],
  * });
  * ```
  *

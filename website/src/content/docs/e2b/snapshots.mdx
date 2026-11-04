@@ -7,9 +7,8 @@ description: Start sandboxes from a warm base, snapshot a running sandbox, and f
 
 ```typescript
 // alchemy.run.ts
-const agent = yield* Agent;
 const warm = yield* E2B.Snapshot("Warm", {
-  template: agent.templateId,
+  template: Agent,
   run: [
     "git clone https://github.com/my-org/app /home/user/app",
     "cd /home/user/app && npm ci",
@@ -24,7 +23,7 @@ Alchemy boots the template, runs the commands, snapshots the sandbox with its me
 ```typescript
 const sandboxes = yield* E2B.CreateSandbox(Warm);
 const sandbox = yield* sandboxes.create({ timeout: 600 });
-yield* sandbox.commands.run("cd app && npm test");
+yield* sandbox.exec("cd app && npm test");
 ```
 
 ## Snapshot a running sandbox
@@ -41,7 +40,7 @@ Pass `memory: false` to keep only the filesystem; sandboxes from it boot fresh.
 ```typescript
 const results = yield* sandbox.fork({ count: 3 });
 for (const result of results) {
-  if (result._tag === "Forked") yield* result.sandbox.commands.run("npm test -- --shard");
+  if (result._tag === "Forked") yield* result.sandbox.exec("npm test -- --shard");
 }
 ```
 

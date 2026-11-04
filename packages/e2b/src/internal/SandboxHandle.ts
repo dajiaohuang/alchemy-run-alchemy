@@ -235,15 +235,13 @@ const makeOperations = (
     });
 
   const start = (command: Command, options?: StartOptions) =>
-    attachTo(
-      streamInSandbox(
-        process.startProcess({
-          process: processConfig(command, options?.cwd, options?.env),
-          ...(options?.tag ? { tag: options.tag } : {}),
-          ...(options?.stdin ? { stdin: true } : {}),
-        }),
-      ),
-    );
+    process
+      .startProcess({
+        process: processConfig(command, options?.cwd, options?.env),
+        ...(options?.tag ? { tag: options.tag } : {}),
+        ...(options?.stdin ? { stdin: true } : {}),
+      })
+      .pipe(streamInSandbox, (events) => attachTo(events));
 
   return {
     exec: (command, options) =>
@@ -287,20 +285,18 @@ const makeOperations = (
     pty: {
       open: (options) =>
         Effect.gen(function* () {
-          const proc = yield* attachTo(
-            streamInSandbox(
-              process.startProcess({
-                process: {
-                  cmd: "/bin/bash",
-                  args: options.command ? ["-l", "-c", options.command] : ["-i", "-l"],
-                  envs: { TERM: "xterm-256color", ...options.env },
-                  ...(options.cwd ? { cwd: options.cwd } : {}),
-                },
-                pty: { size: { cols: options.cols, rows: options.rows } },
-                ...(options.tag ? { tag: options.tag } : {}),
-              }),
-            ),
-          );
+          const proc = yield* process
+            .startProcess({
+              process: {
+                cmd: "/bin/bash",
+                args: options.command ? ["-l", "-c", options.command] : ["-i", "-l"],
+                envs: { TERM: "xterm-256color", ...options.env },
+                ...(options.cwd ? { cwd: options.cwd } : {}),
+              },
+              pty: { size: { cols: options.cols, rows: options.rows } },
+              ...(options.tag ? { tag: options.tag } : {}),
+            })
+            .pipe(streamInSandbox, (events) => attachTo(events));
           const selector: ProcessSelector = { pid: proc.pid };
           return {
             pid: proc.pid,
