@@ -1,4 +1,5 @@
 import * as AWS from "@alchemy.run/aws";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Modal from "@alchemy.run/modal";
 import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
@@ -10,7 +11,12 @@ import * as Schedule from "effect/Schedule";
 import RuntimeFunction from "./fixtures/runtime-function.ts";
 import { hostIdentity } from "./hostIdentity.ts";
 
-const providers = Layer.mergeAll(Modal.providers(), AWS.providers(), hostIdentity);
+const providers = Layer.mergeAll(
+  Modal.providers(),
+  AWS.providers(),
+  Cloudflare.providers(),
+  hostIdentity,
+);
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers });
 
 const Stack = Alchemy.Stack(
@@ -54,4 +60,13 @@ test(
     expect(body).toEqual({ agent: "async", greeting: "hello from async" });
   }),
   { tags, timeout: 600_000 },
+);
+
+test(
+  "a program mounts a volume (MountVolume) and a Cloudflare R2 bucket (mounts)",
+  Effect.gen(function* () {
+    const body = yield* get<{ volume: string; bucket: string }>("/mounts?key=m1");
+    expect(body).toEqual({ volume: "volume m1", bucket: "bucket m1" });
+  }),
+  { tags: [...tags, "provider:cloudflare"], timeout: 600_000 },
 );

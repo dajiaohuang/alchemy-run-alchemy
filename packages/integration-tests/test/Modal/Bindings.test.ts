@@ -152,6 +152,23 @@ for (const host of hosts) {
         { tags: tags(host, "sandbox"), timeout: 300_000 },
       );
 
+      routerTest(
+        "mount a volume handle and a MountVolume reference into a sandbox",
+        Effect.gen(function* () {
+          const body = yield* get<{
+            stdout: string;
+            exitCode: number;
+            size: number;
+            type: string;
+          }>(host, `/mount?key=m-${host.key}`);
+          expect(body.exitCode).toBe(0);
+          expect(body.stdout).toBe(`hello m-${host.key}\nmounted\n`);
+          expect(body.size).toBe(`hello m-${host.key}`.length);
+          expect(body.type).toBe("file");
+        }),
+        { tags: tags(host, "sandbox"), timeout: 300_000 },
+      );
+
       test(
         "find a sandbox by name",
         Effect.gen(function* () {

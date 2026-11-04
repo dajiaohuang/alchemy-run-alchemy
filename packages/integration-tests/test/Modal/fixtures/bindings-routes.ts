@@ -23,6 +23,7 @@ const BindingsLive = Layer.mergeAll(
   Modal.CreateDictHttp,
   Modal.CreateQueueHttp,
   Modal.CreateSecretHttp,
+  Modal.MountVolumeLive,
 );
 
 /**
@@ -47,6 +48,10 @@ export const bindingRoutes = Effect.gen(function* () {
   const dicts = yield* Modal.CreateDict(Agents);
   const queues = yield* Modal.CreateQueue(Agents);
   const secrets = yield* Modal.CreateSecret(Agents);
+  const mountedWorkspace = yield* Modal.MountVolume(Workspace, {
+    path: "/workspace",
+    readOnly: true,
+  });
 
   return {
     fetch: Effect.gen(function* () {
