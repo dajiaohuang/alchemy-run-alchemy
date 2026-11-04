@@ -71,25 +71,10 @@ export const sweep = Effect.fn(function* (prefix: string, kinds: ReadonlyArray<R
   }
 });
 
-// `Shared.lifecycle` would be this provider, but its `stables` is a
-// readonly tuple that `Provider.effect` rejects (it wants a mutable
-// array), so the provider is spelled out over the shared `stamp`.
 export const RuntimeObjectsProvider = () =>
   Provider.effect(
     RuntimeObjects,
-    Effect.succeed({
-      stables: ["tags", "owner", "prefix"],
-      nuke: { skip: true },
-      list: () => Effect.succeed([]),
-      read: Effect.fn(function* ({ output }) {
-        return output;
-      }),
-      reconcile: Effect.fn(function* ({ id, news, output }) {
-        return yield* Shared.stamp(id, news, output);
-      }),
-      delete: Effect.fn(function* ({ output }) {
-        if (output.onDestroy === "retain") return;
-        yield* sweep(output.prefix, output.kinds);
-      }),
-    }),
+    Effect.succeed(
+      Shared.lifecycle((attrs: RuntimeObjectsAttributes) => sweep(attrs.prefix, attrs.kinds)),
+    ),
   );
