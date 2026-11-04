@@ -69,6 +69,8 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
             system: Toolbox.system,
             "git-remote": Toolbox.gitRemote,
             sessions: Toolbox.sessions,
+            streams: Toolbox.streams,
+            bulk: Toolbox.bulk,
           }[url.pathname.slice("/toolbox/".length)];
           if (run === undefined) return HttpServerResponse.text("not found", { status: 404 });
           return yield* HttpServerResponse.json(yield* run(devBox, prefix));

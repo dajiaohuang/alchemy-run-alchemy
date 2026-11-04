@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { ConnectSandbox } from "./ConnectSandbox.ts";
 import { makeAccess } from "./DaytonaBindings.ts";
 import type { Sandbox } from "./Sandbox.ts";
@@ -37,6 +38,13 @@ export const ConnectSandboxHttp = Layer.effect(
  */
 const IDENTITY = new Set(["sandboxId", "name", "toolboxProxyUrl"]);
 
+/** Methods that return a Stream rather than an Effect. */
+const STREAMS = new Set([
+  "process.followSessionCommandLogs",
+  "process.followEntrypointLogs",
+  "interpreter.streamInterpreterCode",
+]);
+
 const lazyHandle = (resolve: Effect.Effect<DaytonaSandbox, never, any>): ConnectedSandbox => {
   const forward = (path: readonly string[]): unknown =>
     new Proxy(function () {}, {
@@ -45,12 +53,16 @@ const lazyHandle = (resolve: Effect.Effect<DaytonaSandbox, never, any>): Connect
         path.length === 0 && IDENTITY.has(key)
           ? Effect.map(resolve, (handle) => handle[key as "sandboxId"])
           : forward([...path, key]),
-      apply: (_t, _this, args: unknown[]) =>
-        Effect.flatMap(resolve, (handle) => {
+      apply: (_t, _this, args: unknown[]) => {
+        const call = Effect.map(resolve, (handle) => {
           let target: any = handle;
           for (const segment of path.slice(0, -1)) target = target[segment];
           return target[path.at(-1)!](...args);
-        }),
+        });
+        return STREAMS.has(path.join("."))
+          ? Stream.unwrap(call)
+          : Effect.flatMap(call, (effect) => effect);
+      },
     });
   // A Proxy has no static shape; it forwards every handle path to the
   // handle resolved at runtime, so the two are the same at the call site.

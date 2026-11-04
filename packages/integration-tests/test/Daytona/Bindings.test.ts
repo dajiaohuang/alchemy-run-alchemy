@@ -264,6 +264,42 @@ describe("ConnectSandbox", () => {
   );
 
   test(
+    "streams over WebSockets: code runs, terminals, followed logs",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/streams")).toEqual({
+        run: { stdout: "hi\n", stderr: "err", error: "ZeroDivisionError" },
+        chunks: "0\n1\n2\n",
+        timedOut: "InterpreterTimeout",
+        created: { output: true, exit: { exitCode: 3, reason: "non-zero exit" } },
+        connected: { size: true, exit: { exitCode: 0 } },
+        missing: "PtyConnectionRefused",
+        followed: { stdout: "out1\nout2\nout3\n", stderr: "err1\nerr2\nerr3\n" },
+        logs: { stdout: "out1\nout2\nout3\n", stderr: "err1\nerr2\nerr3\n" },
+        entrypoint: true,
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "bulk upload and download, with a per-path failure",
+    Effect.gen(function* () {
+      expect(yield* get("/toolbox/bulk")).toEqual({
+        uploaded: [
+          { path: "a.txt", bytes: 6 },
+          { path: "nested/b.bin", bytes: 4 },
+        ],
+        files: [
+          { path: "a.txt", content: "alpha\n" },
+          { path: "nested/b.bin", content: [0, 1, 2, 255] },
+        ],
+        errors: [{ path: "missing.txt", code: "FILE_NOT_FOUND", statusCode: 404 }],
+      });
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
     "language server: symbols and completions for a TypeScript file",
     Effect.gen(function* () {
       expect(yield* get("/toolbox/lsp")).toEqual({ symbols: ["greet"], completes: true });

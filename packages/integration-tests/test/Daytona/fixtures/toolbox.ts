@@ -1,6 +1,7 @@
 import type { ConnectedSandbox, DaytonaSandbox } from "@alchemy.run/daytona/SandboxClient";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 
 /** Every toolbox call works the same on either handle. */
 type Box = DaytonaSandbox | ConnectedSandbox;
@@ -54,7 +55,7 @@ export const processes = Effect.fn(function* (box: Box, prefix: string) {
     .pipe(
       Effect.repeat({
         schedule: Schedule.spaced("1 second"),
-        until: (l) => l.includes("done"),
+        until: (l) => l.stdout.includes("done"),
         times: 15,
       }),
     );
@@ -73,8 +74,8 @@ export const processes = Effect.fn(function* (box: Box, prefix: string) {
   yield* box.process.deletePtySession({ sessionId: ptyId });
 
   return {
-    echoed: (echoed.output ?? echoed.stdout ?? "").trim(),
-    asyncLogs: logs.trim(),
+    echoed: (echoed.stdout ?? "").trim(),
+    asyncLogs: logs.stdout.trim(),
     listed: listed.some((s) => s.sessionId === sessionId),
     commands: session.commands?.length ?? 0,
     code: (code.result ?? "").trim(),
@@ -355,7 +356,7 @@ export const sessions = Effect.fn(function* (box: Box, prefix: string) {
     .pipe(
       Effect.repeat({
         schedule: Schedule.spaced("1 second"),
-        until: (l) => l.includes("got:alchemy"),
+        until: (l) => l.stdout.includes("got:alchemy"),
         times: 15,
       }),
     );
@@ -391,10 +392,10 @@ export const sessions = Effect.fn(function* (box: Box, prefix: string) {
   yield* box.lsp.didClose({ languageId, pathToProject, uri });
   yield* box.lsp.stop({ languageId, pathToProject });
   return {
-    logs: logs.trim().split("\n").pop(),
+    logs: logs.stdout.trim().split("\n").pop(),
     command: command.command,
     entrypoint: entrypoint.sessionId,
-    entrypointLogs: typeof entrypointLogs,
+    entrypointLogs: typeof entrypointLogs.output,
     env: [withEnv.result.trim(), withoutEnv.result.trim()],
     symbols: symbols.map((s) => s.name),
   };
@@ -513,5 +514,141 @@ export const desktop = Effect.fn(function* (box: DaytonaSandbox) {
     setValue,
     process: { running: xfce.running, logs: typeof logs.logs, errors: typeof errors.errors },
     restarted: restarted.processName,
+  };
+});
+
+/**
+ * What streams over the toolbox's WebSockets: code interpreter runs,
+ * terminals (create-and-connect, connect to an existing one), and
+ * followed command and entrypoint logs. Also splits session logs into
+ * stdout and stderr over HTTP.
+ */
+export const streams = Effect.fn(function* (box: Box, prefix: string) {
+  const run = yield* box.interpreter.executeInterpreterCode({
+    code: "import sys\nprint('hi')\nsys.stderr.write('err')\n1/0",
+  });
+  const chunks = yield* box.interpreter
+    .streamInterpreterCode({
+      code: "import time\nfor i in range(3):\n    print(i, flush=True)\n    time.sleep(0.5)",
+    })
+    .pipe(Stream.runCollect);
+  const timedOut = yield* box.interpreter
+    .executeInterpreterCode({ code: "import time\ntime.sleep(10)", timeout: 1 })
+    .pipe(
+      Effect.map(() => "completed"),
+      Effect.catchTag("InterpreterTimeout", (e) => Effect.succeed(e._tag)),
+    );
+
+  const decode = (chunks: Iterable<Uint8Array>) => {
+    const decoder = new TextDecoder();
+    return Array.from(chunks, (c) => decoder.decode(c, { stream: true })).join("");
+  };
+
+  // Create a terminal and connect in one round trip; its env comes along.
+  const created = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const pty = yield* box.process.createPty({
+        id: `alchemy-ws-pty-${prefix}`,
+        envs: { ALCHEMY_PTY: "env-ok" },
+      });
+      yield* pty.write("echo marker-$ALCHEMY_PTY; exit 3\n");
+      const output = decode(yield* Stream.runCollect(pty.output));
+      return { output: output.includes("marker-env-ok"), exit: yield* pty.exit };
+    }),
+  );
+
+  // Connect to a terminal created over HTTP, resize it, then leave it.
+  const ptyId = `alchemy-ws-pty2-${prefix}`;
+  yield* box.process.deletePtySession({ sessionId: ptyId }).pipe(Effect.ignore);
+  yield* box.process.createPtySession({ id: ptyId, cols: 80, rows: 24 });
+  const connected = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const pty = yield* box.process.connectPty({ sessionId: ptyId });
+      yield* pty.resize(100, 30);
+      yield* pty.write("stty size; exit\n");
+      const output = decode(yield* Stream.runCollect(pty.output));
+      return { size: output.includes("30 100"), exit: yield* pty.exit };
+    }),
+  );
+  const missing = yield* Effect.scoped(
+    box.process.connectPty({ sessionId: "alchemy-no-such-pty" }),
+  ).pipe(
+    Effect.map(() => "connected"),
+    Effect.catchTag(["PtyConnectionRefused", "ToolboxSocketError"], (e) => Effect.succeed(e._tag)),
+  );
+
+  // Follow a command's output while it runs.
+  const sessionId = `alchemy-follow-${prefix}`;
+  yield* box.process.deleteSession({ sessionId }).pipe(Effect.ignore);
+  yield* box.process.createSession({ sessionId });
+  const started = yield* box.process.sessionExecuteCommand({
+    sessionId,
+    command: "for i in 1 2 3; do echo out$i; echo err$i >&2; sleep 1; done",
+    runAsync: true,
+  });
+  const followed = yield* box.process
+    .followSessionCommandLogs({ sessionId, commandId: started.cmdId })
+    .pipe(Stream.runCollect);
+  const joined = (stream: "stdout" | "stderr") =>
+    Array.from(followed)
+      .filter((p) => p.stream === stream)
+      .map((p) => p.text)
+      .join("");
+  const logs = yield* box.process.getSessionCommandLogs({ sessionId, commandId: started.cmdId });
+  yield* box.process.deleteSession({ sessionId });
+
+  // The entrypoint runs for the sandbox's life: follow it briefly.
+  const entrypoint = yield* box.process
+    .followEntrypointLogs()
+    .pipe(Stream.interruptWhen(Effect.sleep("3 seconds")), Stream.runCollect);
+
+  return {
+    run: {
+      stdout: run.stdout,
+      stderr: run.stderr,
+      error: run.error?.name,
+    },
+    chunks: Array.from(chunks)
+      .filter((c) => c.type === "stdout")
+      .map((c) => (c.type === "stdout" ? c.text : ""))
+      .join(""),
+    timedOut,
+    created,
+    connected,
+    missing,
+    followed: { stdout: joined("stdout"), stderr: joined("stderr") },
+    logs: { stdout: logs.stdout, stderr: logs.stderr },
+    entrypoint: Array.isArray(Array.from(entrypoint)),
+  };
+});
+
+/** Several files up and down in one request each, with a per-path failure. */
+export const bulk = Effect.fn(function* (box: Box, prefix: string) {
+  const dir = `/tmp/alchemy-bulk-${prefix}`;
+  yield* box.fs.deleteFile({ path: dir, recursive: true }).pipe(Effect.ignore);
+  const uploaded = yield* box.fs.uploadFiles({
+    files: [
+      { path: `${dir}/a.txt`, content: "alpha\n" },
+      { path: `${dir}/nested/b.bin`, content: new Uint8Array([0, 1, 2, 255]) },
+    ],
+  });
+  const downloaded = yield* box.fs.downloadFiles({
+    paths: [`${dir}/a.txt`, `${dir}/nested/b.bin`, `${dir}/missing.txt`],
+  });
+  yield* box.fs.deleteFile({ path: dir, recursive: true });
+  const name = (path: string) => path.slice(dir.length + 1);
+  return {
+    uploaded: uploaded.files.map((f) => ({ path: name(f.path), bytes: f.bytes })),
+    files: downloaded.files.map((f) => ({
+      path: name(f.path),
+      content: name(f.path).endsWith(".txt")
+        ? new TextDecoder().decode(f.content)
+        : Array.from(f.content),
+    })),
+    errors: downloaded.errors.map((e) => ({
+      path: name(e.path),
+      code: e.code,
+      statusCode: e.statusCode,
+    })),
   };
 });

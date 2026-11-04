@@ -28,6 +28,21 @@ import type { ConnectedSandbox } from "./SandboxClient.ts";
  * };
  * ```
  *
+ * ### Streaming a Terminal
+ * Terminals, code interpreter runs and followed logs stream over a
+ * WebSocket, so they work from a Worker too.
+ *
+ * **Example:** Run a script in a terminal and stream its output
+ * ```typescript
+ * const output = yield* Effect.scoped(
+ *   Effect.gen(function* () {
+ *     const pty = yield* devBox.process.createPty({ id: "build" });
+ *     yield* pty.write("pnpm build; exit\n");
+ *     return yield* pty.output.pipe(Stream.decodeText(), Stream.mkString);
+ *   }),
+ * );
+ * ```
+ *
  * ### Forking a Dev Box
  * Daytona forks `linux-vm` sandboxes; a container's fork fails with
  * `ForkNotSupported`.

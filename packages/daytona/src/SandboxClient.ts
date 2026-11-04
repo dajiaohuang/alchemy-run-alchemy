@@ -11,9 +11,13 @@ import * as sandboxes from "@distilled.cloud/daytona/sandbox";
 import * as server from "@distilled.cloud/daytona/server";
 import * as system from "@distilled.cloud/daytona/system";
 import * as telemetry from "@distilled.cloud/daytona/telemetry";
+import * as toolboxStreams from "@distilled.cloud/daytona/Toolbox";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import type * as HttpClient from "effect/http/HttpClient";
+import type * as Scope from "effect/Scope";
+import * as Socket from "effect/socket/Socket";
+import * as Stream from "effect/Stream";
 import { pick, scopeModule, type ScopedModule } from "./internal/Scoped.ts";
 import { inSandbox } from "./internal/Toolbox.ts";
 
@@ -74,6 +78,94 @@ export interface ExecOptions {
 }
 
 /**
+ * Terminals and followed logs: the process calls that stream over a
+ * WebSocket.
+ */
+export interface SandboxProcessStreams {
+  /**
+   * Create a terminal session and connect to it. The connection closes
+   * with the scope; the session keeps running until it exits or is
+   * killed.
+   */
+  createPty(
+    request: toolboxStreams.CreatePtyRequest,
+  ): Effect.Effect<
+    toolboxStreams.PtyConnection,
+    toolboxStreams.PtyError,
+    RuntimeContext | Scope.Scope
+  >;
+  /** Connect to an existing terminal session. The connection closes with the scope. */
+  connectPty(request: {
+    readonly sessionId: string;
+  }): Effect.Effect<
+    toolboxStreams.PtyConnection,
+    toolboxStreams.PtyError,
+    RuntimeContext | Scope.Scope
+  >;
+  /**
+   * Follow a session command's output while it runs, as stdout and
+   * stderr pieces. The stream ends when the command exits.
+   */
+  followSessionCommandLogs(request: {
+    readonly sessionId: string;
+    readonly commandId: string;
+  }): Stream.Stream<
+    toolboxStreams.LogOutput,
+    toolboxStreams.ToolboxSocketOpenError,
+    RuntimeContext
+  >;
+  /** Follow the entrypoint's output. The stream ends when the entrypoint exits. */
+  followEntrypointLogs(): Stream.Stream<
+    toolboxStreams.LogOutput,
+    toolboxStreams.ToolboxSocketOpenError,
+    RuntimeContext
+  >;
+}
+
+/** Code runs in an interpreter context, streamed over a WebSocket. */
+export interface SandboxInterpreterRuns {
+  /**
+   * Run code and wait for it: its stdout, stderr and the exception it
+   * raised, if any.
+   */
+  executeInterpreterCode(
+    request: toolboxStreams.InterpreterCodeRequest,
+  ): Effect.Effect<
+    toolboxStreams.InterpreterResult,
+    toolboxStreams.InterpreterCodeError,
+    RuntimeContext
+  >;
+  /** Run code and stream its output as it is produced. */
+  streamInterpreterCode(
+    request: toolboxStreams.InterpreterCodeRequest,
+  ): Stream.Stream<
+    toolboxStreams.InterpreterOutput,
+    toolboxStreams.InterpreterCodeError,
+    RuntimeContext
+  >;
+}
+
+/** Several files in one request. */
+export interface SandboxBulkFiles {
+  /** Upload several files. Existing files are overwritten; parent directories are created. */
+  uploadFiles(request: {
+    readonly files: ReadonlyArray<toolboxStreams.UploadFileEntry>;
+  }): Effect.Effect<
+    toolboxStreams.UploadFilesResult,
+    toolboxStreams.BulkTransferError,
+    RuntimeContext
+  >;
+  /** Download several files. A path that can't be read is reported in `errors`. */
+  downloadFiles(request: {
+    readonly paths: ReadonlyArray<string>;
+  }): Effect.Effect<
+    toolboxStreams.DownloadFilesResult,
+    toolboxStreams.BulkTransferError,
+    RuntimeContext
+  >;
+}
+
+/**
  * One Daytona sandbox, as a runtime client. Every Daytona operation that
  * acts on a sandbox is a method here, with Daytona's own parameters and
  * typed errors and the sandbox filled in: lifecycle on the handle itself
@@ -93,16 +185,16 @@ export interface DaytonaSandbox extends ScopedModule<SandboxOperations> {
   readonly name: string;
   /** The sandbox's toolbox proxy. */
   readonly toolboxProxyUrl: string;
-  /** Processes, sessions, PTYs and code runs. */
-  readonly process: ScopedModule<typeof process>;
-  /** Files: read, write, list, search, replace, permissions. */
-  readonly fs: ScopedModule<typeof fileSystem>;
+  /** Processes, sessions, terminals and code runs. */
+  readonly process: ScopedModule<typeof process> & SandboxProcessStreams;
+  /** Files: read, write, list, search, replace, permissions, bulk transfer. */
+  readonly fs: ScopedModule<typeof fileSystem> & SandboxBulkFiles;
   /** Git: clone, branch, commit, push, pull, status. */
   readonly git: ScopedModule<typeof git>;
   /** Language servers: start, completions, symbols. */
   readonly lsp: ScopedModule<typeof lsp>;
-  /** Stateful code interpreter contexts. */
-  readonly interpreter: ScopedModule<typeof interpreter>;
+  /** Stateful code interpreter contexts, and code runs in them. */
+  readonly interpreter: ScopedModule<typeof interpreter> & SandboxInterpreterRuns;
   /** Desktop control: screenshots, mouse, keyboard, recordings, accessibility. */
   readonly computerUse: ScopedModule<typeof computerUse>;
   /** Listening ports. */
@@ -150,9 +242,9 @@ export interface SandboxIdentity {
   readonly toolboxProxyUrl: string;
 }
 
-type Runner = <A, E>(
-  effect: Effect.Effect<A, E, Credentials | HttpClient.HttpClient>,
-) => Effect.Effect<A, E, RuntimeContext>;
+type Runner = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+) => Effect.Effect<A, E, Exclude<R, Credentials | HttpClient.HttpClient> | RuntimeContext>;
 
 /**
  * Build the handle for one sandbox. `run` supplies the binding's
@@ -165,6 +257,18 @@ export const makeSandboxClient = (
 ): DaytonaSandbox => {
   const fixed = { sandboxIdOrName: sandbox.id, sandboxId: sandbox.id, organizationId };
   const toolbox: Runner = (effect) => run(inSandbox(sandbox.id, sandbox.toolboxProxyUrl)(effect));
+  // Sockets dial with the runtime's global WebSocket (Workers, Node 22+, Bun, Deno).
+  const socket = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    toolbox(Effect.provide(effect, Socket.layerWebSocketConstructorGlobal));
+  const stream = <A, E, R>(body: Stream.Stream<A, E, R>) =>
+    Stream.unwrap(
+      socket(
+        Effect.map(
+          Effect.context<Credentials | HttpClient.HttpClient | Socket.WebSocketConstructor>(),
+          (context) => Stream.provideContext(body, context),
+        ),
+      ),
+    );
   const exec = Effect.fn(function* (command: string, options?: ExecOptions) {
     const encoded = yield* Effect.sync(() => Buffer.from(command).toString("base64"));
     const response = yield* toolbox(
@@ -182,11 +286,26 @@ export const makeSandboxClient = (
     sandboxId: sandbox.id,
     name: sandbox.name,
     toolboxProxyUrl: sandbox.toolboxProxyUrl,
-    process: scopeModule(process, {}, toolbox),
-    fs: scopeModule(fileSystem, {}, toolbox),
+    process: {
+      ...scopeModule(process, {}, toolbox),
+      createPty: (request) => socket(toolboxStreams.createPty(request)),
+      connectPty: (request) => socket(toolboxStreams.connectPty(request)),
+      followSessionCommandLogs: (request) =>
+        stream(toolboxStreams.followSessionCommandLogs(request)),
+      followEntrypointLogs: () => stream(toolboxStreams.followEntrypointLogs()),
+    },
+    fs: {
+      ...scopeModule(fileSystem, {}, toolbox),
+      uploadFiles: (request) => toolbox(toolboxStreams.uploadFiles(request)),
+      downloadFiles: (request) => toolbox(toolboxStreams.downloadFiles(request)),
+    },
     git: scopeModule(git, {}, toolbox),
     lsp: scopeModule(lsp, {}, toolbox),
-    interpreter: scopeModule(interpreter, {}, toolbox),
+    interpreter: {
+      ...scopeModule(interpreter, {}, toolbox),
+      executeInterpreterCode: (request) => socket(toolboxStreams.executeInterpreterCode(request)),
+      streamInterpreterCode: (request) => stream(toolboxStreams.streamInterpreterCode(request)),
+    },
     computerUse: scopeModule(computerUse, {}, toolbox),
     ports: scopeModule(port, {}, toolbox),
     info: scopeModule(info, {}, toolbox),

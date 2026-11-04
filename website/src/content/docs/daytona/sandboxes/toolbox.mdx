@@ -25,7 +25,28 @@ yield* sandbox.process.sessionExecuteCommand({
 });
 ```
 
-Sessions keep running between calls. Read their output with `getSessionCommandLogs`.
+Sessions keep running between calls. `getSessionCommandLogs` returns the output so far, with `stdout` and `stderr` apart.
+
+## Follow a command's output
+
+```typescript
+yield* sandbox.process
+  .followSessionCommandLogs({ sessionId: "dev", commandId: started.cmdId })
+  .pipe(Stream.runForEach((piece) => Console.log(piece.stream, piece.text)));
+```
+
+The stream ends when the command exits. `followEntrypointLogs()` follows the sandbox's entrypoint the same way.
+
+## Open a terminal
+
+```typescript
+const pty = yield* sandbox.process.createPty({ id: "shell", cols: 120, rows: 30 });
+yield* pty.write("pnpm install && exit\n");
+yield* pty.output.pipe(Stream.decodeText(), Stream.runForEach(Console.log));
+const { exitCode } = yield* pty.exit;
+```
+
+The connection closes with its scope, and the terminal keeps running until it exits or you `kill` it. `connectPty({ sessionId })` attaches to a terminal that already runs.
 
 ## Files
 
@@ -34,6 +55,20 @@ yield* sandbox.fs.createFolder({ path: "/home/daytona/out", mode: "755" });
 const files = yield* sandbox.fs.listFiles({ path: "/home/daytona/out" });
 const hits = yield* sandbox.fs.findInFiles({ path: "/home/daytona/repo/src", pattern: "TODO" });
 ```
+
+## Move many files at once
+
+```typescript
+yield* sandbox.fs.uploadFiles({
+  files: [
+    { path: "/home/daytona/repo/.env", content: "PORT=3000\n" },
+    { path: "/home/daytona/repo/logo.png", content: pngBytes },
+  ],
+});
+const { files, errors } = yield* sandbox.fs.downloadFiles({ paths: ["/home/daytona/out/a.json", "/home/daytona/out/b.json"] });
+```
+
+A path that can't be read comes back in `errors`; the rest still download.
 
 ## Git
 
@@ -62,7 +97,15 @@ const ssh = yield* sandbox.createSshAccess({ expiresInMinutes: 60 });
 ```typescript
 yield* sandbox.lsp.start({ languageId: "typescript", pathToProject: "/home/daytona/repo" });
 const ctx = yield* sandbox.interpreter.createInterpreterContext({ language: "python" });
+const run = yield* sandbox.interpreter.executeInterpreterCode({
+  contextId: ctx.id,
+  code: "import pandas as pd\nprint(pd.__version__)",
+  timeout: 30,
+});
+// { stdout: "2.2.3\n", stderr: "", error: undefined }
 ```
+
+A context keeps its variables between runs. An exception the code raises comes back in `error`; a run past its `timeout` fails with `InterpreterTimeout`. `streamInterpreterCode` streams the same output as it is produced.
 
 ## Computer use
 
