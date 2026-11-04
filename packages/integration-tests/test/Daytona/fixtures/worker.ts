@@ -150,6 +150,14 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
           const to = new Date().toISOString();
           const from = new Date(Date.now() - 3_600_000).toISOString();
           const ancestors = yield* sandbox.getSandboxAncestors();
+          // Region quota by sandbox is served to Daytona's runners, not API keys.
+          const regionQuota = yield* sandbox.getRegionQuotaBySandboxId().pipe(
+            Effect.flip,
+            Effect.map((e) => e._tag),
+          );
+          // Re-initializing the daemon sets its auth token; the toolbox keeps working.
+          const initialized = yield* sandbox.server.initialize({ token: `alchemy-${prefix}` });
+          const afterInit = yield* sandbox.exec("echo init-ok");
           // Daytona Cloud serves telemetry from its Analytics API (below); the
           // sandbox-scoped endpoints are switched off.
           const legacyTelemetry = yield* sandbox.getSandboxLogs({ from, to }).pipe(
@@ -209,6 +217,9 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
             autoPause,
             resize,
             ancestors: Array.isArray(ancestors),
+            regionQuota,
+            initialized: Object.values(initialized).some((m) => m?.includes("initialized")),
+            afterInit: afterInit.result.trim(),
             legacyTelemetry,
             buildLogs,
             telemetry: [telemetryLogs, telemetryMetrics, telemetryTraces].every(

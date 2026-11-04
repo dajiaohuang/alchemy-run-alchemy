@@ -45,6 +45,7 @@ const SANDBOX_OPERATIONS = [
   "getSandboxForks",
   "getSandboxParent",
   "getSandboxAncestors",
+  "getRegionQuotaBySandboxId",
   "getPortPreviewUrl",
   "getSignedPortPreviewUrl",
   "expireSignedPortPreviewUrl",
