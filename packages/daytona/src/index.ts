@@ -29,6 +29,7 @@ export * from "./Runner.ts";
 export * from "./RuntimeObjects.ts";
 export * from "./Sandbox.ts";
 export * from "./Secret.ts";
+export * from "./Service.ts";
 export * from "./Snapshot.ts";
 export * from "./Volume.ts";
 export * from "./WarmPool.ts";

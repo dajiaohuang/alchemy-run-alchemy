@@ -59,17 +59,25 @@
     "@alchemy.run/docker": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
     "@distilled.cloud/core": "workspace:*",
-    "@distilled.cloud/daytona": "workspace:*"
+    "@distilled.cloud/daytona": "workspace:*",
+    "rolldown": "catalog:"
   },
   "devDependencies": {
+    "@effect/platform-node": "catalog:",
     "@types/bun": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:",
     "typescript": "catalog:"
   },
   "peerDependencies": {
+    "@effect/platform-node": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-node": {
+      "optional": true
+    }
   },
   "alchemy": {
     "contributes": [

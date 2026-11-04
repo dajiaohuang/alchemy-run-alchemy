@@ -707,6 +707,7 @@ Daytona sandboxes from Workers and Lambda: snapshots (images, Dockerfile builds,
 ## Daytona — Sandboxes
 
 - [Sandboxes](https://alchemy.run/daytona/sandboxes/sandboxes) — Create sandboxes per request or per user from a Worker, or declare a long-lived dev box in your Stack.
+- [Services](https://alchemy.run/daytona/sandboxes/services) — Run an Effect program in a sandbox and serve it on the sandbox's preview URL.
 - [Snapshots](https://alchemy.run/daytona/sandboxes/snapshots) — Pull an image, build a Dockerfile on Daytona, or capture a warm base that sandboxes start from.
 - [Toolbox](https://alchemy.run/daytona/sandboxes/toolbox) — Run commands, edit files, use git and language servers, open previews and SSH into a sandbox.
 - [Volumes](https://alchemy.run/daytona/sandboxes/volumes) — Keep files in volumes that outlive sandboxes, shared or one per user.

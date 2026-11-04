@@ -1371,6 +1371,7 @@ export default defineConfig({
                 { label: "Snapshots", link: "/daytona/sandboxes/snapshots" },
                 { label: "Toolbox", link: "/daytona/sandboxes/toolbox" },
                 { label: "Volumes", link: "/daytona/sandboxes/volumes" },
+                { label: "Services", link: "/daytona/sandboxes/services" },
               ],
             },
             {
