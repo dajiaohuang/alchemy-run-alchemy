@@ -27,7 +27,7 @@ sidebar:
 +            (yield* sandboxes.create({
 +              name: `dev-${user}`,
 +              labels: { user },
-+              volumes: [{ volumeId: home.volumeId, mountPath: "/home/daytona/work" }],
++              mounts: [{ volume: home, path: "/home/daytona/work" }],
 +              autoStopInterval: 15,
 +            }));
 +          if (existing) yield* sandbox.startSandbox();

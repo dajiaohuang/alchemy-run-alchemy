@@ -86,13 +86,61 @@ const test = yield* devBox.exec("git pull && pnpm test", { cwd: "/home/daytona/r
 
 `ConnectSandbox` returns the same handle as `CreateSandbox`, for the sandbox you declared.
 
+## Run a program in a sandbox
+
+```typescript
+// src/Agent.ts
+import * as Daytona from "@alchemy.run/daytona";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Base } from "./Images.ts";
+
+export default class Agent extends Daytona.Sandbox<Agent>()(
+  "Agent",
+  { snapshot: Base, main: import.meta.url, port: 3000, public: true },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.json({ ok: true })),
+    };
+  }),
+) {}
+```
+
+Alchemy bundles the program, uploads it into the sandbox and runs it with Node. `agent.url` is the preview URL of port 3000; `public` opens it to anyone, and a private sandbox wants its preview token in `X-Daytona-Preview-Token`.
+
+## Redeploy the program
+
+A code change uploads the new bundle and restarts the process. The sandbox and its URL stay the same.
+
+A sandbox with `main` doesn't auto-stop. If it stopped anyway, its process ended with it, and the next deploy starts the sandbox and the program again.
+
+## Mount a volume in the program
+
+```typescript
+Effect.gen(function* () {
+  const data = yield* Daytona.MountVolume(Data, { path: "/data" });
+  const fs = yield* FileSystem.FileSystem;
+  return {
+    fetch: Effect.gen(function* () {
+      return yield* HttpServerResponse.json(yield* fs.readDirectory(data.path));
+    }),
+  };
+}).pipe(Effect.provide(Daytona.MountVolumeLive));
+```
+
+The volume joins the sandbox's `mounts`. Daytona mounts volumes when it creates a sandbox, so adding one replaces the program's sandbox.
+
+## What the program can reach
+
+The program reaches the internet the way its sandbox does. Below Daytona's Tier 3, sandboxes reach only an allowlist of essential services (package registries, GitHub, AI APIs, Daytona's API), so bindings that manage sandboxes work but toolbox calls are refused. From Tier 3, sandboxes have full internet access.
+
 ## Size it with its snapshot
 
 A sandbox gets its CPU, memory, disk and GPUs from its snapshot. Set them on the `Daytona.Snapshot`, and declare a second snapshot for a bigger sandbox.
 
 ## Reconfigure in place
 
-Labels, network rules, previews, secrets, the TTL and the auto-stop, auto-pause, auto-archive and auto-delete intervals change in place. A new snapshot, user, environment, volume list, linked sandbox or region replaces the sandbox.
+Labels, network rules, previews, secrets, the TTL and the auto-stop, auto-pause, auto-archive and auto-delete intervals change in place. A new snapshot, user, environment, mount list, linked sandbox or region replaces the sandbox.
 
 ## Fork a sandbox
 

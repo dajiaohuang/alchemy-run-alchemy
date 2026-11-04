@@ -24,18 +24,18 @@ import { Cache } from "./Storage.ts";
 
 export const DevBox = Daytona.Sandbox("DevBox", {
   snapshot: Base,
-  volumes: [{ volume: Cache, mountPath: "/cache" }],
+  mounts: [{ volume: Cache, path: "/cache" }],
 });
 ```
 
 ## Mount it in sandboxes you create
 
 ```typescript
-const cache = yield* Cache;
-const sandbox = yield* sandboxes.create({
-  volumes: [{ volumeId: cache.volumeId, mountPath: "/cache" }],
-});
+const cache = yield* Daytona.MountVolume(Cache, { path: "/cache" });
+const sandbox = yield* sandboxes.create({ mounts: [cache] });
 ```
+
+In a Worker, `MountVolume` returns a mount entry for the sandboxes you create. In a sandbox that runs a program, it mounts the volume into that sandbox.
 
 ## One volume per user
 

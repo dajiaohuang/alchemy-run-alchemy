@@ -12,9 +12,24 @@ const result = yield* sandbox.exec("ls -la && cat package.json", { cwd: "/home/d
 // { exitCode: 0, result: "..." }
 ```
 
-A non-zero exit comes back in `exitCode`; it doesn't fail the Effect.
+A non-zero exit comes back in `exitCode`; it doesn't fail the Effect. Daytona combines stdout and stderr into `result`.
 
-## Long-running processes
+An array runs as an argument vector, with no shell to quote for:
+
+```typescript
+yield* sandbox.exec(["git", "commit", "-m", message], { cwd: "/home/daytona/repo" });
+```
+
+## Start a process
+
+```typescript
+const server = yield* sandbox.start(["python3", "-m", "http.server", "8080"], { cwd: "/srv" });
+yield* server.output.pipe(Stream.runForEach((piece) => Console.log(piece.stream, piece.text)));
+```
+
+`start` runs the command in its own session and returns while it runs: `output` streams stdout and stderr, `write` types into its stdin, `wait` resolves with its exit code, and `kill` ends it. Closing the scope only detaches.
+
+## Keep a shell session
 
 ```typescript
 yield* sandbox.process.createSession({ sessionId: "dev" });
@@ -25,7 +40,7 @@ yield* sandbox.process.sessionExecuteCommand({
 });
 ```
 
-Sessions keep running between calls. `getSessionCommandLogs` returns the output so far, with `stdout` and `stderr` apart.
+For a shell whose state carries from command to command, use a session. Sessions keep running between calls. `getSessionCommandLogs` returns the output so far, with `stdout` and `stderr` apart.
 
 ## Follow a command's output
 
@@ -40,19 +55,26 @@ The stream ends when the command exits. `followEntrypointLogs()` follows the san
 ## Open a terminal
 
 ```typescript
-const pty = yield* sandbox.process.createPty({ id: "shell", cols: 120, rows: 30 });
+const pty = yield* sandbox.pty.open({ cols: 120, rows: 30 });
 yield* pty.write("pnpm install && exit\n");
 yield* pty.output.pipe(Stream.decodeText(), Stream.runForEach(Console.log));
 const { exitCode } = yield* pty.exit;
 ```
 
-The connection closes with its scope, and the terminal keeps running until it exits or you `kill` it. `connectPty({ sessionId })` attaches to a terminal that already runs.
+The connection closes with its scope, and the terminal keeps running until it exits or you `kill` it. `pty.connect(sessionId)` attaches to a terminal that already runs. Daytona starts the user's shell; type the command you want into it.
 
 ## Files
 
 ```typescript
-yield* sandbox.fs.createFolder({ path: "/home/daytona/out", mode: "755" });
-const files = yield* sandbox.fs.listFiles({ path: "/home/daytona/out" });
+yield* sandbox.files.makeDir("/home/daytona/out");
+yield* sandbox.files.write("/home/daytona/out/report.json", JSON.stringify(report));
+const text = yield* sandbox.files.readText("/home/daytona/out/report.json");
+const entries = yield* sandbox.files.list("/home/daytona/out");
+```
+
+`files` also has `read` (bytes), `stat` and `remove`. Daytona's own file API is on `fs`, with search and replace:
+
+```typescript
 const hits = yield* sandbox.fs.findInFiles({ path: "/home/daytona/repo/src", pattern: "TODO" });
 ```
 
@@ -85,6 +107,12 @@ const signed = yield* sandbox.getSignedPortPreviewUrl({ port: 3000, expiresInSec
 ```
 
 A preview URL needs a token unless the sandbox is `public`. A signed URL works without one until it expires.
+
+`fetch` sends a request to a port with the token for you:
+
+```typescript
+const res = yield* sandbox.fetch(3000, HttpClientRequest.get("/health"));
+```
 
 ## SSH
 
