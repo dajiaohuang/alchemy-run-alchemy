@@ -47,7 +47,12 @@ export interface SandboxProps {
    * the sandbox.
    */
   name?: string;
-  /** Snapshot to boot from. Defaults to Daytona's default snapshot. Changing it replaces the sandbox. */
+  /**
+   * Snapshot to boot from. Defaults to Daytona's default snapshot. The
+   * snapshot sets the sandbox's CPU, memory, disk and GPUs: declare a
+   * `Daytona.Snapshot` with the size you want. Changing it replaces the
+   * sandbox.
+   */
   snapshot?: Ref<SandboxSnapshot>;
   /** OS user commands run as. Changing it replaces the sandbox. */
   user?: string;
@@ -73,17 +78,10 @@ export interface SandboxProps {
   outboundProxyUrl?: string;
   /** Region. Changing it replaces the sandbox. */
   target?: string;
-  /** vCPUs. Resized in place. */
-  cpu?: number;
-  /** Memory in GiB. Resized in place. */
-  memory?: number;
-  /** Disk in GiB. Grows in place; shrinking replaces the sandbox. */
-  disk?: number;
-  /** GPUs. Changing it replaces the sandbox. */
-  gpu?: number;
-  /** Acceptable GPU types, in order of preference. */
-  gpuType?: sandboxes.GpuType[];
-  /** Run on spot capacity (cheaper, can be preempted). Changing it replaces the sandbox. */
+  /**
+   * Run a GPU sandbox on spot capacity: cheaper, but Daytona can end it
+   * without notice. Changing it replaces the sandbox.
+   */
   spot?: boolean;
   /** Expose `/dev/kvm` (VM sandboxes). Changing it replaces the sandbox. */
   kvm?: boolean;
@@ -184,8 +182,6 @@ export type Sandbox = Resource<
  * ```typescript
  * export const DevBox = Daytona.Sandbox("DevBox", {
  *   snapshot: Base,
- *   cpu: 2,
- *   memory: 4,
  *   autoStopInterval: "30 minutes",
  * });
  * ```
@@ -210,12 +206,16 @@ export type Sandbox = Resource<
  * ```
  *
  * ### GPUs
- * **Example:** One H100, falling back to an H200, on spot capacity
+ * A GPU sandbox boots from a GPU snapshot, such as Daytona's `daytona-gpu`
+ * (one H100) in its `earth` region, and must be ephemeral. The
+ * organization needs GPU credits in its wallet.
+ *
+ * **Example:** An ephemeral H100 sandbox on spot capacity
  * ```typescript
  * export const Trainer = Daytona.Sandbox("Trainer", {
+ *   snapshot: { name: "daytona-gpu" },
  *   target: "earth",
- *   gpu: 1,
- *   gpuType: ["H100", "H200"],
+ *   autoDeleteInterval: 0,
  *   spot: true,
  * });
  * ```
@@ -397,11 +397,6 @@ const resolveCreate = Effect.fn(function* (
     domainAllowList: csv(news.domainAllowList),
     outboundProxyUrl: news.outboundProxyUrl,
     target: news.target,
-    cpu: news.cpu,
-    memory: news.memory,
-    disk: news.disk,
-    gpu: news.gpu,
-    gpuType: news.gpuType,
     spot: news.spot,
     kvm: news.kvm,
     volumes,
@@ -439,13 +434,10 @@ export const SandboxProvider = () =>
         const replace =
           name !== output.name ||
           (snapshot !== undefined && snapshot !== output.snapshot) ||
-          (news.disk !== undefined && news.disk < output.disk) ||
           news.user !== olds?.user ||
           !deepEqual(news.env ?? {}, olds?.env ?? {}) ||
           news.outboundProxyUrl !== olds?.outboundProxyUrl ||
           (news.target !== undefined && news.target !== output.target) ||
-          (news.gpu ?? 0) !== (olds?.gpu ?? 0) ||
-          !deepEqual(news.gpuType ?? [], olds?.gpuType ?? []) ||
           news.spot !== olds?.spot ||
           news.kvm !== olds?.kvm ||
           news.otelEndpointOverride !== olds?.otelEndpointOverride ||
@@ -556,24 +548,6 @@ export const SandboxProvider = () =>
               secrets: request.secrets ?? [],
             });
           }
-        }
-        // Sync size (disk only grows; diff replaces on shrink).
-        const resize = {
-          cpu: news.cpu !== undefined && news.cpu !== current.cpu ? news.cpu : undefined,
-          memory:
-            news.memory !== undefined && news.memory !== current.memory ? news.memory : undefined,
-          disk: news.disk !== undefined && news.disk > current.disk ? news.disk : undefined,
-        };
-        if (resize.cpu !== undefined || resize.memory !== undefined || resize.disk !== undefined) {
-          yield* session.note(`Resizing sandbox ${name}...`);
-          yield* sandboxes.resizeSandbox({ sandboxIdOrName: sandboxId, ...resize });
-          yield* waitForState({
-            kind: "sandbox",
-            id: sandboxId,
-            observe: sandboxes.getSandbox({ sandboxIdOrName: sandboxId }),
-            want: ["started", "stopped"],
-            budget: "10 minutes",
-          });
         }
         // Sync run state last, from a fresh observation.
         const final = yield* syncRunState(

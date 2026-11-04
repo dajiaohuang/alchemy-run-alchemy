@@ -57,6 +57,14 @@ export default class DaytonaWorker extends Cloudflare.Worker<DaytonaWorker>()(
           });
         }
 
+        if (url.pathname === "/create-sandbox-resources") {
+          // A snapshot sizes the sandbox; Daytona refuses resources on create.
+          const error = yield* sandboxes
+            .create({ name: `alchemy-resources-${prefix}`, cpu: 2 })
+            .pipe(Effect.flip);
+          return yield* HttpServerResponse.json({ error: error._tag });
+        }
+
         if (url.pathname === "/computer-use") {
           const sandbox = yield* Effect.acquireRelease(
             sandboxes.create({

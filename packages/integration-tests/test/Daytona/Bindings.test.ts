@@ -97,6 +97,18 @@ describe("CreateSandbox", () => {
   );
 });
 
+describe("CreateSandbox resources", () => {
+  test(
+    "resources on create fail with SandboxResourcesFromSnapshot",
+    Effect.gen(function* () {
+      expect(yield* get("/create-sandbox-resources")).toEqual({
+        error: "SandboxResourcesFromSnapshot",
+      });
+    }),
+    { tags, timeout: 120_000 },
+  );
+});
+
 describe("CreateSandbox computer use", () => {
   // A desktop session bills like any running sandbox, and takes a while.
   test.skipIf(!!process.env.FAST)(

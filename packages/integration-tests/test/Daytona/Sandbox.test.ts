@@ -149,22 +149,38 @@ test.provider(
   { tags: ["provider:daytona", "live"], timeout: 600_000 },
 );
 
-// GPU and Windows sandboxes bill at their own, higher rates.
-test.provider.skipIf(!!process.env.FAST)(
-  "a GPU sandbox on spot capacity",
+// GPU sandboxes need GPU credits in the organization's wallet, and Windows
+// sandboxes need Tier 3 or access from Daytona support. Both bill at their
+// own, higher rates. Set DAYTONA_TEST_GPU=1 / DAYTONA_TEST_WINDOWS=1 on an
+// account that has them.
+const gpuEntitled = !!process.env.DAYTONA_TEST_GPU;
+const windowsEntitled = !!process.env.DAYTONA_TEST_WINDOWS;
+
+const Gpu = Daytona.Sandbox("Gpu", {
+  snapshot: { name: "daytona-gpu" },
+  target: "earth",
+  autoDeleteInterval: 0,
+  autoStopInterval: "15 minutes",
+});
+
+test.provider.skipIf(gpuEntitled)(
+  "a GPU sandbox without GPU credits fails with GpuCreditsRequired",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      const gpu = yield* stack.deploy(
-        Daytona.Sandbox("Gpu", {
-          snapshot: { name: "daytona-gpu" },
-          target: "earth",
-          gpu: 1,
-          gpuType: ["RTX-PRO-6000", "H100", "H200"],
-          spot: true,
-          autoStopInterval: "15 minutes",
-        }),
-      );
+      const error = yield* stack.deploy(Gpu).pipe(Effect.flip);
+      expect(error._tag).toEqual("GpuCreditsRequired");
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 120_000 },
+);
+
+test.provider.skipIf(!!process.env.FAST || !gpuEntitled)(
+  "a GPU sandbox from the GPU snapshot",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const gpu = yield* stack.deploy(Gpu);
       expect(gpu.gpu).toEqual(1);
       expect(gpu.target).toEqual("earth");
       expect(gpu.state).toEqual("started");
@@ -175,25 +191,36 @@ test.provider.skipIf(!!process.env.FAST)(
   { tags: ["provider:daytona", "live"], timeout: 600_000 },
 );
 
-test.provider.skipIf(!!process.env.FAST)(
+const windows = (state?: "stopped") =>
+  Daytona.Sandbox("Windows", {
+    snapshot: { name: "windows-small" },
+    target: "us-west-4",
+    autoStopInterval: "15 minutes",
+    state,
+  });
+
+test.provider.skipIf(windowsEntitled)(
+  "a Windows sandbox below Tier 3 fails with WindowsSandboxesUnavailable",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const error = yield* stack.deploy(windows()).pipe(Effect.flip);
+      expect(error._tag).toEqual("WindowsSandboxesUnavailable");
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 120_000 },
+);
+
+test.provider.skipIf(!!process.env.FAST || !windowsEntitled)(
   "a Windows sandbox, stopped in place",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      const windows = (state?: "stopped") =>
-        stack.deploy(
-          Daytona.Sandbox("Windows", {
-            snapshot: { name: "windows-small" },
-            target: "us-west-4",
-            autoStopInterval: "15 minutes",
-            state,
-          }),
-        );
-      const created = yield* windows();
+      const created = yield* stack.deploy(windows());
       expect(created.sandboxClass).toEqual("windows");
       expect(created.state).toEqual("started");
 
-      const stopped = yield* windows("stopped");
+      const stopped = yield* stack.deploy(windows("stopped"));
       expect(stopped.sandboxId).toEqual(created.sandboxId);
       expect(stopped.state).toEqual("stopped");
 
