@@ -10,10 +10,11 @@ import type { ConnectedSandbox } from "./SandboxClient.ts";
  * operations as the sandboxes `CreateSandbox` returns; its `sandboxId` and
  * `url(port)` are Effects, read at runtime.
  *
- * A declared sandbox pauses when it is idle. Calls inside it (`exec`,
- * `start`, `files`, `pty`) then fail with `SandboxNotRunning`: call
- * `resume()` first. A request to one of its ports resumes it on its own
- * (`autoResume`).
+ * A declared sandbox pauses when it is idle. With `autoResume` (the
+ * default), E2B resumes it on the next request, to one of its ports or from
+ * any call here. With `autoResume: false`, calls inside it (`exec`,
+ * `start`, `files`, `pty`) fail with `SandboxNotRunning` until you call
+ * `resume()`.
  *
  * The host gets its own E2B API key, minted at deploy and revoked when the
  * host is destroyed. E2B keys are not scoped, so the key reaches the whole

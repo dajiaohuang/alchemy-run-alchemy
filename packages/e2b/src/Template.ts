@@ -318,12 +318,13 @@ export interface Template extends Resource<
  * @resource
  * @product Template
  */
-export const Template: Platform<
-  Template,
-  ServerHost,
-  Main<ServerHost>,
-  HostRuntimeContext
-> = Platform("E2B.Template", {
+export const Template: Platform<Template, ServerHost, Main<ServerHost>, HostRuntimeContext> & {
+  /**
+   * Reference a template this stack doesn't manage (E2B's `base`, or one
+   * another stack builds) by name, without managing it.
+   */
+  lookup(props: { name: string }): Template;
+} = Platform("E2B.Template", {
   createRuntimeContext: createContainerRuntimeContext("E2B.Template"),
 });
 
@@ -461,7 +462,16 @@ export const TemplateProvider = () =>
           return undefined;
         }),
         lookup: Effect.fn(function* ({ name }) {
-          const template = yield* observeTemplate(undefined, name);
+          // E2B's public defaults (`base`, `code-interpreter-v1`, …) can't be
+          // read by alias (403 "You don't have access to this template
+          // alias"); they are listed instead.
+          const defaults = yield* templates.listDefaultTemplates({});
+          const template =
+            defaults.find(
+              (candidate) =>
+                candidate.aliases.includes(name) ||
+                candidate.names.some((full) => full === name || full.split(":")[0] === name),
+            ) ?? (yield* observeTemplate(undefined, name));
           if (template === undefined) return undefined;
           return {
             templateId: template.templateID,

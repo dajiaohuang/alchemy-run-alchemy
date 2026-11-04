@@ -13,6 +13,9 @@ const { test, beforeAll, afterAll, deploy, destroy } = Test.make({ providers: E2
 
 const tags = ["provider:e2b", "provider:e2b:sandbox", "live"];
 
+/** E2B's public base template, which the stack doesn't manage. */
+const Base = E2B.Template.lookup({ name: "base" });
+
 /** A sandbox's details, or `undefined` once E2B no longer has it. */
 const observe = (sandboxId: string) =>
   sandboxes.getSandbox({ sandboxID: sandboxId }).pipe(
@@ -39,7 +42,7 @@ test.provider(
       const box = yield* stack.deploy(
         Effect.gen(function* () {
           return yield* E2B.Sandbox("Box", {
-            template: "base",
+            template: Base,
             metadata: { purpose: "lifecycle" },
             env: { GREETING: "hello" },
           });
@@ -58,7 +61,7 @@ test.provider(
       const restricted = yield* stack.deploy(
         Effect.gen(function* () {
           return yield* E2B.Sandbox("Box", {
-            template: "base",
+            template: Base,
             metadata: { purpose: "lifecycle" },
             env: { GREETING: "hello" },
             timeout: "10 minutes",
@@ -77,7 +80,7 @@ test.provider(
       const plan = yield* stack.plan(
         Effect.gen(function* () {
           return yield* E2B.Sandbox("Box", {
-            template: "base",
+            template: Base,
             metadata: { purpose: "lifecycle" },
             env: { GREETING: "hello" },
             timeout: "10 minutes",
@@ -91,7 +94,7 @@ test.provider(
       const replaced = yield* stack.deploy(
         Effect.gen(function* () {
           return yield* E2B.Sandbox("Box", {
-            template: "base",
+            template: Base,
             metadata: { purpose: "lifecycle" },
             env: { GREETING: "bonjour" },
             timeout: "10 minutes",
@@ -118,7 +121,7 @@ test.provider(
       const program = (timeout: Duration.Input) =>
         Effect.gen(function* () {
           return yield* E2B.Sandbox("Recreated", {
-            template: "base",
+            template: Base,
             timeout,
             network: { allowPublicTraffic: false },
           });
@@ -149,13 +152,79 @@ test.provider(
   { tags, timeout: 240_000 },
 );
 
+test.provider(
+  "a rebuilt template replaces the sandbox, which boots the new build",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const program = (version: string) =>
+        Effect.gen(function* () {
+          const template = yield* E2B.Template("Versioned", {
+            fromTemplate: "base",
+            run: [`echo ${version} > /home/user/version.txt`],
+          });
+          const box = yield* E2B.Sandbox("VersionedBox", { template });
+          return { box, buildId: template.buildId };
+        });
+      const first = yield* stack.deploy(program("v1"));
+      expect(first.box.templateBuild).toBe(first.buildId);
+
+      // An unchanged template plans nothing for the sandbox.
+      const plan = yield* stack.plan(program("v1"));
+      expect(plan.resources.VersionedBox.action).toBe("noop");
+
+      const second = yield* stack.deploy(program("v2"));
+      expect(second.buildId).not.toBe(first.buildId);
+      expect(second.box.sandboxId).not.toBe(first.box.sandboxId);
+      expect(second.box.templateBuild).toBe(second.buildId);
+      yield* expectGone(first.box.sandboxId);
+
+      yield* stack.destroy();
+      yield* expectGone(second.box.sandboxId);
+    }),
+  { tags, timeout: 600_000 },
+);
+
+// E2B enables volumes per team; set E2B_TEST_VOLUMES=1 on an enabled one.
+test.provider.skipIf(!process.env.E2B_TEST_VOLUMES)(
+  "mounts a declared volume; changing mounts replaces the sandbox",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const program = (path: string) =>
+        Effect.gen(function* () {
+          const cache = yield* E2B.Volume("MountedCache", {});
+          return yield* E2B.Sandbox("MountedBox", {
+            template: Base,
+            mounts: [{ volume: cache, path }],
+          });
+        });
+      const box = yield* stack.deploy(program("/cache"));
+      expect(box.mounts.map((mount) => mount.path)).toEqual(["/cache"]);
+      const detail = yield* observe(box.sandboxId);
+      expect(detail?.volumeMounts?.map((mount) => mount.path)).toEqual(["/cache"]);
+
+      const moved = yield* stack.deploy(program("/data"));
+      expect(moved.sandboxId).not.toBe(box.sandboxId);
+      expect((yield* observe(moved.sandboxId))?.volumeMounts?.map((m) => m.path)).toEqual([
+        "/data",
+      ]);
+
+      yield* stack.destroy();
+      yield* expectGone(moved.sandboxId);
+    }),
+  { tags, timeout: 240_000 },
+);
+
 // The lookup targets belong to another stack, as a lookup's target should.
 const TargetStack = Alchemy.Stack(
   "E2BLookupTarget",
   { providers: E2B.providers(), state: localState() },
   Effect.gen(function* () {
     const secret = yield* E2B.Secret("LookupSecret", { value: Redacted.make("looked-up") });
-    const box = yield* E2B.Sandbox("LookupBox", { template: "base" });
+    const box = yield* E2B.Sandbox("LookupBox", { template: Base });
     return { secretName: secret.name, secretId: secret.secretId, sandboxId: box.sandboxId };
   }),
 );

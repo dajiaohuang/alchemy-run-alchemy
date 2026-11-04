@@ -101,24 +101,31 @@ describe("CreateSandbox", () => {
         ok: { stdout: string; stderr: string; exitCode: number };
         failedExitCode: number;
         exec: string;
+        fed: string;
+        withEnv: string;
+        timedOut: string;
         read: string;
         listed: string[];
         movedExists: boolean;
         removedExists: boolean;
-        events: string[];
+        streamed: { output: string[]; stdout: string; exitCode: number };
       }>("/sandbox/commands");
       expect(body.templateId).toBe(templateId);
       expect(body.marker.trim()).toBe("bound");
       expect(body.ok).toMatchObject({ stdout: "out\n", stderr: "err\n", exitCode: 0 });
       expect(body.failedExitCode).toBe(3);
       expect(body.exec).toBe("argv");
+      expect(body.fed).toBe("fed via stdin");
+      expect(body.withEnv).toBe("hi\n");
+      expect(body.timedOut).toBe("E2B.ExecTimedOut");
       expect(body.read).toBe("hello");
       expect(body.listed).toContain("a.txt");
       expect(body.movedExists).toBe(true);
       expect(body.removedExists).toBe(false);
-      expect(body.events[0]).toBe("Start");
-      expect(body.events).toContain("Stdout");
-      expect(body.events.at(-1)).toBe("End");
+      expect(body.streamed.output).toContain("Stdout");
+      expect(body.streamed.output).toContain("Stderr");
+      expect(body.streamed.stdout).toBe("streamed\n");
+      expect(body.streamed.exitCode).toBe(0);
     }),
     { tags, timeout: 240_000 },
   );
@@ -131,11 +138,13 @@ describe("CreateSandbox", () => {
         foundIds: string[];
         sandboxId: string;
         pausedState: string;
+        notRunning: string;
         resumedState: string;
         metadata: Record<string, string>;
         state: string;
         killedAgain: string;
       }>(`/sandbox/lifecycle?task=${task}`);
+      expect(body.notRunning).toBe("SandboxNotRunning");
       expect(body.foundIds).toContain(body.sandboxId);
       expect(body.pausedState).toBe("paused");
       expect(body.resumedState).toBe("running");
@@ -188,9 +197,13 @@ describe("E2BSandbox", () => {
         watched: string[];
         listedCat: boolean;
         catOut: string;
+        catExitCode: number;
         reattachedOut: string;
+        sleeperDetached: boolean;
         sleeperKilled: boolean;
+        sleeperExitCode: number;
         ptyOut: string;
+        ptyExitCode: number;
         served: string;
         host: string;
         url: string;
@@ -202,10 +215,14 @@ describe("E2BSandbox", () => {
       expect(body.watched).toContain("watched.txt");
       expect(body.listedCat).toBe(true);
       expect(body.catOut).toBe("ping\n");
+      expect(body.catExitCode).toBe(0);
       expect(body.reattachedOut).toBe("ping\n");
+      expect(body.sleeperDetached).toBe(true);
       expect(body.sleeperKilled).toBe(true);
+      expect(body.sleeperExitCode).not.toBe(0);
       expect(body.ptyOut).toContain("pty-42");
       expect(body.ptyOut).toContain("30 100");
+      expect(body.ptyExitCode).toBe(0);
       expect(body.served).toBe("ab");
       expect(body.host.startsWith("8000-")).toBe(true);
       expect(body.url).toBe(`https://${body.host}`);
@@ -221,9 +238,13 @@ describe.sequential("ConnectSandbox", () => {
     "connects to the declared sandbox and runs in it",
     Effect.gen(function* () {
       const { boxId } = yield* stack;
-      const body = yield* get<{ sandboxId: string; marker: string }>("/box/run");
+      const body = yield* get<{ sandboxId: string; marker: string; echoed: string; url: string }>(
+        "/box/run",
+      );
       expect(body.sandboxId).toBe(boxId);
       expect(body.marker.trim()).toBe("bound");
+      expect(body.echoed).toBe("from the box\n");
+      expect(body.url).toBe(`https://3000-${boxId}.e2b.app`);
       const detail = yield* distilled(sandboxes.getSandbox({ sandboxID: boxId }));
       expect(detail.metadata?.["alchemy::id"]).toBe("BindingBox");
     }),
@@ -231,13 +252,17 @@ describe.sequential("ConnectSandbox", () => {
   );
 
   test(
-    "pauses the declared sandbox and resumes it with its files",
+    "a paused declared sandbox fails envd calls with SandboxNotRunning until resumed",
     Effect.gen(function* () {
       yield* get("/box/run");
-      const body = yield* get<{ pausedState: string; resumedState: string; state: string }>(
-        "/box/pause",
-      );
+      const body = yield* get<{
+        pausedState: string;
+        whilePaused: string;
+        resumedState: string;
+        state: string;
+      }>("/box/pause");
       expect(body.pausedState).toBe("paused");
+      expect(body.whilePaused).toBe("SandboxNotRunning");
       expect(body.resumedState).toBe("running");
       expect(body.state).toBe("kept");
     }),

@@ -12,6 +12,7 @@ const BindingsLive = Layer.mergeAll(
   E2B.ReadVolumeHttp,
   E2B.WriteVolumeHttp,
   E2B.ReadWriteVolumeHttp,
+  E2B.MountVolumeLive,
 );
 
 /** The volume bindings, apart from the other fixtures: volumes are enabled per team. */
@@ -24,6 +25,7 @@ export default class E2BVolumeWorker extends Cloudflare.Worker<E2BVolumeWorker>(
     const readShared = yield* E2B.ReadVolume(SharedVolume);
     const writeShared = yield* E2B.WriteVolume(SharedVolume);
     const shared = yield* E2B.ReadWriteVolume(SharedVolume);
+    const sharedMount = yield* E2B.MountVolume(SharedVolume, { path: "/home/user/shared" });
 
     const routes: Record<string, (query: URLSearchParams) => Effect.Effect<unknown, unknown, any>> =
       {
@@ -49,7 +51,7 @@ export default class E2BVolumeWorker extends Cloudflare.Worker<E2BVolumeWorker>(
             const sandbox = yield* Effect.acquireRelease(
               sandboxes.create({
                 timeout: 300,
-                volumeMounts: [{ name: volume.name, path: "/home/user/vol" }],
+                mounts: [{ volume, path: "/home/user/vol" }],
               }),
               (sandbox) => Effect.ignore(sandbox.kill()),
             );
@@ -65,6 +67,17 @@ export default class E2BVolumeWorker extends Cloudflare.Worker<E2BVolumeWorker>(
               back,
               gone: gone === undefined,
             };
+          }),
+        // MountVolume from a Worker: the bound reference goes straight into `mounts`.
+        "/mount": () =>
+          Effect.gen(function* () {
+            yield* writeShared.write("/mounted.txt", "seen through the mount");
+            const sandbox = yield* Effect.acquireRelease(
+              sandboxes.create({ timeout: 300, mounts: [sharedMount] }),
+              (sandbox) => Effect.ignore(sandbox.kill()),
+            );
+            const seen = yield* sandbox.files.readText(`${sharedMount.path}/mounted.txt`);
+            return { path: sharedMount.path, seen };
           }),
       };
 

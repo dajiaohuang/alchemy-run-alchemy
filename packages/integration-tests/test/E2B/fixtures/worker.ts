@@ -50,9 +50,18 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
           Effect.gen(function* () {
             const sandbox = yield* scopedSandbox();
             const marker = yield* sandbox.files.readText("/home/user/marker.txt");
-            const ok = yield* sandbox.commands.run("echo out; echo err >&2");
-            const failed = yield* sandbox.commands.run("exit 3");
-            const exec = yield* sandbox.commands.exec(["printf", "%s", "argv"]);
+            const ok = yield* sandbox.exec("echo out; echo err >&2");
+            const failed = yield* sandbox.exec("exit 3");
+            const exec = yield* sandbox.exec(["printf", "%s", "argv"]);
+            const fed = yield* sandbox.exec("cat", { stdin: "fed via stdin" });
+            const withEnv = yield* sandbox.exec("echo $GREETING", {
+              env: { GREETING: "hi" },
+              cwd: "/tmp",
+            });
+            const timedOut = yield* sandbox.exec("sleep 30", { timeout: "2 seconds" }).pipe(
+              Effect.map(() => "finished"),
+              Effect.catchTag("E2B.ExecTimedOut", (error) => Effect.succeed(error._tag)),
+            );
             yield* sandbox.files.write("/home/user/dir/a.txt", "hello");
             const read = yield* sandbox.files.readText("/home/user/dir/a.txt");
             const listed = yield* sandbox.files.list("/home/user/dir");
@@ -60,9 +69,20 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
             const movedExists = yield* sandbox.files.exists("/home/user/dir/b.txt");
             yield* sandbox.files.remove("/home/user/dir/b.txt");
             const removedExists = yield* sandbox.files.exists("/home/user/dir/b.txt");
-            const events = yield* sandbox.commands.start("echo streamed").pipe(
-              Stream.map((event) => event._tag),
-              Stream.runCollect,
+            const streamed = yield* Effect.scoped(
+              Effect.gen(function* () {
+                const proc = yield* sandbox.start("echo streamed; echo oops >&2");
+                const output = yield* proc.output.pipe(
+                  Stream.map((chunk) => chunk._tag),
+                  Stream.runCollect,
+                );
+                const result = yield* proc.wait;
+                return {
+                  output: Array.from(output),
+                  stdout: result.stdout,
+                  exitCode: result.exitCode,
+                };
+              }),
             );
             return {
               templateId: sandbox.templateId,
@@ -70,11 +90,14 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               ok,
               failedExitCode: failed.exitCode,
               exec: exec.stdout,
+              fed: fed.stdout,
+              withEnv: withEnv.stdout,
+              timedOut,
               read,
               listed: listed.map((entry) => entry.name),
               movedExists,
               removedExists,
-              events: Array.from(events),
+              streamed,
             };
           }),
         // CreateSandbox(base): lifecycle — metadata lookup, pause, resume, timeout, kill.
@@ -87,6 +110,10 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
             yield* sandbox.setTimeout("10 minutes");
             yield* sandbox.pause();
             const paused = yield* sandboxes.get(sandbox.sandboxId);
+            const notRunning = yield* sandbox.files.readText("/home/user/state.txt").pipe(
+              Effect.map(() => "read"),
+              Effect.catchTag("SandboxNotRunning", (error) => Effect.succeed(error._tag)),
+            );
             const resumed = yield* sandboxes.connect(sandbox.sandboxId, { timeout: 300 });
             const state = yield* resumed.files.readText("/home/user/state.txt");
             const detail = yield* resumed.describe();
@@ -96,6 +123,7 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               foundIds: found.map((s) => s.sandboxID),
               sandboxId: sandbox.sandboxId,
               pausedState: paused.state,
+              notRunning,
               resumedState: detail.state,
               metadata: detail.metadata,
               state,
@@ -106,10 +134,7 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
         "/sandbox/handle": () =>
           Effect.gen(function* () {
             const sandbox = yield* scopedSandbox();
-            const text = (event: E2B.ProcessEvent) =>
-              event._tag === "Stdout" || event._tag === "Pty"
-                ? new TextDecoder().decode(event.data)
-                : "";
+            const text = (data: Uint8Array) => new TextDecoder().decode(data);
 
             // Files: mkdir, compose, read bytes, stat, watch.
             yield* sandbox.files.makeDir("/home/user/h");
@@ -134,37 +159,52 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
             const watched = yield* Fiber.join(watcher).pipe(Effect.timeout("20 seconds"));
 
             // Processes: stdin, list, re-attach, close stdin, kill.
-            const cat = yield* sandbox.commands
-              .start("cat", { tag: "cat", stdin: true })
-              .pipe(Stream.map(text), Stream.mkString, Effect.forkScoped);
-            yield* Effect.sleep("1 second");
-            const reattached = yield* sandbox.commands
-              .connect({ tag: "cat" })
-              .pipe(Stream.map(text), Stream.mkString, Effect.forkScoped);
+            const cat = yield* sandbox.start("cat", { tag: "cat", stdin: true });
+            const catOutput = yield* cat.output.pipe(
+              Stream.map((chunk) => text(chunk.data)),
+              Stream.mkString,
+              Effect.forkScoped,
+            );
+            const reattached = yield* sandbox.processes.attach({ tag: "cat" });
+            const reattachedOutput = yield* reattached.output.pipe(
+              Stream.map((chunk) => text(chunk.data)),
+              Stream.mkString,
+              Effect.forkScoped,
+            );
             yield* Effect.sleep("500 millis");
-            const running = yield* sandbox.commands.list();
-            yield* sandbox.commands.sendStdin({ tag: "cat" }, "ping\n");
-            yield* sandbox.commands.closeStdin({ tag: "cat" });
-            const catOut = yield* Fiber.join(cat).pipe(Effect.timeout("20 seconds"));
-            const reattachedOut = yield* Fiber.join(reattached).pipe(Effect.timeout("20 seconds"));
-            yield* sandbox.commands
-              .start("sleep 300", { tag: "sleeper" })
-              .pipe(Stream.take(1), Stream.runDrain);
-            yield* sandbox.commands.kill({ tag: "sleeper" });
-            yield* Effect.sleep("500 millis");
-            const afterKill = yield* sandbox.commands.list();
+            const running = yield* sandbox.processes.list();
+            yield* cat.write("ping\n");
+            yield* cat.closeStdin();
+            const catOut = yield* Fiber.join(catOutput).pipe(Effect.timeout("20 seconds"));
+            const catExit = yield* cat.wait.pipe(Effect.timeout("20 seconds"));
+            const reattachedOut = yield* Fiber.join(reattachedOutput).pipe(
+              Effect.timeout("20 seconds"),
+            );
+            // Detaching (closing its scope) leaves the process running.
+            const sleeperPid = yield* Effect.scoped(
+              Effect.map(sandbox.start("sleep 300", { tag: "sleeper" }), (proc) => proc.pid),
+            );
+            const afterDetach = yield* sandbox.processes.list();
+            const sleeper = yield* sandbox.processes.attach({ pid: sleeperPid });
+            yield* sleeper.kill();
+            const sleeperExit = yield* sleeper.wait.pipe(Effect.timeout("20 seconds"));
+            const afterKill = yield* sandbox.processes.list();
 
             // A PTY: type, resize, read the output.
-            const pty = yield* sandbox.pty
-              .create({ cols: 80, rows: 24, tag: "pty" })
-              .pipe(Stream.map(text), Stream.mkString, Effect.forkScoped);
+            const pty = yield* sandbox.pty.open({ cols: 80, rows: 24 });
+            const ptyOutput = yield* pty.output.pipe(
+              Stream.map(text),
+              Stream.mkString,
+              Effect.forkScoped,
+            );
             yield* Effect.sleep("1 second");
-            yield* sandbox.pty.resize({ tag: "pty" }, { cols: 100, rows: 30 });
-            yield* sandbox.pty.sendInput({ tag: "pty" }, "echo pty-$((6*7)); stty size; exit\n");
-            const ptyOut = yield* Fiber.join(pty).pipe(Effect.timeout("20 seconds"));
+            yield* pty.resize({ cols: 100, rows: 30 });
+            yield* pty.write("echo pty-$((6*7)); stty size; exit\n");
+            const ptyOut = yield* Fiber.join(ptyOutput).pipe(Effect.timeout("20 seconds"));
+            const ptyExit = yield* pty.wait.pipe(Effect.timeout("20 seconds"));
 
             // Ports: a server in the sandbox, reached through its URL.
-            yield* sandbox.commands.run(
+            yield* sandbox.exec(
               "nohup python3 -m http.server 8000 --directory /home/user/h >/dev/null 2>&1 &",
             );
             const served = yield* sandbox.fetch(8000, HttpClientRequest.get("/ab.txt")).pipe(
@@ -188,9 +228,13 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               ),
               listedCat: running.some((p) => p.tag === "cat"),
               catOut,
+              catExitCode: catExit.exitCode,
               reattachedOut,
-              sleeperKilled: !afterKill.some((p) => p.tag === "sleeper"),
+              sleeperDetached: afterDetach.some((p) => p.pid === sleeperPid),
+              sleeperKilled: !afterKill.some((p) => p.pid === sleeperPid),
+              sleeperExitCode: sleeperExit.exitCode,
               ptyOut,
+              ptyExitCode: ptyExit.exitCode,
               served,
               host: sandbox.getHost(8000),
               url: sandbox.url(8000),
@@ -198,22 +242,35 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               logs: logs.logs.length,
             };
           }),
-        // ConnectSandbox: the declared sandbox, resumed on connect.
+        // ConnectSandbox: the declared sandbox's handle.
         "/box/run": () =>
           Effect.gen(function* () {
-            const sandbox = yield* box.connect({ timeout: "5 minutes" });
-            const marker = yield* sandbox.files.readText("/home/user/marker.txt");
-            yield* sandbox.files.write("/home/user/box-state.txt", "kept");
-            return { sandboxId: yield* box.sandboxId, marker };
+            yield* box.resume({ timeout: "5 minutes" });
+            const marker = yield* box.files.readText("/home/user/marker.txt");
+            yield* box.files.write("/home/user/box-state.txt", "kept");
+            const echoed = yield* box.exec(["echo", "from the box"]);
+            const sandboxId = yield* box.sandboxId;
+            const url = yield* box.url(3000);
+            return { sandboxId, marker, echoed: echoed.stdout, url };
           }),
+        // A paused sandbox fails envd calls with a typed tag until resumed.
         "/box/pause": () =>
           Effect.gen(function* () {
             yield* box.pause();
             const paused = yield* box.describe();
-            const resumed = yield* box.connect({ timeout: "5 minutes" });
-            const state = yield* resumed.files.readText("/home/user/box-state.txt");
+            const whilePaused = yield* box.files.readText("/home/user/box-state.txt").pipe(
+              Effect.map(() => "read"),
+              Effect.catchTag("SandboxNotRunning", (error) => Effect.succeed(error._tag)),
+            );
+            yield* box.resume({ timeout: "5 minutes" });
+            const state = yield* box.files.readText("/home/user/box-state.txt");
             const detail = yield* box.describe();
-            return { pausedState: paused.state, resumedState: detail.state, state };
+            return {
+              pausedState: paused.state,
+              whilePaused,
+              resumedState: detail.state,
+              state,
+            };
           }),
         // CreateSandbox.metrics: several sandboxes in one call.
         "/sandbox/metrics": () =>
@@ -292,8 +349,8 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
                 },
               },
             });
-            const echoed = yield* sandbox.commands.run("curl -s https://postman-echo.com/headers");
-            const env = yield* sandbox.commands.run("env");
+            const echoed = yield* sandbox.exec("curl -s https://postman-echo.com/headers");
+            const env = yield* sandbox.exec("env");
             yield* secrets.delete(name);
             const gone = yield* secrets.get(name);
             return {

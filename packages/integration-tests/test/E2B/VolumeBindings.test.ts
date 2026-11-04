@@ -3,10 +3,12 @@ import * as E2B from "@alchemy.run/e2b";
 import { describe, expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
 import * as Alchemy from "alchemy";
+import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import MountProgram from "./fixtures/mount-program.ts";
 import { BindingAgent, SharedVolume } from "./fixtures/resources.ts";
 import E2BVolumeWorker from "./fixtures/volume-worker.ts";
 
@@ -24,7 +26,18 @@ const Stack = Alchemy.Stack(
     yield* BindingAgent;
     yield* SharedVolume;
     const worker = yield* E2BVolumeWorker;
-    return { url: worker.url.as<string>() };
+    // A template program that mounts the volume, served from a declared sandbox.
+    const program = yield* MountProgram;
+    const box = yield* E2B.Sandbox("MountBox", {
+      template: program,
+      network: { allowPublicTraffic: true },
+    });
+    return {
+      url: worker.url.as<string>(),
+      programMounts: program.mounts,
+      boxMounts: box.mounts,
+      programUrl: Output.interpolate`https://3000-${box.sandboxId}.${box.domain}`,
+    };
   }),
 );
 
@@ -80,5 +93,35 @@ describe("CreateVolume", () => {
       expect(body.gone).toBe(true);
     }),
     { tags, timeout: 240_000 },
+  );
+});
+
+describe.sequential("MountVolume", () => {
+  test.skipIf(!volumesEnabled)(
+    "a Worker mounts a declared volume into the sandboxes it creates",
+    Effect.gen(function* () {
+      const body = yield* get<{ path: string; seen: string }>("/mount");
+      expect(body.path).toBe("/home/user/shared");
+      expect(body.seen).toBe("seen through the mount");
+    }),
+    { tags, timeout: 120_000 },
+  );
+
+  test.skipIf(!volumesEnabled)(
+    "a template program's mount goes on its template and on the sandbox declared from it",
+    Effect.gen(function* () {
+      const { programMounts, boxMounts, programUrl } = yield* stack;
+      expect(programMounts.map((mount) => mount.path)).toEqual(["/shared"]);
+      expect(boxMounts.map((mount) => mount.path)).toEqual(["/shared"]);
+      const client = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+      const res = yield* client
+        .get(programUrl)
+        .pipe(Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }));
+      const body = (yield* res.json) as { path: string; files: string[] };
+      expect(body.path).toBe("/shared");
+      // The Worker test above wrote it through the volume API.
+      expect(body.files).toContain("mounted.txt");
+    }),
+    { tags, timeout: 600_000 },
   );
 });

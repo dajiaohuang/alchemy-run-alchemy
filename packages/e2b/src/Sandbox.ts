@@ -68,8 +68,10 @@ export interface SandboxProps {
    */
   timeout?: Duration.Input;
   /**
-   * Resume the paused sandbox when a request reaches one of its URLs.
-   * Needs `memory`. Changing it replaces the sandbox.
+   * Resume the paused sandbox on the next request: to one of its URLs, or
+   * a call into it from `E2B.ConnectSandbox`. Without it, calls into the
+   * paused sandbox fail with `SandboxNotRunning` until `resume()`. Needs
+   * `memory`. Changing it replaces the sandbox.
    * @default true
    */
   autoResume?: boolean;

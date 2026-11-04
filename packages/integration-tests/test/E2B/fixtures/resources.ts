@@ -1,5 +1,4 @@
 import * as E2B from "@alchemy.run/e2b";
-import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
 /** The template the binding fixture's sandboxes boot from. */
@@ -9,9 +8,11 @@ export const BindingAgent = E2B.Template("BindingAgent", {
 });
 
 /** A sandbox the stack owns, reached through ConnectSandbox. */
-export const BindingBox = Effect.gen(function* () {
-  const agent = yield* BindingAgent;
-  return yield* E2B.Sandbox("BindingBox", { template: agent.templateId, timeout: "5 minutes" });
+export const BindingBox = E2B.Sandbox("BindingBox", {
+  template: BindingAgent,
+  timeout: "5 minutes",
+  // Without auto-resume, calls into the paused sandbox fail instead of waking it.
+  autoResume: false,
 });
 
 /** A volume the volume fixture reads and writes through the volume bindings. */

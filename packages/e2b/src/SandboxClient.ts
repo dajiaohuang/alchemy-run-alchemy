@@ -180,9 +180,9 @@ export type SandboxNetworkUpdate = Omit<sandboxes.UpdateSandboxNetworkRequest, "
 
 /**
  * What you can do with a sandbox, however you got it. Calls that reach
- * inside the sandbox (`exec`, `start`, `files`, `pty`) fail with
- * `SandboxNotRunning` while it is paused: `resume()` it first. `fetch` to a
- * port resumes a sandbox created with `autoResume`.
+ * inside a paused sandbox (`exec`, `start`, `files`, `pty`) fail with
+ * `SandboxNotRunning`: `resume()` it first. A sandbox created with
+ * `autoResume` is the exception: E2B resumes it on any request.
  */
 export interface SandboxOperations {
   /** Runs a command to completion. */
