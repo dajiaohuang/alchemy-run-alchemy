@@ -1,229 +1,415 @@
-import type * as E2B from "@distilled.cloud/e2b";
-import type * as filesystem from "@distilled.cloud/e2b/filesystem";
-import type * as process from "@distilled.cloud/e2b/process";
-import type * as sandboxes from "@distilled.cloud/e2b/sandboxes";
-import type * as templates from "@distilled.cloud/e2b/templates";
-import type * as volumes from "@distilled.cloud/e2b/volumes";
-import type { RuntimeContext } from "alchemy/RuntimeContext";
-import type * as Duration from "effect/Duration";
-import type * as Effect from "effect/Effect";
-import type * as HttpClientError from "effect/http/HttpClientError";
-import type * as HttpClientRequest from "effect/http/HttpClientRequest";
-import type * as HttpClientResponse from "effect/http/HttpClientResponse";
-import type * as Scope from "effect/Scope";
-import type * as Stream from "effect/Stream";
-import type { E2BUnexpectedResponse, SandboxBaseMissing } from "./Errors.ts";
+import * as sandboxes from "@distilled.cloud/e2b/sandboxes";
+import { Unowned } from "alchemy/AdoptPolicy";
+import { isResolved } from "alchemy/Diff";
+import * as Provider from "alchemy/Provider";
+import { Resource } from "alchemy/Resource";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
+import { E2BUnexpectedResponse } from "./Errors.ts";
+import { hasOwnershipMetadata, ownershipMetadata, userMetadata } from "./internal/Ownership.ts";
+import { denyUnlisted } from "./internal/SandboxHandle.ts";
+import type { Providers } from "./Providers.ts";
 
-/** Errors an E2B call can fail with. */
-export type E2BError =
-  | E2B.E2BOpError
-  | templates.TemplateInUse
-  | volumes.VolumesNotEnabled
-  | process.ConnectStreamError
-  | SandboxBaseMissing
-  | E2BUnexpectedResponse;
-
-/** A process inside a sandbox, by pid or by the tag it was started with. */
-export type ProcessSelector = process.ConnectProcessRequest["process"];
-
-/** An event from a running process: `Start`, output, `End`, `KeepAlive`. */
-export type ProcessEvent = process.ProcessEvent;
-
-/** An event from a watched directory. */
-export type WatchEvent = filesystem.WatchDirEvent;
-
-/** A file or directory inside a sandbox. */
-export type EntryInfo = filesystem.EntryInfo;
-
-/** A running process inside a sandbox. */
-export type ProcessInfo = process.ProcessInfo;
-
-export interface RunOptions {
-  /** Working directory. @default the sandbox user's home */
-  readonly cwd?: string;
-  /** Environment variables for the command. */
-  readonly envs?: Readonly<Record<string, string>>;
-  /** A tag to select the process by while it runs. */
-  readonly tag?: string;
-  /** Keep stdin open for `commands.sendStdin`. */
-  readonly stdin?: boolean;
-}
-
-/** What a finished command printed, and its exit code. Non-zero exit codes are returned, not failed. */
-export interface CommandResult {
-  readonly pid: number;
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
-  /** envd's error for a process that could not run (e.g. the executable is missing). */
-  readonly error: string | undefined;
-}
-
-/** Processes inside the sandbox, through envd. */
-export interface Commands {
-  /** Runs a shell command line (`bash -l -c`) to completion. */
-  run(
-    command: string,
-    options?: RunOptions,
-  ): Effect.Effect<CommandResult, E2BError, RuntimeContext>;
-  /** Runs an argument vector directly (no shell) to completion. */
-  exec(
-    argv: readonly [string, ...string[]],
-    options?: RunOptions,
-  ): Effect.Effect<CommandResult, E2BError, RuntimeContext>;
+/** Egress rules for a declared sandbox, in E2B's shape. */
+export interface SandboxNetwork {
   /**
-   * Starts a shell command line and streams its events. Interrupting the
-   * stream detaches; the process keeps running until it exits or is killed.
+   * Whether the sandbox's URLs accept requests without its traffic token.
+   * Changing it replaces the sandbox.
+   * @default true
    */
-  start(
-    command: string,
-    options?: RunOptions,
-  ): Stream.Stream<ProcessEvent, E2BError, RuntimeContext>;
-  /** Re-attaches to a running process and streams its events from now on. */
-  connect(process: ProcessSelector): Stream.Stream<ProcessEvent, E2BError, RuntimeContext>;
-  /** Running processes. */
-  list(): Effect.Effect<ReadonlyArray<ProcessInfo>, E2BError, RuntimeContext>;
-  /** Writes to a process's stdin (it must have been started with `stdin: true`). */
-  sendStdin(
-    process: ProcessSelector,
-    data: string | Uint8Array,
-  ): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Closes a process's stdin. */
-  closeStdin(process: ProcessSelector): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Signals a process. @default "SIGKILL" */
-  kill(
-    process: ProcessSelector,
-    signal?: "SIGTERM" | "SIGKILL",
-  ): Effect.Effect<void, E2BError, RuntimeContext>;
-}
-
-/** Pseudo-terminals inside the sandbox. */
-export interface Pty {
+  allowPublicTraffic?: boolean;
   /**
-   * Starts a login shell (or `command`) in a pseudo-terminal and streams its
-   * events; output arrives as `Pty` events.
+   * The only destinations the sandbox may reach: CIDR blocks, IPs or
+   * domains (`*.example.com`). Everything else is denied unless `denyOut`
+   * says otherwise.
    */
-  create(options: {
-    readonly cols: number;
-    readonly rows: number;
-    readonly command?: string;
-    readonly cwd?: string;
-    readonly envs?: Readonly<Record<string, string>>;
-    readonly tag?: string;
-  }): Stream.Stream<ProcessEvent, E2BError, RuntimeContext>;
-  /** Types into a pseudo-terminal. */
-  sendInput(
-    process: ProcessSelector,
-    data: string | Uint8Array,
-  ): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Resizes a pseudo-terminal. */
-  resize(
-    process: ProcessSelector,
-    size: { readonly cols: number; readonly rows: number },
-  ): Effect.Effect<void, E2BError, RuntimeContext>;
+  allowOut?: string[];
+  /** Denied CIDR blocks or IPs. Domains are not supported. */
+  denyOut?: string[];
+  /** DNS servers the sandbox may reach when `allowOut` lists a domain. @default ["8.8.8.8"] */
+  dnsServers?: string[];
+  /**
+   * Header rules for outbound HTTPS requests, by domain. Reference an
+   * `E2B.Secret`'s `ref` here to inject it at egress.
+   */
+  rules?: sandboxes.SandboxNetworkConfigRulesMap;
 }
 
-/** The sandbox's filesystem, through envd. Relative paths resolve in the user's home. */
-export interface Files {
-  read(path: string): Effect.Effect<Uint8Array, E2BError, RuntimeContext>;
-  readText(path: string): Effect.Effect<string, E2BError, RuntimeContext>;
-  /** Writes a file, creating parent directories. */
-  write(
-    path: string,
-    data: string | Uint8Array,
-  ): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
-  list(
-    path: string,
-    options?: { readonly depth?: number },
-  ): Effect.Effect<ReadonlyArray<EntryInfo>, E2BError, RuntimeContext>;
-  stat(path: string): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
-  exists(path: string): Effect.Effect<boolean, E2BError, RuntimeContext>;
-  makeDir(path: string): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
-  move(source: string, destination: string): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
-  remove(path: string): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Concatenates files into `destination`. */
-  compose(
-    sources: ReadonlyArray<string>,
-    destination: string,
-  ): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Streams changes under a directory until interrupted. */
-  watch(
-    path: string,
-    options?: { readonly recursive?: boolean; readonly includeEntry?: boolean },
-  ): Stream.Stream<WatchEvent, E2BError, RuntimeContext>;
+export interface SandboxProps {
+  /**
+   * The template or snapshot the sandbox boots from: a `Template`'s
+   * `templateId` or a `Snapshot`'s `snapshotId`. Changing it replaces the
+   * sandbox.
+   */
+  template: string;
+  /**
+   * The build of `template` the sandbox runs. Pass the template's
+   * `buildId` so a rebuild replaces the sandbox with one that boots the new
+   * build; without it, a rebuilt template leaves the sandbox on the build it
+   * started with.
+   */
+  build?: string;
+  /**
+   * How long the sandbox runs after it starts or resumes before E2B pauses
+   * it. Changing it applies to the current run (and resumes a paused
+   * sandbox once to apply it).
+   * @default "5 minutes"
+   */
+  timeout?: Duration.Input;
+  /**
+   * Resume the paused sandbox when a request reaches one of its URLs.
+   * Needs `memory`. Changing it replaces the sandbox.
+   * @default true
+   */
+  autoResume?: boolean;
+  /**
+   * Keep memory as well as the filesystem when the sandbox pauses, so it
+   * resumes where it left off. `false` keeps only the filesystem and the
+   * sandbox reboots on resume. Changing it replaces the sandbox.
+   * @default true
+   */
+  memory?: boolean;
+  /** Environment variables for the sandbox. Changing them replaces the sandbox. */
+  env?: Record<string, string>;
+  /** Your own metadata. Changing it replaces the sandbox. */
+  metadata?: Record<string, string>;
+  /**
+   * Egress rules. `allowOut`, `denyOut`, `dnsServers` and `rules` update in
+   * place; `allowPublicTraffic` replaces the sandbox.
+   */
+  network?: SandboxNetwork;
+  /**
+   * Volumes to mount, by name, at a path. Changing them replaces the
+   * sandbox.
+   */
+  volumeMounts?: { name: string; path: string }[];
 }
 
-/** One fork's outcome: the new sandbox, or why it could not start. */
-export type ForkResult =
-  | { readonly _tag: "Forked"; readonly sandbox: Sandbox }
-  | { readonly _tag: "ForkFailed"; readonly code: number | undefined; readonly message: string };
+export interface SandboxAttributes {
+  /** E2B's sandbox id. */
+  sandboxId: string;
+  /** The template id the sandbox booted from. */
+  templateId: string;
+  /** The `build` prop the sandbox was created for. */
+  build: string | undefined;
+  /**
+   * The domain its ports are served under: port `p` answers at
+   * `https://<p>-<sandboxId>.<domain>`.
+   */
+  domain: string;
+  /**
+   * The token requests to the sandbox's URLs send in the
+   * `e2b-traffic-access-token` header when `allowPublicTraffic` is `false`.
+   */
+  trafficAccessToken: Redacted.Redacted<string> | undefined;
+  /** Your metadata, without Alchemy's ownership stamp. */
+  metadata: Record<string, string>;
+  /** CPU cores. */
+  cpuCount: number;
+  /** Memory in MiB. */
+  memoryMB: number;
+}
 
-/** Network rules for a running sandbox (`updateSandboxNetwork`), in E2B's shape. */
-export type SandboxNetworkUpdate = Omit<sandboxes.UpdateSandboxNetworkRequest, "sandboxID">;
+export interface Sandbox extends Resource<
+  "E2B.Sandbox",
+  SandboxProps,
+  SandboxAttributes,
+  never,
+  Providers,
+  { sandboxId: string }
+> {}
 
 /**
- * A running (or paused) E2B sandbox: E2B's own operations on it, with no
- * client-side policy. Holds only ids and tokens, so it can be rebuilt from a
- * sandbox id with `sandboxes.connect(id)` in any request.
+ * An E2B sandbox the stack owns: one long-lived sandbox that pauses when it
+ * is idle and resumes when it is used, instead of one per request.
+ *
+ * Use it for a workspace that outlives requests (an agent's home, a dev
+ * box) or to serve a template program at a stable URL. The sandbox runs for
+ * `timeout` after it starts or resumes, then E2B pauses it with its memory
+ * and files. A request to one of its URLs resumes it (`autoResume`), and so
+ * does `connect()` from `E2B.ConnectSandbox`.
+ *
+ * Alchemy stamps its stack, stage and logical ID into the sandbox's
+ * metadata to recognise the sandboxes it owns.
+ *
+ * :::caution
+ * Replacing the sandbox (a new `template`, `build`, `env`, `metadata`,
+ * `volumeMounts`, `memory`, `autoResume` or `allowPublicTraffic`) starts a
+ * fresh sandbox and kills the old one with its files. If E2B no longer has
+ * the sandbox, the next deploy that updates it (or `alchemy drift`) creates
+ * a new one.
+ * :::
+ *
+ * ### Creating a Sandbox
+ * **Example:** A dev box from a template
+ * ```typescript
+ * import * as E2B from "@alchemy.run/e2b";
+ * import * as Effect from "effect/Effect";
+ *
+ * export const DevBox = Effect.gen(function* () {
+ *   const template = yield* E2B.Template("Node", { from: "node:22" });
+ *   return yield* E2B.Sandbox("DevBox", {
+ *     template: template.templateId,
+ *     timeout: "10 minutes",
+ *   });
+ * });
+ * ```
+ *
+ * ### Serving a template program
+ * A template program starts when its sandbox boots. Declare one sandbox for
+ * it and pass `build`, so each new build of the program gets a fresh
+ * sandbox.
+ *
+ * **Example:** The program at a stable URL
+ * ```typescript
+ * import * as E2B from "@alchemy.run/e2b";
+ * import * as Output from "alchemy/Output";
+ * import * as Effect from "effect/Effect";
+ * import Api from "./src/api.ts";
+ *
+ * export const ApiSandbox = Effect.gen(function* () {
+ *   const api = yield* Api;
+ *   const sandbox = yield* E2B.Sandbox("Api", {
+ *     template: api.templateId,
+ *     build: api.buildId,
+ *   });
+ *   return { url: Output.interpolate`https://3000-${sandbox.sandboxId}.${sandbox.domain}` };
+ * });
+ * ```
+ *
+ * ### Private URLs
+ * **Example:** Require the traffic token
+ * ```typescript
+ * const sandbox = yield* E2B.Sandbox("Private", {
+ *   template: template.templateId,
+ *   network: { allowPublicTraffic: false },
+ * });
+ * // send sandbox.trafficAccessToken in the `e2b-traffic-access-token` header
+ * ```
+ *
+ * ### Using it at runtime
+ * **Example:** Run a command in it from a Worker
+ * ```typescript
+ * const devBox = yield* E2B.ConnectSandbox(DevBox);
+ * // in fetch:
+ * const sandbox = yield* devBox.connect();
+ * const result = yield* sandbox.commands.run("git pull && npm test", { cwd: "/home/user/repo" });
+ * ```
+ *
+ * ### Referencing a sandbox the stack doesn't manage
+ * **Example:** Look one up by id
+ * ```typescript
+ * const shared = E2B.Sandbox.lookup({ sandboxId: "i1a2b3c4d5e6f7g8h9" });
+ * const box = yield* E2B.ConnectSandbox(shared);
+ * ```
+ *
+ * @resource
+ * @product Sandbox
  */
-export interface Sandbox {
-  readonly sandboxId: string;
-  readonly templateId: string;
-  /** The domain the sandbox's ports are served under (`<port>-<sandboxId>.<domain>`). */
-  readonly domain: string;
-  /** What E2B returned for the sandbox when it was created or connected. */
-  readonly info: sandboxes.Sandbox;
-  readonly commands: Commands;
-  readonly files: Files;
-  readonly pty: Pty;
-  /** The host serving a port inside the sandbox. */
-  getHost(port: number): string;
-  /** `https://<port>-<sandboxId>.<domain>`. */
-  url(port: number): string;
-  /**
-   * Sends a request to a port inside the sandbox, with the sandbox's traffic
-   * token when its URLs are not public.
-   */
-  fetch(
-    port: number,
-    request: HttpClientRequest.HttpClientRequest,
-  ): Effect.Effect<
-    HttpClientResponse.HttpClientResponse,
-    HttpClientError.HttpClientError,
-    RuntimeContext | Scope.Scope
-  >;
-  /** Live details: state, resources, network, metadata. */
-  describe(): Effect.Effect<sandboxes.SandboxDetail, E2BError, RuntimeContext>;
-  /** Pauses the sandbox (memory and disk are kept; `connect` resumes it). */
-  pause(): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Kills the sandbox. */
-  kill(): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Sets the time left before the sandbox is killed (or paused, with `autoPause`). */
-  setTimeout(timeout: Duration.Input): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Extends the sandbox's lifetime by `duration`. */
-  refresh(duration?: Duration.Input): Effect.Effect<void, E2BError, RuntimeContext>;
-  /** Replaces the sandbox's egress rules (E2B's `updateSandboxNetwork`). */
-  updateNetwork(network: SandboxNetworkUpdate): Effect.Effect<void, E2BError, RuntimeContext>;
-  /**
-   * Snapshots the sandbox into a named template (memory and disk by
-   * default). Sandboxes created `from` it start where this one is now.
-   */
-  snapshot(options?: {
-    readonly name?: string;
-    readonly memory?: boolean;
-  }): Effect.Effect<sandboxes.SnapshotInfo, E2BError, RuntimeContext>;
-  /**
-   * Checkpoints the sandbox (it keeps running) and starts `count` copies of
-   * it. Each fork succeeds or fails on its own.
-   */
-  fork(options?: {
-    readonly count?: number;
-    readonly timeout?: Duration.Input;
-  }): Effect.Effect<ReadonlyArray<ForkResult>, E2BError, RuntimeContext>;
-  /** CPU, memory and disk metrics. */
-  metrics(): Effect.Effect<ReadonlyArray<sandboxes.SandboxMetric>, E2BError, RuntimeContext>;
-  /** The sandbox's logs. */
-  logs(
-    options?: Omit<sandboxes.ListSandboxLogsRequest, "sandboxID">,
-  ): Effect.Effect<sandboxes.SandboxLogsV2Response, E2BError, RuntimeContext>;
-}
+export const Sandbox = Resource<Sandbox>("E2B.Sandbox");
+
+const DEFAULT_TIMEOUT_SECONDS = 300;
+
+const secondsOf = (timeout: Duration.Input | undefined) =>
+  timeout === undefined
+    ? DEFAULT_TIMEOUT_SECONDS
+    : Math.max(1, Math.round(Duration.toMillis(Duration.fromInputUnsafe(timeout)) / 1000));
+
+const redact = (token: string | Redacted.Redacted<string> | null | undefined) =>
+  token === undefined || token === null
+    ? undefined
+    : Redacted.isRedacted(token)
+      ? token
+      : Redacted.make(token);
+
+/** A sandbox's details, or `undefined` when E2B no longer has it. */
+const observeSandbox = (sandboxId: string) =>
+  sandboxes.getSandbox({ sandboxID: sandboxId }).pipe(
+    Effect.map((detail): sandboxes.SandboxDetail | undefined => detail),
+    Effect.catchTag("NotFound", () => Effect.undefined),
+  );
+
+const toAttributes = (
+  detail: sandboxes.SandboxDetail,
+  stored: { build: string | undefined; trafficAccessToken: Redacted.Redacted<string> | undefined },
+  fallbackDomain: string,
+): SandboxAttributes => ({
+  sandboxId: detail.sandboxID,
+  templateId: detail.templateID,
+  build: stored.build,
+  domain: detail.domain ?? fallbackDomain,
+  trafficAccessToken: stored.trafficAccessToken,
+  metadata: userMetadata(detail.metadata as Record<string, string>),
+  cpuCount: detail.cpuCount,
+  memoryMB: detail.memoryMB,
+});
+
+/** The network fields `updateSandboxNetwork` can change, as E2B stores them. */
+const mutableNetwork = (network: SandboxNetwork | sandboxes.SandboxNetworkConfig | undefined) => {
+  const desired = network === undefined ? {} : denyUnlisted(network);
+  return {
+    allowOut: [...(desired.allowOut ?? [])].sort(),
+    denyOut: [...(desired.denyOut ?? [])].sort(),
+    dnsServers: desired.dnsServers === undefined ? undefined : [...desired.dnsServers].sort(),
+    rules: desired.rules ?? {},
+  };
+};
+
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** Props whose change means a new sandbox (E2B can't change them on a live one). */
+const replacingProps = (props: SandboxProps) => ({
+  template: props.template,
+  build: props.build,
+  autoResume: props.autoResume ?? true,
+  memory: props.memory ?? true,
+  env: props.env ?? {},
+  metadata: props.metadata ?? {},
+  volumeMounts: props.volumeMounts ?? [],
+  allowPublicTraffic: props.network?.allowPublicTraffic ?? true,
+});
+
+export const SandboxProvider = () =>
+  Provider.effect(
+    Sandbox,
+    Effect.gen(function* () {
+      return {
+        stables: ["sandboxId", "templateId", "domain"],
+        diff: Effect.fn(function* ({ news, olds }) {
+          if (!isResolved(news) || olds === undefined) return undefined;
+          if (!sameJson(replacingProps(olds), replacingProps(news))) {
+            return { action: "replace" } as const;
+          }
+          return undefined;
+        }),
+        read: Effect.fn(function* ({ id, output }) {
+          if (output === undefined) return undefined;
+          const detail = yield* observeSandbox(output.sandboxId);
+          if (detail === undefined) return undefined;
+          const attrs = toAttributes(detail, output, output.domain);
+          const ours = yield* hasOwnershipMetadata(id, detail.metadata as Record<string, string>);
+          return ours ? attrs : Unowned(attrs);
+        }),
+        lookup: Effect.fn(function* ({ sandboxId }) {
+          const detail = yield* observeSandbox(sandboxId);
+          if (detail === undefined) return undefined;
+          return toAttributes(detail, { build: undefined, trafficAccessToken: undefined }, "");
+        }),
+        reconcile: Effect.fn(function* ({ id, news, olds, output, session }) {
+          const timeout = secondsOf(news.timeout);
+          const memory = news.memory ?? true;
+          const autoResume = news.autoResume ?? true;
+
+          // Observe — `output` caches the id; the sandbox may be gone.
+          let detail = output === undefined ? undefined : yield* observeSandbox(output.sandboxId);
+          let trafficAccessToken = output?.trafficAccessToken;
+
+          // Ensure
+          if (detail === undefined) {
+            yield* session.note(`Creating sandbox from ${news.template}...`);
+            const created = yield* sandboxes.createSandbox({
+              templateID: news.template,
+              timeout,
+              autoPause: true,
+              autoPauseMemory: memory,
+              autoResume: { enabled: autoResume },
+              metadata: { ...news.metadata, ...(yield* ownershipMetadata(id)) },
+              ...(news.env === undefined ? {} : { envVars: news.env }),
+              ...(news.network === undefined ? {} : { network: denyUnlisted(news.network) }),
+              ...(news.volumeMounts === undefined ? {} : { volumeMounts: news.volumeMounts }),
+            });
+            trafficAccessToken = redact(created.trafficAccessToken);
+            detail = yield* observeSandbox(created.sandboxID);
+            if (detail === undefined) {
+              return yield* new E2BUnexpectedResponse({
+                message: `E2B sandbox ${created.sandboxID} vanished after create`,
+              });
+            }
+            return toAttributes(
+              detail,
+              { build: news.build, trafficAccessToken },
+              created.domain ?? "",
+            );
+          }
+
+          // Sync — egress rules, observed against what E2B stores.
+          const desiredNetwork = mutableNetwork(news.network);
+          const observedNetwork = mutableNetwork(detail.network);
+          const dnsMatches =
+            desiredNetwork.dnsServers === undefined ||
+            sameJson(desiredNetwork.dnsServers, observedNetwork.dnsServers);
+          if (
+            !sameJson(desiredNetwork.allowOut, observedNetwork.allowOut) ||
+            !sameJson(desiredNetwork.denyOut, observedNetwork.denyOut) ||
+            !sameJson(desiredNetwork.rules, observedNetwork.rules) ||
+            !dnsMatches
+          ) {
+            yield* session.note(`Updating sandbox ${detail.sandboxID} network...`);
+            yield* sandboxes.updateSandboxNetwork({
+              sandboxID: detail.sandboxID,
+              allowOut: desiredNetwork.allowOut,
+              denyOut: desiredNetwork.denyOut,
+              rules: desiredNetwork.rules,
+              ...(desiredNetwork.dnsServers === undefined
+                ? {}
+                : { dnsServers: desiredNetwork.dnsServers }),
+            });
+          }
+
+          // Sync — the run's timeout. E2B doesn't report the configured
+          // timeout, so `olds` is the only signal it changed.
+          if (olds !== undefined && secondsOf(olds.timeout) !== timeout) {
+            if (detail.state === "paused") {
+              // Resuming takes the new timeout; the sandbox pauses again after it.
+              const resumed = yield* sandboxes.connectSandbox({
+                sandboxID: detail.sandboxID,
+                timeout,
+              });
+              trafficAccessToken = redact(resumed.trafficAccessToken) ?? trafficAccessToken;
+            } else {
+              yield* sandboxes.setSandboxTimeout({ sandboxID: detail.sandboxID, timeout });
+            }
+          }
+
+          return toAttributes(
+            detail,
+            { build: news.build, trafficAccessToken },
+            output?.domain ?? "",
+          );
+        }),
+        delete: Effect.fn(function* ({ output }) {
+          yield* sandboxes
+            .deleteSandbox({ sandboxID: output.sandboxId })
+            .pipe(Effect.catchTag("NotFound", () => Effect.void));
+        }),
+        list: Effect.fn(function* () {
+          const all = Array.from(
+            yield* Stream.runCollect(
+              sandboxes.listSandboxes.items({
+                state: ["running", "paused"],
+                limit: 100,
+              }),
+            ),
+          );
+          return (
+            all
+              // Declared sandboxes carry `alchemy::id`; the ones bindings create
+              // at runtime carry a host stamp instead, and the host's Sweep owns them.
+              .filter((sandbox) => sandbox.metadata?.["alchemy::id"] !== undefined)
+              .map((sandbox): SandboxAttributes => ({
+                sandboxId: sandbox.sandboxID,
+                templateId: sandbox.templateID,
+                build: undefined,
+                domain: "",
+                trafficAccessToken: undefined,
+                metadata: userMetadata(sandbox.metadata as Record<string, string>),
+                cpuCount: sandbox.cpuCount,
+                memoryMB: sandbox.memoryMB,
+              }))
+          );
+        }),
+      };
+    }),
+  );

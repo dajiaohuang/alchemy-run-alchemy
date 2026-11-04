@@ -8,8 +8,8 @@ import {
   type CreateSecretBindingOptions,
   type SecretsClient,
 } from "./CreateSecret.ts";
+import { bindE2B } from "./E2BBindings.ts";
 import { E2BUnexpectedResponse } from "./Errors.ts";
-import { bindE2B } from "./internal/Bindings.ts";
 import { toSecretAttributes } from "./Secret.ts";
 import { Sweep } from "./Sweep.ts";
 

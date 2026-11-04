@@ -5,11 +5,13 @@ import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import { BindingAgent, ProbeWebhook, RotatedSecret } from "./resources.ts";
+import { BindingAgent, BindingBox, ProbeWebhook, RotatedSecret } from "./resources.ts";
 
 const BindingsLive = Layer.mergeAll(
   E2B.CreateSandboxHttp,
+  E2B.ConnectSandboxHttp,
   E2B.CreateSecretHttp,
   E2B.CreateTemplateHttp,
   E2B.CreateSnapshotHttp,
@@ -24,6 +26,8 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
   Effect.gen(function* () {
     const sandboxes = yield* E2B.CreateSandbox(BindingAgent);
     const anySandboxes = yield* E2B.CreateSandbox();
+    const declaredBox = yield* BindingBox;
+    const box = yield* E2B.ConnectSandbox(declaredBox);
     const secrets = yield* E2B.CreateSecret();
     const templates = yield* E2B.CreateTemplate();
     const snapshots = yield* E2B.CreateSnapshot();
@@ -95,6 +99,37 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               state,
               killedAgain,
             };
+          }),
+        // ConnectSandbox: the declared sandbox, resumed on connect.
+        "/box/run": () =>
+          Effect.gen(function* () {
+            const sandbox = yield* box.connect({ timeout: "5 minutes" });
+            const marker = yield* sandbox.files.readText("/home/user/marker.txt");
+            yield* sandbox.files.write("/home/user/box-state.txt", "kept");
+            return { sandboxId: yield* box.sandboxId, marker };
+          }),
+        "/box/pause": () =>
+          Effect.gen(function* () {
+            yield* box.pause();
+            const paused = yield* box.describe();
+            const resumed = yield* box.connect({ timeout: "5 minutes" });
+            const state = yield* resumed.files.readText("/home/user/box-state.txt");
+            const detail = yield* box.describe();
+            return { pausedState: paused.state, resumedState: detail.state, state };
+          }),
+        // CreateSandbox.metrics: several sandboxes in one call.
+        "/sandbox/metrics": () =>
+          Effect.gen(function* () {
+            const sandbox = yield* scopedSandbox();
+            // E2B reports a new sandbox's first metrics after a few seconds.
+            const metrics = yield* sandboxes.metrics([sandbox.sandboxId]).pipe(
+              Effect.repeat({
+                schedule: Schedule.spaced("2 seconds"),
+                until: (m) => m.sandboxes[sandbox.sandboxId] !== undefined,
+                times: 15,
+              }),
+            );
+            return { sandboxId: sandbox.sandboxId, ids: Object.keys(metrics.sandboxes) };
           }),
         // Fork: the copy sees the parent's files.
         "/sandbox/fork": () =>

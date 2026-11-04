@@ -36,7 +36,7 @@ import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import { ApiKey } from "../ApiKey.ts";
+import { ApiKey } from "./ApiKey.ts";
 
 /** A plain value as an Output with no requirements (`asOutput` leaves them `any`). */
 const output = <A>(value: A) => Output.asOutput(value) as Output.Output<A, never>;

@@ -2,7 +2,7 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
-import type { E2BError } from "./Sandbox.ts";
+import type { E2BError } from "./SandboxClient.ts";
 import type { SecretAttributes } from "./Secret.ts";
 
 /** A secret as E2B reports it: never its value. `ref` is the egress placeholder. */

@@ -2,7 +2,7 @@ import * as webhooks from "@distilled.cloud/e2b/webhooks";
 import type * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { bindE2B } from "./internal/Bindings.ts";
+import { bindE2B } from "./E2BBindings.ts";
 import { ReadWebhook, type WebhookClient } from "./ReadWebhook.ts";
 import type { Webhook } from "./Webhook.ts";
 

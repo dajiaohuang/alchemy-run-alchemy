@@ -2,7 +2,7 @@ import * as volumes from "@distilled.cloud/e2b/volumes";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { CreateVolume, type VolumeHandle, type VolumesClient } from "./CreateVolume.ts";
-import { bindE2B, type E2BAuth } from "./internal/Bindings.ts";
+import { bindE2B, type E2BAuth } from "./E2BBindings.ts";
 import { makeVolumeFiles } from "./internal/VolumeHttp.ts";
 
 const handleOf = (auth: E2BAuth, volume: { volumeID: string; name: string }): VolumeHandle => ({

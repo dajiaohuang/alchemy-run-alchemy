@@ -160,6 +160,7 @@ const TokenResponse = Schema.Struct({
 export const refreshGrant = (grant: E2BGrant): Effect.Effect<E2BGrant, E2BLoginError> =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
+    // Raw HTTP: the token endpoint the console's login redirect handed back.
     const response = yield* client.execute(
       HttpClientRequest.post(grant.tokenEndpoint).pipe(
         HttpClientRequest.setHeader("Accept", "application/json"),
@@ -197,6 +198,7 @@ export const revokeGrant = (grant: Pick<E2BGrant, "refresh" | "revokeEndpoint" |
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
     yield* client.execute(
+      // Raw HTTP: the revoke endpoint the console's login redirect handed back.
       HttpClientRequest.post(grant.revokeEndpoint).pipe(
         HttpClientRequest.bodyUrlParams({
           token: Redacted.value(grant.refresh),

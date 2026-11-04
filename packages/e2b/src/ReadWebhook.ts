@@ -2,7 +2,7 @@ import type * as webhooks from "@distilled.cloud/e2b/webhooks";
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
-import type { E2BError } from "./Sandbox.ts";
+import type { E2BError } from "./SandboxClient.ts";
 import type { Webhook } from "./Webhook.ts";
 
 /** A webhook's delivery history and stats. */

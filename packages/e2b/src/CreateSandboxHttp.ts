@@ -11,8 +11,8 @@ import {
   type SandboxBase,
   type SandboxesClient,
 } from "./CreateSandbox.ts";
+import { bindE2B } from "./E2BBindings.ts";
 import { SandboxBaseMissing } from "./Errors.ts";
-import { bindE2B } from "./internal/Bindings.ts";
 import { denyUnlisted, makeSandboxHandle } from "./internal/SandboxHandle.ts";
 import { metadataQuery, Sweep } from "./Sweep.ts";
 
@@ -140,6 +140,8 @@ export const CreateSandboxHttp = Layer.effect(
             Effect.asVoid,
             Effect.catchTag("NotFound", () => Effect.void),
           ),
+        metrics: (sandboxIds) =>
+          auth.authorize(sandboxes.listSandboxesMetrics({ sandbox_ids: [...sandboxIds] })),
       };
       return client;
     });

@@ -1,5 +1,5 @@
 /**
- * Builds a {@link Sandbox} handle over E2B's control plane (lifecycle) and
+ * Builds an {@link E2BSandbox} handle over E2B's control plane (lifecycle) and
  * envd (processes and files), from what `createSandbox` / `connectSandbox`
  * returned. envd calls address the sandbox with its own access token; the
  * team key is used only for control-plane calls.
@@ -17,15 +17,15 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
+import type { E2BAuth } from "../E2BBindings.ts";
 import type {
   CommandResult,
   E2BError,
   ForkResult,
   ProcessEvent,
   RunOptions,
-  Sandbox,
-} from "../Sandbox.ts";
-import type { E2BAuth } from "./Bindings.ts";
+  E2BSandbox,
+} from "../SandboxClient.ts";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -102,7 +102,7 @@ export const makeSandboxHandle = (
   auth: E2BAuth,
   info: sandboxes.Sandbox,
   domain: string,
-): Sandbox => {
+): E2BSandbox => {
   const sandboxId = info.sandboxID;
   const sandboxDomain = info.domain ?? domain;
   const connection = Layer.mergeAll(
@@ -121,7 +121,7 @@ export const makeSandboxHandle = (
         ? info.trafficAccessToken
         : Redacted.make(info.trafficAccessToken);
 
-  const handle: Sandbox = {
+  const handle: E2BSandbox = {
     sandboxId,
     templateId: info.templateID,
     domain: sandboxDomain,

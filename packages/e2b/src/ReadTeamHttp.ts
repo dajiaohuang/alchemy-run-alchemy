@@ -2,7 +2,7 @@ import * as auth from "@distilled.cloud/e2b/auth";
 import * as events from "@distilled.cloud/e2b/events";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { bindE2B } from "./internal/Bindings.ts";
+import { bindE2B } from "./E2BBindings.ts";
 import { ReadTeam, type TeamClient } from "./ReadTeam.ts";
 
 /**

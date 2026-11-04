@@ -1,7 +1,7 @@
 import type * as volumeContent from "@distilled.cloud/e2b/volume_content";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
-import type { E2BError } from "./Sandbox.ts";
+import type { E2BError } from "./SandboxClient.ts";
 
 /** A file, directory or symlink in a volume. */
 export type VolumeEntry = volumeContent.VolumeEntryStat;

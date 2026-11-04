@@ -3,7 +3,7 @@ import type * as events from "@distilled.cloud/e2b/events";
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
-import type { E2BError } from "./Sandbox.ts";
+import type { E2BError } from "./SandboxClient.ts";
 
 /** Team usage and the sandbox lifecycle event log. */
 export interface TeamClient {

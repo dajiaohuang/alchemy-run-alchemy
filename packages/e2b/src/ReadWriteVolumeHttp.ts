@@ -1,7 +1,7 @@
 import type * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { bindE2B } from "./internal/Bindings.ts";
+import { bindE2B } from "./E2BBindings.ts";
 import { makeVolumeFiles } from "./internal/VolumeHttp.ts";
 import { ReadWriteVolume } from "./ReadWriteVolume.ts";
 import type { Volume } from "./Volume.ts";

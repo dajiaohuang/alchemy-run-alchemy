@@ -2,7 +2,7 @@ import type * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
-import type { E2BError, Sandbox } from "./Sandbox.ts";
+import type { E2BError, E2BSandbox } from "./SandboxClient.ts";
 import type { Snapshot } from "./Snapshot.ts";
 import type { Template } from "./Template.ts";
 
@@ -37,7 +37,7 @@ export interface CreateSandboxBindingOptions {
 /** E2B sandboxes: create, look up, list and kill them. */
 export interface SandboxesClient {
   /** Creates a sandbox from the bound base (or `templateID`). */
-  create(options?: CreateSandboxOptions): Effect.Effect<Sandbox, E2BError, RuntimeContext>;
+  create(options?: CreateSandboxOptions): Effect.Effect<E2BSandbox, E2BError, RuntimeContext>;
   /**
    * A handle to an existing sandbox. A paused sandbox is resumed; `timeout`
    * (seconds) resets its lifetime.
@@ -45,7 +45,7 @@ export interface SandboxesClient {
   connect(
     sandboxId: string,
     options?: { readonly timeout?: number; readonly memory?: boolean },
-  ): Effect.Effect<Sandbox, E2BError, RuntimeContext>;
+  ): Effect.Effect<E2BSandbox, E2BError, RuntimeContext>;
   /** A sandbox's details, without resuming it. */
   get(sandboxId: string): Effect.Effect<sandboxes.SandboxDetail, E2BError, RuntimeContext>;
   /** Sandboxes, filtered by metadata, state or template (the bound base by default). */
@@ -54,6 +54,10 @@ export interface SandboxesClient {
   ): Effect.Effect<ReadonlyArray<sandboxes.ListedSandbox>, E2BError, RuntimeContext>;
   /** Kills a sandbox. Killing one that is gone succeeds. */
   kill(sandboxId: string): Effect.Effect<void, E2BError, RuntimeContext>;
+  /** The latest CPU, memory and disk metrics of several sandboxes at once, by id. */
+  metrics(
+    sandboxIds: ReadonlyArray<string>,
+  ): Effect.Effect<sandboxes.SandboxesWithMetrics, E2BError, RuntimeContext>;
 }
 
 /**

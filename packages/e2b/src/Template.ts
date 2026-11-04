@@ -138,7 +138,8 @@ export interface Template extends Resource<
   TemplateProps,
   TemplateAttributes,
   TemplateBinding,
-  Providers
+  Providers,
+  { name: string }
 > {}
 
 /**
@@ -296,6 +297,16 @@ export interface Template extends Resource<
  * const sandbox = yield* sandboxes.create({ timeout: 600 });
  * ```
  *
+ * ### Referencing a template the stack doesn't manage
+ * `E2B.Template.lookup` finds an existing template by name. Nothing is created,
+ * adopted or deleted.
+ *
+ * **Example:** Look one up by name
+ * ```typescript
+ * const base = E2B.Template.lookup({ name: "my-team/base-image" });
+ * const sandboxes = yield* E2B.CreateSandbox(base);
+ * ```
+ *
  * @resource
  * @product Template
  */
@@ -423,6 +434,21 @@ export const TemplateProvider = () =>
           if (plan.hash !== output.sourceHash || news.force) return { action: "update" } as const;
           if ((news.public ?? false) !== output.public) return { action: "update" } as const;
           return undefined;
+        }),
+        lookup: Effect.fn(function* ({ name }) {
+          const template = yield* observeTemplate(undefined, name);
+          if (template === undefined) return undefined;
+          return {
+            templateId: template.templateID,
+            name,
+            buildId: template.buildID,
+            buildHash: "",
+            sourceHash: "",
+            names: [...template.names],
+            public: template.public,
+            cpuCount: template.cpuCount,
+            memoryMB: template.memoryMB,
+          } satisfies TemplateAttributes;
         }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name = output?.name ?? (yield* e2bName(id, olds?.name));

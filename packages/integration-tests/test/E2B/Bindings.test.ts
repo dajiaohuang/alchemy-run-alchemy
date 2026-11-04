@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import { BindingAgent, ProbeWebhook, RotatedSecret } from "./fixtures/resources.ts";
+import { BindingAgent, BindingBox, ProbeWebhook, RotatedSecret } from "./fixtures/resources.ts";
 import E2BWorker from "./fixtures/worker.ts";
 
 const providers = Layer.mergeAll(E2B.providers(), Cloudflare.providers());
@@ -21,10 +21,15 @@ const Stack = Alchemy.Stack(
   { providers, state: Cloudflare.state() },
   Effect.gen(function* () {
     const agent = yield* BindingAgent;
+    const box = yield* BindingBox;
     yield* RotatedSecret;
     yield* ProbeWebhook;
     const worker = yield* E2BWorker;
-    return { url: worker.url.as<string>(), templateId: agent.templateId };
+    return {
+      url: worker.url.as<string>(),
+      templateId: agent.templateId,
+      boxId: box.sandboxId,
+    };
   }),
 );
 
@@ -77,6 +82,15 @@ const get = <A>(path: string) =>
   });
 
 describe("CreateSandbox", () => {
+  test(
+    "reads metrics for several sandboxes in one call",
+    Effect.gen(function* () {
+      const body = yield* get<{ sandboxId: string; ids: string[] }>("/sandbox/metrics");
+      expect(body.ids).toContain(body.sandboxId);
+    }),
+    { tags, timeout: 180_000 },
+  );
+
   test(
     "runs commands and file operations in a sandbox from the bound template",
     Effect.gen(function* () {
@@ -161,6 +175,35 @@ describe("CreateSandbox", () => {
       expect(body.content).toBe("snapshotted");
     }),
     { tags, timeout: 300_000 },
+  );
+});
+
+describe.sequential("ConnectSandbox", () => {
+  test(
+    "connects to the declared sandbox and runs in it",
+    Effect.gen(function* () {
+      const { boxId } = yield* stack;
+      const body = yield* get<{ sandboxId: string; marker: string }>("/box/run");
+      expect(body.sandboxId).toBe(boxId);
+      expect(body.marker.trim()).toBe("bound");
+      const detail = yield* distilled(sandboxes.getSandbox({ sandboxID: boxId }));
+      expect(detail.metadata?.["alchemy::id"]).toBe("BindingBox");
+    }),
+    { tags, timeout: 180_000 },
+  );
+
+  test(
+    "pauses the declared sandbox and resumes it with its files",
+    Effect.gen(function* () {
+      yield* get("/box/run");
+      const body = yield* get<{ pausedState: string; resumedState: string; state: string }>(
+        "/box/pause",
+      );
+      expect(body.pausedState).toBe("paused");
+      expect(body.resumedState).toBe("running");
+      expect(body.state).toBe("kept");
+    }),
+    { tags, timeout: 180_000 },
   );
 });
 

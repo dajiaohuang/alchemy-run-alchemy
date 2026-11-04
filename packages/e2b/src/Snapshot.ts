@@ -60,7 +60,8 @@ export interface Snapshot extends Resource<
   SnapshotProps,
   SnapshotAttributes,
   never,
-  Providers
+  Providers,
+  { name: string }
 > {}
 
 /**
@@ -94,6 +95,16 @@ export interface Snapshot extends Resource<
  * const sandboxes = yield* E2B.CreateSandbox(Warm);
  * const sandbox = yield* sandboxes.create({ timeout: 600 });
  * yield* sandbox.commands.run("cd alchemy && pnpm test");
+ * ```
+ *
+ * ### Referencing a snapshot the stack doesn't manage
+ * `E2B.Snapshot.lookup` finds an existing snapshot by name. Nothing is created,
+ * adopted or deleted.
+ *
+ * **Example:** Look one up by name
+ * ```typescript
+ * const warm = E2B.Snapshot.lookup({ name: "warm-repo" });
+ * const sandboxes = yield* E2B.CreateSandbox(warm);
  * ```
  *
  * @resource
@@ -137,6 +148,17 @@ export const SnapshotProvider = () =>
             return { action: "update" } as const;
           }
           return undefined;
+        }),
+        lookup: Effect.fn(function* ({ name }) {
+          const template = yield* observe(name);
+          if (template === undefined) return undefined;
+          return {
+            snapshotId: template.names[0] ?? template.templateID,
+            name,
+            templateId: template.templateID,
+            names: [...template.names],
+            setupHash: "",
+          } satisfies SnapshotAttributes;
         }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name = output?.name ?? (yield* e2bName(id, olds?.name));

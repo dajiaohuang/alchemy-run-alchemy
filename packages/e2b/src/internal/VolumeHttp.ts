@@ -14,8 +14,8 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
+import type { E2BAuth } from "../E2BBindings.ts";
 import type { ReadWriteVolumeClient } from "../VolumeFiles.ts";
-import type { E2BAuth } from "./Bindings.ts";
 
 const decoder = new TextDecoder();
 

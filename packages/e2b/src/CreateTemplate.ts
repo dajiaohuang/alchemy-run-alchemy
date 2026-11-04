@@ -7,7 +7,7 @@ import type * as Effect from "effect/Effect";
 import type * as PlatformError from "effect/PlatformError";
 import type { TemplateBuildFailed } from "./Errors.ts";
 import type { TemplateBuildSpec } from "./internal/TemplateBuild.ts";
-import type { E2BError } from "./Sandbox.ts";
+import type { E2BError } from "./SandboxClient.ts";
 
 /**
  * What a runtime build takes: E2B's own build inputs (a base `image` or

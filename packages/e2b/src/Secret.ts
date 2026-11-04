@@ -54,7 +54,8 @@ export interface Secret extends Resource<
   SecretProps,
   SecretAttributes,
   never,
-  Providers
+  Providers,
+  { name: string }
 > {}
 
 /**
@@ -100,6 +101,16 @@ export interface Secret extends Resource<
  * yield* token.put(Redacted.make(freshToken));
  * ```
  *
+ * ### Referencing a secret the stack doesn't manage
+ * `E2B.Secret.lookup` finds an existing secret by name. Nothing is created,
+ * adopted or deleted.
+ *
+ * **Example:** Look one up by name
+ * ```typescript
+ * const github = E2B.Secret.lookup({ name: "github-token" });
+ * const token = yield* E2B.WriteSecret(github);
+ * ```
+ *
  * @resource
  * @product Secret
  */
@@ -141,6 +152,10 @@ export const SecretProvider = () =>
           const name = output?.name ?? (yield* e2bName(id, olds?.name));
           if (news.name?.toLowerCase() !== name) return { action: "replace" } as const;
           return undefined;
+        }),
+        lookup: Effect.fn(function* ({ name }) {
+          const secret = yield* observeSecret(name.toLowerCase());
+          return secret === undefined ? undefined : toSecretAttributes(secret);
         }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name = output?.name ?? (yield* e2bName(id, olds?.name));

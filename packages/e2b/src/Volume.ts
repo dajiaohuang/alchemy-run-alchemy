@@ -29,7 +29,8 @@ export interface Volume extends Resource<
   VolumeProps,
   VolumeAttributes,
   never,
-  Providers
+  Providers,
+  { name: string }
 > {}
 
 /**
@@ -75,6 +76,16 @@ export interface Volume extends Resource<
  * const report = yield* reports.readFile("/report.json");
  * ```
  *
+ * ### Referencing a volume the stack doesn't manage
+ * `E2B.Volume.lookup` finds an existing volume by name. Nothing is created,
+ * adopted or deleted.
+ *
+ * **Example:** Look one up by name
+ * ```typescript
+ * const datasets = E2B.Volume.lookup({ name: "datasets" });
+ * const files = yield* E2B.ReadVolume(datasets);
+ * ```
+ *
  * @resource
  * @product Volume
  */
@@ -111,6 +122,10 @@ export const VolumeProvider = () =>
           const name = output?.name ?? (yield* e2bName(id, olds?.name));
           if (news.name !== name) return { action: "replace" } as const;
           return undefined;
+        }),
+        lookup: Effect.fn(function* ({ name }) {
+          const volume = yield* observe(undefined, name);
+          return volume === undefined ? undefined : toAttrs(volume);
         }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name = output?.name ?? (yield* e2bName(id, olds?.name));

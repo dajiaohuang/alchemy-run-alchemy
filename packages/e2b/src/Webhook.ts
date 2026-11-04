@@ -66,7 +66,8 @@ export interface Webhook extends Resource<
   WebhookProps,
   WebhookAttributes,
   never,
-  Providers
+  Providers,
+  { name: string }
 > {}
 
 /**
@@ -89,6 +90,16 @@ export interface Webhook extends Resource<
  *   events: ["sandbox.lifecycle.paused", "sandbox.lifecycle.killed"],
  *   signatureSecret: Alchemy.Secret("E2B_WEBHOOK_SECRET"),
  * });
+ * ```
+ *
+ * ### Referencing a webhook the stack doesn't manage
+ * `E2B.Webhook.lookup` finds an existing webhook by name. Nothing is created,
+ * adopted or deleted.
+ *
+ * **Example:** Look one up by name
+ * ```typescript
+ * const audit = E2B.Webhook.lookup({ name: "audit" });
+ * const deliveries = yield* E2B.ReadWebhook(audit);
  * ```
  *
  * @resource
@@ -126,6 +137,10 @@ export const WebhookProvider = () =>
     Effect.gen(function* () {
       return {
         stables: ["webhookId"],
+        lookup: Effect.fn(function* ({ name }) {
+          const hook = yield* observe(undefined, name);
+          return hook === undefined ? undefined : toAttrs(hook);
+        }),
         read: Effect.fn(function* ({ id, olds, output }) {
           const name = output?.name ?? (yield* e2bName(id, olds?.name));
           const hook = yield* observe(output?.webhookId, name);

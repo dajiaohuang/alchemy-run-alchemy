@@ -5,7 +5,7 @@ import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type { SnapshotSetupFailed } from "./Errors.ts";
 import type { SnapshotSetup } from "./internal/SnapshotBuild.ts";
-import type { E2BError } from "./Sandbox.ts";
+import type { E2BError } from "./SandboxClient.ts";
 
 export type { SnapshotSetup } from "./internal/SnapshotBuild.ts";
 

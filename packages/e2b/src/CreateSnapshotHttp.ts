@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { CreateSnapshot, type SnapshotsClient } from "./CreateSnapshot.ts";
-import { bindE2B } from "./internal/Bindings.ts";
+import { bindE2B } from "./E2BBindings.ts";
 import { takeSnapshot } from "./internal/SnapshotBuild.ts";
 
 /**

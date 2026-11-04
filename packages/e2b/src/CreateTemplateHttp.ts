@@ -10,7 +10,7 @@ import {
   type TemplateInfo,
   type TemplatesClient,
 } from "./CreateTemplate.ts";
-import { bindE2B } from "./internal/Bindings.ts";
+import { bindE2B } from "./E2BBindings.ts";
 import { planTemplateBuild, runTemplateBuild } from "./internal/TemplateBuild.ts";
 
 /** The tag a build of these inputs carries. */

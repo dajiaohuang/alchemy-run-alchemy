@@ -1,5 +1,7 @@
 export * from "./ApiKey.ts";
 export * from "./AuthProvider.ts";
+export * from "./ConnectSandbox.ts";
+export * from "./ConnectSandboxHttp.ts";
 export * from "./CreateSandbox.ts";
 export * from "./CreateSandboxHttp.ts";
 export * from "./CreateSecret.ts";
@@ -23,6 +25,7 @@ export * from "./ReadVolumeHttp.ts";
 export * from "./ReadWriteVolume.ts";
 export * from "./ReadWriteVolumeHttp.ts";
 export * from "./Sandbox.ts";
+export * from "./SandboxClient.ts";
 export * from "./SandboxEvents.ts";
 export * from "./SandboxEventsLive.ts";
 export * from "./Secret.ts";
