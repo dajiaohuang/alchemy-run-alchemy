@@ -191,12 +191,52 @@ export type ServiceShape = Main<ServerHost>;
  * export const Admin = Archil.Service("Admin", { sandbox: Box, main: "./src/admin.ts", port: 3001 });
  * ```
  *
+ * **Example:** Secrets in the environment
+ * ```typescript
+ * export const Hello = Archil.Service("Hello", {
+ *   sandbox: Box,
+ *   main: "./src/hello.ts",
+ *   env: { STRIPE_KEY: Config.Redacted("STRIPE_KEY") },
+ * });
+ * ```
+ *
+ * ### Packaging
+ * Alchemy bundles `main` with rolldown into one Node program. Packages
+ * that can't be bundled (native modules, or ones that read their own files
+ * at run time) go in `build.install` and are installed next to it with
+ * `npm install`.
+ *
+ * **Example:** Install a native package
+ * ```typescript
+ * export const Thumbs = Archil.Service("Thumbs", {
+ *   sandbox: Box,
+ *   main: "./src/thumbs.ts",
+ *   build: { install: ["sharp"] },
+ * });
+ * ```
+ *
+ * **Example:** Upload static files next to the program
+ * ```typescript
+ * export const Site = Archil.Service("Site", {
+ *   sandbox: Box,
+ *   main: "./dist/server.mjs",
+ *   extraFiles: [{ source: "./dist/client", destination: "client" }],
+ * });
+ * ```
+ *
  * ### Disk Bindings
  * **Example:** Write uploads to a disk from a service
  * ```typescript
  * const uploads = yield* Archil.WriteDisk(Uploads);
  * // runtime
  * yield* uploads.upload(`uploads/${id}`, request.stream);
+ * ```
+ *
+ * **Example:** Read a dataset on another disk
+ * ```typescript
+ * const dataset = yield* Archil.ReadDisk(Dataset);
+ * // runtime
+ * return HttpServerResponse.stream(dataset.getStream("exports/data.parquet"));
  * ```
  *
  * ### Sandbox Bindings
@@ -206,6 +246,12 @@ export type ServiceShape = Main<ServerHost>;
  * // runtime
  * const agent = yield* agents.create({ name: `job-${id}` });
  * const result = yield* agent.exec("node --version");
+ * ```
+ *
+ * ### Websites
+ * **Example:** A framework site runs as a service
+ * ```typescript
+ * const site = yield* Archil.Website.Astro("Site", { sandbox: Box });
  * ```
  *
  * @resource
