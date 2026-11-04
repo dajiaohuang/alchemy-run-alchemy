@@ -77,7 +77,11 @@ export const WarmPoolProvider = () =>
     Effect.succeed({
       stables: ["warmPoolId", "snapshot", "target"],
       list: Effect.fn(function* () {
-        return (yield* warmPools.listWarmPools({})).map(toAttributes);
+        // Organizations Daytona doesn't serve warm pools to have none.
+        const pools = yield* warmPools
+          .listWarmPools({})
+          .pipe(Effect.catchTag("WarmPoolsUnavailable", () => Effect.succeed([])));
+        return pools.map(toAttributes);
       }),
       diff: Effect.fn(function* ({ news, output }) {
         if (!isResolved(news) || output === undefined) return undefined;

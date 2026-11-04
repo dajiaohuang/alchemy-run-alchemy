@@ -73,7 +73,10 @@ export const RunnerProvider = () =>
       stables: ["runnerId", "apiKey"],
       nuke: { dependsOn: [] },
       list: Effect.fn(function* () {
-        const all = yield* runners.listRunners({});
+        // Organizations without custom regions aren't served runners at all.
+        const all = yield* runners
+          .listRunners({})
+          .pipe(Effect.catchTag("RunnersUnavailable", () => Effect.succeed([])));
         return all.map((r) => ({
           runnerId: r.id,
           name: r.name,
