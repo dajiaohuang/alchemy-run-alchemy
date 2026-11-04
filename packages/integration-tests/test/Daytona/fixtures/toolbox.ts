@@ -692,11 +692,8 @@ export const vocabulary = Effect.fn(function* (box: Box, prefix: string) {
         );
         yield* proc.write("alchemy\n");
         const output = Array.from(yield* Stream.runCollect(proc.output));
-        const join = (stream: "stdout" | "stderr") =>
-          output
-            .filter((p) => p.stream === stream)
-            .map((p) => p.text)
-            .join("");
+        const join = (fd: "stdout" | "stderr") =>
+          decode(output.filter((p) => p.fd === fd).map((p) => p.data));
         return { stdout: join("stdout"), stderr: join("stderr"), exit: yield* proc.wait };
       }),
     ),
