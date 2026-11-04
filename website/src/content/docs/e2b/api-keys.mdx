@@ -27,7 +27,7 @@ export const Ci = E2B.ApiKey("Ci", {});
 ```typescript
 const team = yield* E2B.ReadTeam();
 const events = yield* team.events({ limit: 50 });
-const metrics = yield* team.metrics(teamId, { start, end });
+const metrics = yield* team.metrics({ start, end });
 ```
 
 Provide `E2B.ReadTeamHttp`.

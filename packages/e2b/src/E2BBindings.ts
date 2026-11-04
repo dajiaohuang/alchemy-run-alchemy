@@ -37,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { ApiKey } from "./ApiKey.ts";
+import { withTeamId } from "./Credentials.ts";
 
 /** A plain value as an Output with no requirements (`asOutput` leaves them `any`). */
 const output = <A>(value: A) => Output.asOutput(value) as Output.Output<A, never>;
@@ -55,6 +56,8 @@ export interface E2BAuth {
   readonly deployStamp: RuntimeStamp;
   /** The E2B domain sandboxes are addressed under. */
   readonly domain: Effect.Effect<string>;
+  /** The team the host's key belongs to. */
+  readonly teamId: Effect.Effect<string>;
 }
 
 /** The deploying stack's credentials: the ambient profile-backed ones, else the env. */
@@ -89,11 +92,13 @@ export const bindE2B = Effect.gen(function* () {
   const makeKey = yield* ApiKey;
   let apiKey: Output.Output<Redacted.Redacted<string>, never> = output(Redacted.make(""));
   let domain = DEFAULT_DOMAIN;
+  let teamId = "";
   let stamp: RuntimeStamp = {};
   if (!globalThis.__ALCHEMY_RUNTIME__) {
     const config = yield* deployCredentials.pipe(orDieCredentialsUnavailable("E2B"));
     yield* requireAccessToken(config).pipe(orDieCredentialsUnavailable("E2B"));
     domain = config.domain;
+    teamId = (yield* withTeamId(config).pipe(orDieCredentialsUnavailable("E2B"))).teamId ?? "";
     const host = yield* Binding.Host;
     if (host !== undefined) {
       const hostKey = yield* Namespace.push(host.LogicalId, makeKey("E2BHostKey", {}));
@@ -110,6 +115,7 @@ export const bindE2B = Effect.gen(function* () {
   const key = yield* Output.named(apiKey, "E2B_API_KEY").asEffect();
   const boundDomain = yield* Output.named(output(domain), "E2B_DOMAIN").asEffect();
   const boundStamp = yield* Output.named(output(JSON.stringify(stamp)), "E2B_STAMP").asEffect();
+  const boundTeamId = yield* Output.named(output(teamId), "E2B_TEAM_ID").asEffect();
 
   const domainOf = Effect.map(boundDomain, (value) => value || DEFAULT_DOMAIN);
   const credentials = Effect.gen(function* () {
@@ -132,6 +138,7 @@ export const bindE2B = Effect.gen(function* () {
       }
     }),
     domain: domainOf,
+    teamId: boundTeamId,
     deployStamp: stamp,
   } satisfies E2BAuth;
 });

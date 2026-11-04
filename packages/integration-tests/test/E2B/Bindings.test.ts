@@ -178,6 +178,44 @@ describe("CreateSandbox", () => {
   );
 });
 
+describe("E2BSandbox", () => {
+  test(
+    "drives processes, stdin, a PTY, files, a port, logs and network on one sandbox",
+    Effect.gen(function* () {
+      const body = yield* get<{
+        composed: string;
+        statName: string;
+        watched: string[];
+        listedCat: boolean;
+        catOut: string;
+        reattachedOut: string;
+        sleeperKilled: boolean;
+        ptyOut: string;
+        served: string;
+        host: string;
+        url: string;
+        allowOut: string[];
+        logs: number;
+      }>("/sandbox/handle");
+      expect(body.composed).toBe("ab");
+      expect(body.statName).toBe("ab.txt");
+      expect(body.watched).toContain("watched.txt");
+      expect(body.listedCat).toBe(true);
+      expect(body.catOut).toBe("ping\n");
+      expect(body.reattachedOut).toBe("ping\n");
+      expect(body.sleeperKilled).toBe(true);
+      expect(body.ptyOut).toContain("pty-42");
+      expect(body.ptyOut).toContain("30 100");
+      expect(body.served).toBe("ab");
+      expect(body.host.startsWith("8000-")).toBe(true);
+      expect(body.url).toBe(`https://${body.host}`);
+      expect(body.allowOut).toEqual(["github.com"]);
+      expect(body.logs).toBeGreaterThan(0);
+    }),
+    { tags, timeout: 180_000 },
+  );
+});
+
 describe.sequential("ConnectSandbox", () => {
   test(
     "connects to the declared sandbox and runs in it",
@@ -254,12 +292,39 @@ describe("WriteSecret", () => {
 
 describe("CreateTemplate", () => {
   test(
-    "builds a template at runtime and reuses the build for the same inputs",
+    "builds a template at runtime, reuses the build, reads it and tags it",
     Effect.gen(function* () {
       const name = yield* unique("tpl");
-      const body = yield* get<{ sameBuild: boolean; greeting: string }>(`/templates?name=${name}`);
+      const body = yield* get<{
+        sameBuild: boolean;
+        greeting: string;
+        foundBuild: boolean;
+        listed: boolean;
+        defaults: number;
+        searched: number;
+        status: string;
+        logs: number;
+        tagged: boolean;
+        tagCount: number;
+        tags: string[];
+        groups: number;
+        assignments: number;
+        untagged: boolean;
+      }>(`/templates?name=${name}`);
       expect(body.sameBuild).toBe(true);
       expect(body.greeting).toBe("built at runtime");
+      expect(body.foundBuild).toBe(true);
+      expect(body.listed).toBe(true);
+      expect(body.defaults).toBeGreaterThan(0);
+      expect(body.searched).toBeGreaterThan(0);
+      expect(body.status).toBe("ready");
+      expect(body.logs).toBeGreaterThan(0);
+      expect(body.tagged).toBe(true);
+      expect(body.tagCount).toBeGreaterThan(0);
+      expect(body.tags).toContain("v1");
+      expect(body.groups).toBeGreaterThan(0);
+      expect(body.assignments).toBeGreaterThan(0);
+      expect(body.untagged).toBe(false);
     }),
     { tags, timeout: 600_000 },
   );
@@ -267,10 +332,20 @@ describe("CreateTemplate", () => {
 
 describe("ReadTeam", () => {
   test(
-    "reads the team's sandbox event log",
+    "reads the team's event log and usage metrics",
     Effect.gen(function* () {
-      const body = yield* get<{ count: number }>("/team");
+      const body = yield* get<{
+        count: number;
+        sandboxEvents: number;
+        teamId: string;
+        metrics: number;
+        peak: number;
+      }>("/team");
       expect(body.count).toBeGreaterThan(0);
+      expect(body.sandboxEvents).toBeGreaterThan(0);
+      expect(body.teamId.length).toBeGreaterThan(0);
+      expect(body.metrics).toBeGreaterThan(0);
+      expect(body.peak).toBeGreaterThan(0);
     }),
     { tags, timeout: 120_000 },
   );

@@ -26,10 +26,15 @@ export const ReadTeamHttp = Layer.succeed(
   Effect.fn("E2B.ReadTeam")(function* () {
     const e2b = yield* bindE2B;
     const client: TeamClient = {
-      metrics: (teamId, options) =>
-        e2b.authorize(auth.listTeamMetrics({ ...options, teamID: teamId })),
-      maxMetric: (teamId, options) =>
-        e2b.authorize(auth.getTeamMetricsMax({ ...options, teamID: teamId })),
+      teamId: e2b.teamId,
+      metrics: Effect.fn("E2B.ReadTeam.metrics")(function* (options) {
+        const teamID = yield* e2b.teamId;
+        return yield* e2b.authorize(auth.listTeamMetrics({ ...options, teamID }));
+      }),
+      maxMetric: Effect.fn("E2B.ReadTeam.maxMetric")(function* (options) {
+        const teamID = yield* e2b.teamId;
+        return yield* e2b.authorize(auth.getTeamMetricsMax({ ...options, teamID }));
+      }),
       events: (options) => e2b.authorize(events.listTeamSandboxEvents({ ...options })),
       sandboxEvents: (sandboxId, options) =>
         e2b.authorize(events.listSandboxEvents({ ...options, sandboxID: sandboxId })),

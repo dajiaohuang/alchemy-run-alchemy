@@ -34,6 +34,32 @@ const sandbox = existing
 
 With `autoPause`, E2B pauses the sandbox instead of killing it when the timeout runs out, memory included. `connect` resumes it.
 
+## A sandbox the stack owns
+
+```typescript
+// src/DevBox.ts
+import * as E2B from "@alchemy.run/e2b";
+import * as Effect from "effect/Effect";
+import { Agent } from "./Agent.ts";
+
+export const DevBox = Effect.gen(function* () {
+  const agent = yield* Agent;
+  return yield* E2B.Sandbox("DevBox", { template: agent.templateId, timeout: "10 minutes" });
+});
+```
+
+`E2B.Sandbox` declares one sandbox that lives as long as the stack. It runs for `timeout` after it starts or resumes, then E2B pauses it with its memory and files. A request to one of its URLs resumes it.
+
+```typescript
+// in the Worker's construction
+const declared = yield* DevBox;
+const devBox = yield* E2B.ConnectSandbox(declared);
+// in fetch
+const sandbox = yield* devBox.connect();
+```
+
+`connect` resumes the sandbox if it is paused and returns the same handle as `create`. Provide `E2B.ConnectSandboxHttp` on the Worker.
+
 ## Run commands
 
 ```typescript

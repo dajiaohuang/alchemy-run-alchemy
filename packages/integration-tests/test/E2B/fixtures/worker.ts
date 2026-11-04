@@ -1,6 +1,8 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as E2B from "@alchemy.run/e2b";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
@@ -98,6 +100,102 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
               metadata: detail.metadata,
               state,
               killedAgain,
+            };
+          }),
+        // The sandbox handle: processes, stdin, PTYs, files, ports, logs, network.
+        "/sandbox/handle": () =>
+          Effect.gen(function* () {
+            const sandbox = yield* scopedSandbox();
+            const text = (event: E2B.ProcessEvent) =>
+              event._tag === "Stdout" || event._tag === "Pty"
+                ? new TextDecoder().decode(event.data)
+                : "";
+
+            // Files: mkdir, compose, read bytes, stat, watch.
+            yield* sandbox.files.makeDir("/home/user/h");
+            yield* sandbox.files.write("/home/user/h/a.txt", "a");
+            yield* sandbox.files.write("/home/user/h/b.txt", "b");
+            yield* sandbox.files.compose(
+              ["/home/user/h/a.txt", "/home/user/h/b.txt"],
+              "/home/user/h/ab.txt",
+            );
+            const composed = new TextDecoder().decode(
+              yield* sandbox.files.read("/home/user/h/ab.txt"),
+            );
+            const stat = yield* sandbox.files.stat("/home/user/h/ab.txt");
+            const watcher = yield* sandbox.files.watch("/home/user/h").pipe(
+              Stream.filter((event) => event._tag === "Filesystem"),
+              Stream.take(1),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            yield* Effect.sleep("1 second");
+            yield* sandbox.files.write("/home/user/h/watched.txt", "w");
+            const watched = yield* Fiber.join(watcher).pipe(Effect.timeout("20 seconds"));
+
+            // Processes: stdin, list, re-attach, close stdin, kill.
+            const cat = yield* sandbox.commands
+              .start("cat", { tag: "cat", stdin: true })
+              .pipe(Stream.map(text), Stream.mkString, Effect.forkScoped);
+            yield* Effect.sleep("1 second");
+            const reattached = yield* sandbox.commands
+              .connect({ tag: "cat" })
+              .pipe(Stream.map(text), Stream.mkString, Effect.forkScoped);
+            yield* Effect.sleep("500 millis");
+            const running = yield* sandbox.commands.list();
+            yield* sandbox.commands.sendStdin({ tag: "cat" }, "ping\n");
+            yield* sandbox.commands.closeStdin({ tag: "cat" });
+            const catOut = yield* Fiber.join(cat).pipe(Effect.timeout("20 seconds"));
+            const reattachedOut = yield* Fiber.join(reattached).pipe(Effect.timeout("20 seconds"));
+            yield* sandbox.commands
+              .start("sleep 300", { tag: "sleeper" })
+              .pipe(Stream.take(1), Stream.runDrain);
+            yield* sandbox.commands.kill({ tag: "sleeper" });
+            yield* Effect.sleep("500 millis");
+            const afterKill = yield* sandbox.commands.list();
+
+            // A PTY: type, resize, read the output.
+            const pty = yield* sandbox.pty
+              .create({ cols: 80, rows: 24, tag: "pty" })
+              .pipe(Stream.map(text), Stream.mkString, Effect.forkScoped);
+            yield* Effect.sleep("1 second");
+            yield* sandbox.pty.resize({ tag: "pty" }, { cols: 100, rows: 30 });
+            yield* sandbox.pty.sendInput({ tag: "pty" }, "echo pty-$((6*7)); stty size; exit\n");
+            const ptyOut = yield* Fiber.join(pty).pipe(Effect.timeout("20 seconds"));
+
+            // Ports: a server in the sandbox, reached through its URL.
+            yield* sandbox.commands.run(
+              "nohup python3 -m http.server 8000 --directory /home/user/h >/dev/null 2>&1 &",
+            );
+            const served = yield* sandbox.fetch(8000, HttpClientRequest.get("/ab.txt")).pipe(
+              Effect.flatMap((res) =>
+                res.status === 200 ? res.text : Effect.fail(new Error(`status ${res.status}`)),
+              ),
+              Effect.retry({ schedule: Schedule.spaced("1 second"), times: 15 }),
+            );
+
+            // Lifetime, network, logs.
+            yield* sandbox.refresh("1 minute");
+            yield* sandbox.updateNetwork({ allowOut: ["github.com"] });
+            const detail = yield* sandbox.describe();
+            const logs = yield* sandbox.logs({ limit: 10 });
+
+            return {
+              composed,
+              statName: stat.name,
+              watched: Array.from(watched).map((event) =>
+                event._tag === "Filesystem" ? event.name : "",
+              ),
+              listedCat: running.some((p) => p.tag === "cat"),
+              catOut,
+              reattachedOut,
+              sleeperKilled: !afterKill.some((p) => p.tag === "sleeper"),
+              ptyOut,
+              served,
+              host: sandbox.getHost(8000),
+              url: sandbox.url(8000),
+              allowOut: detail.network?.allowOut ?? [],
+              logs: logs.logs.length,
             };
           }),
         // ConnectSandbox: the declared sandbox, resumed on connect.
@@ -230,8 +328,39 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
             );
             const greeting = yield* sandbox.files.readText("/home/user/greeting.txt");
             yield* sandbox.kill();
+            // Reads and tags on the runtime-built template.
+            const found = yield* templates.get(first.templateId);
+            const listed = yield* templates.list();
+            const defaults = yield* templates.listDefaults();
+            const searched = yield* templates.search({ search: name });
+            const status = yield* templates.buildStatus(first.templateId, first.buildId);
+            const logs = yield* templates.buildLogs(first.templateId, first.buildId);
+            yield* templates.setPublic(first.templateId, false);
+            yield* templates.tags.assign(name, ["v1"]);
+            const tagged = yield* templates.tags.exists(first.templateId, "v1");
+            const tagCount = yield* templates.tags.count(first.templateId);
+            const tagList = yield* templates.tags.list(first.templateId);
+            const groups = yield* templates.tags.groups(first.templateId);
+            const assignments = yield* templates.tags.assignments(first.templateId, "v1");
+            yield* templates.tags.remove(name, ["v1"]);
+            const untagged = yield* templates.tags.exists(first.templateId, "v1");
             yield* templates.delete(first.templateId);
-            return { sameBuild: first.buildId === second.buildId, greeting };
+            return {
+              sameBuild: first.buildId === second.buildId,
+              greeting,
+              foundBuild: found?.buildID === first.buildId,
+              listed: listed.some((t) => t.templateID === first.templateId),
+              defaults: defaults.length,
+              searched: searched.data.length,
+              status: status.status,
+              logs: logs.logs.length,
+              tagged,
+              tagCount,
+              tags: tagList.map((t) => t.tag),
+              groups: groups.tags.length,
+              assignments: assignments.data.length,
+              untagged,
+            };
           }),
         // Leaves a sandbox and a secret behind, as a crashed request would; the
         // host's sweep removes them when the host is destroyed.
@@ -253,7 +382,23 @@ export default class E2BWorker extends Cloudflare.Worker<E2BWorker>()(
         "/team": () =>
           Effect.gen(function* () {
             const events = yield* team.events({ limit: 5 });
-            return { count: events.length };
+            const sandboxId = events[0]?.sandboxId;
+            const sandboxEvents =
+              sandboxId === undefined ? [] : yield* team.sandboxEvents(sandboxId, { limit: 5 });
+            const now = Math.floor(Date.now() / 1000);
+            const metrics = yield* team.metrics({ start: now - 3600, end: now });
+            const peak = yield* team.maxMetric({
+              metric: "concurrent_sandboxes",
+              start: now - 3600,
+              end: now,
+            });
+            return {
+              count: events.length,
+              sandboxEvents: sandboxEvents.length,
+              teamId: yield* team.teamId,
+              metrics: metrics.length,
+              peak: peak.value,
+            };
           }),
       };
 

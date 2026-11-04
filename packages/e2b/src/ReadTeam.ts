@@ -7,14 +7,14 @@ import type { E2BError } from "./SandboxClient.ts";
 
 /** Team usage and the sandbox lifecycle event log. */
 export interface TeamClient {
+  /** The team's id: the deployer's team, which the host's key belongs to. */
+  readonly teamId: Effect.Effect<string, never, RuntimeContext>;
   /** Concurrent sandboxes and sandbox start rate over time (unix seconds). */
   metrics(
-    teamId: string,
     options?: Omit<auth.ListTeamMetricsRequest, "teamID">,
   ): Effect.Effect<auth.ListTeamMetricsResponse, E2BError, RuntimeContext>;
   /** The peak of one metric over a window. */
   maxMetric(
-    teamId: string,
     options: Omit<auth.GetTeamMetricsMaxRequest, "teamID">,
   ): Effect.Effect<auth.MaxTeamMetric, E2BError, RuntimeContext>;
   /** Lifecycle events of every sandbox in the team, newest first by default. */
@@ -40,7 +40,7 @@ export interface TeamClient {
  * const team = yield* E2B.ReadTeam();
  * // in fetch:
  * const now = Math.floor(Date.now() / 1000);
- * const metrics = yield* team.metrics(teamId, { start: now - 3600, end: now });
+ * const metrics = yield* team.metrics({ start: now - 3600, end: now });
  * ```
  *
  * @binding
