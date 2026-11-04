@@ -54,17 +54,25 @@ test.provider(
         .pipe(Effect.retry({ schedule: Schedule.exponential("500 millis"), times: 8 }));
       expect(forged.status).toBe(401);
 
-      // A real sandbox's lifecycle reaches the handler.
-      const sandbox = yield* sandboxes.createSandbox({ templateID: "base", timeout: 60 });
-      yield* sandboxes.deleteSandbox({ sandboxID: sandbox.sandboxID });
-      const seen = yield* client.get(`${url}/?sandbox=${sandbox.sandboxID}`).pipe(
-        Effect.flatMap((res) => res.json),
-        Effect.map((body) => body as { created: boolean; killed: boolean }),
-        Effect.repeat({
-          schedule: Schedule.spaced("3 seconds"),
-          until: (body) => body.created && body.killed,
-          times: 30,
-        }),
+      // A real sandbox's lifecycle reaches the handler. E2B delivers from its
+      // own edge, where the fresh workers.dev URL can still 404 after it
+      // answers here, and a lost delivery is not retried: a sandbox whose
+      // first event was lost is replaced by a new one.
+      const lifecycle = Effect.gen(function* () {
+        const sandbox = yield* sandboxes.createSandbox({ templateID: "base", timeout: 60 });
+        yield* sandboxes.deleteSandbox({ sandboxID: sandbox.sandboxID });
+        return yield* client.get(`${url}/?sandbox=${sandbox.sandboxID}`).pipe(
+          Effect.flatMap((res) => res.json),
+          Effect.map((body) => body as { created: boolean; killed: boolean }),
+          Effect.repeat({
+            schedule: Schedule.spaced("3 seconds"),
+            until: (body) => body.created && body.killed,
+            times: 10,
+          }),
+        );
+      });
+      const seen = yield* lifecycle.pipe(
+        Effect.repeat({ until: (body) => body.created && body.killed, times: 2 }),
       );
       expect(seen).toEqual({ created: true, killed: true });
 
