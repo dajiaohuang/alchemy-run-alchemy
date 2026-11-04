@@ -1,4 +1,9 @@
-import { grantFromUrl, jwtExpiry, startLogin } from "@alchemy.run/e2b/internal/Login";
+import {
+  E2B_CLI_COMPAT_VERSION,
+  grantFromUrl,
+  jwtExpiry,
+  startLogin,
+} from "@alchemy.run/e2b/internal/Login";
 import { expect, layer } from "@alchemy.run/test";
 import { BunServices } from "@effect/platform-bun";
 import * as Effect from "effect/Effect";
@@ -41,6 +46,7 @@ layer(BunServices.layer)("E2B browser login", (test) => {
           expect(url.origin + url.pathname).toBe("https://e2b.dev/docs/api/cli");
           const next = url.searchParams.get("next") ?? "";
           expect(next).toMatch(/^http:\/\/localhost:\d+$/);
+          expect(url.searchParams.get("cliVersion")).toBe(E2B_CLI_COMPAT_VERSION);
 
           // What E2B's console does once the user signs in.
           const client = yield* HttpClient.HttpClient;

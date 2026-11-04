@@ -239,11 +239,15 @@ export const E2BAuth = AuthProviderLayer<E2BAuthConfig, E2BResolvedCredentials>(
         Effect.mapError((cause) =>
           cause._tag === "AuthError"
             ? cause
-            : AuthError.make({ message: "E2B: failed to configure credentials", cause }),
+            : AuthError.make({
+                message: `E2B: failed to configure credentials: ${cause.message}`,
+                cause,
+              }),
         ),
       );
 
     const configureMethods: ReadonlyArray<ConfigureMethod> = [
+      { method: "oauth", fields: [] },
       { method: "stored", fields: storedFields },
     ];
 
@@ -251,16 +255,24 @@ export const E2BAuth = AuthProviderLayer<E2BAuthConfig, E2BResolvedCredentials>(
       _profileName: string,
       input: { readonly method: string; readonly values: Record<string, string> },
     ) =>
-      input.method === "stored"
-        ? validateFieldValues(E2B_AUTH_PROVIDER_NAME, storedFields, input.values).pipe(
-            Effect.map(storedConfig),
-            Effect.tap(() => Interaction.success("E2B: credentials saved.")),
+      input.method === "oauth"
+        ? browserLogin(DEFAULT_DOMAIN).pipe(
+            Effect.mapError((cause) =>
+              cause._tag === "AuthError"
+                ? cause
+                : AuthError.make({ message: `E2B: browser login failed: ${cause.message}`, cause }),
+            ),
           )
-        : Effect.fail(
-            AuthError.make({
-              message: `E2B: unknown method '${input.method}'. Valid methods: stored. (Browser login is interactive-only.)`,
-            }),
-          );
+        : input.method === "stored"
+          ? validateFieldValues(E2B_AUTH_PROVIDER_NAME, storedFields, input.values).pipe(
+              Effect.map(storedConfig),
+              Effect.tap(() => Interaction.success("E2B: credentials saved.")),
+            )
+          : Effect.fail(
+              AuthError.make({
+                message: `E2B: unknown method '${input.method}'. Valid methods: oauth, stored.`,
+              }),
+            );
 
     /** Refreshes an OAuth grant that is within a minute of expiring. */
     const freshGrant = Effect.fn(function* (profileName: string, config: OAuthConfig) {
@@ -342,7 +354,7 @@ export const E2BAuth = AuthProviderLayer<E2BAuthConfig, E2BResolvedCredentials>(
         Effect.mapError((cause) =>
           cause._tag === "AuthError"
             ? cause
-            : AuthError.make({ message: "E2B: login failed", cause }),
+            : AuthError.make({ message: `E2B: login failed: ${cause.message}`, cause }),
         ),
       );
 

@@ -35,6 +35,13 @@ export interface E2BGrant {
   readonly expires: number;
 }
 
+/**
+ * The E2B CLI release whose login flow this mirrors. E2B's console reads
+ * `cliVersion` and refuses ("CLI update required") a login without a current
+ * one. Bump it with the E2B CLI if the console starts refusing it.
+ */
+export const E2B_CLI_COMPAT_VERSION = "2.23.0";
+
 /** Where the console's CLI login starts, and where it shows the outcome. */
 const loginBase = (domain: string) =>
   `https://${domain === "e2b.app" ? "e2b.dev" : domain}/docs/api/cli`;
@@ -140,6 +147,7 @@ export const startLogin = Effect.fn(function* (domain: string) {
   const { port } = server.address() as AddressInfo;
   const url = new URL(base);
   url.searchParams.set("next", `http://localhost:${port}`);
+  url.searchParams.set("cliVersion", E2B_CLI_COMPAT_VERSION);
   return { url: url.href, grant: Deferred.await(received) };
 });
 
