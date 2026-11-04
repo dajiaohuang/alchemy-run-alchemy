@@ -26,9 +26,9 @@ export const CreateVolumeHttp = Layer.effect(
         "delete:volumes",
       ]);
       yield* Objects(`${host?.LogicalId ?? ""}VolumesObjects`, {
-        kind: "volume",
+        kinds: ["volume"],
         onDestroy: options?.onDestroy ?? "retain",
-        prefix: options?.prefix,
+        namePrefix: options?.prefix,
       });
       const prefix = options?.prefix;
       const client: CreateVolumeClient = {

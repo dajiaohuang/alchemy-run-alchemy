@@ -10,7 +10,7 @@ import {
 } from "./CreateSnapshot.ts";
 import { NameOutsidePrefix } from "./CreateVolume.ts";
 import { makeAccess } from "./DaytonaBindings.ts";
-import { RuntimeObjects } from "./RuntimeObjects.ts";
+import { ownerLabels, RuntimeObjects } from "./RuntimeObjects.ts";
 import {
   buildSnapshot,
   checkRuntimeDockerfile,
@@ -35,11 +35,11 @@ export const CreateSnapshotHttp = Layer.effect(
         "delete:sandboxes",
       ]);
       const objects = yield* Objects(`${host?.LogicalId ?? ""}SnapshotsObjects`, {
-        kind: "snapshot",
+        kinds: ["snapshot"],
         onDestroy: options?.onDestroy ?? "retain",
-        prefix: options?.prefix,
+        namePrefix: options?.prefix,
       });
-      const labels = yield* objects.labels;
+      const labels = Effect.map(yield* objects.owner, ownerLabels);
       const prefix = options?.prefix;
       const client: CreateSnapshotClient = {
         create: ({ name, ...source }) =>

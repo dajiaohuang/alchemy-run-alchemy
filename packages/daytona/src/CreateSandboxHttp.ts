@@ -7,7 +7,7 @@ import { makeAccess } from "./DaytonaBindings.ts";
 import { definedLabels } from "./internal/Labels.ts";
 import { waitForState } from "./internal/Wait.ts";
 import { volumeIdOf } from "./MountVolume.ts";
-import { RuntimeObjects } from "./RuntimeObjects.ts";
+import { ownerLabels, RuntimeObjects } from "./RuntimeObjects.ts";
 import { makeSandboxClient } from "./SandboxClient.ts";
 import type { Snapshot } from "./Snapshot.ts";
 
@@ -25,10 +25,11 @@ export const CreateSandboxHttp = Layer.effect(
         "delete:sandboxes",
       ]);
       const objects = yield* Objects(`${host?.LogicalId ?? ""}${purpose}Objects`, {
-        kind: "sandbox",
+        kinds: ["sandbox"],
         onDestroy: options?.onDestroy ?? "delete",
       });
-      const ownerLabels = yield* objects.labels;
+      const owner = yield* objects.owner;
+      const stampLabels = Effect.map(owner, ownerLabels);
       const baseName = base ? yield* base.name : undefined;
 
       const handle = (s: sandboxes.Sandbox2) =>
@@ -40,7 +41,7 @@ export const CreateSandboxHttp = Layer.effect(
             Effect.gen(function* () {
               const labels = {
                 ...(input?.labels ? definedLabels(input.labels) : {}),
-                ...(yield* ownerLabels),
+                ...(yield* stampLabels),
               };
               const snapshot = input?.snapshot ?? (baseName ? yield* baseName : undefined);
               const { mounts, ...request } = input ?? {};

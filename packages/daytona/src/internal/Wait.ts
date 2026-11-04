@@ -99,3 +99,7 @@ export const waitUntilGone = <E, R>(
 /** Minutes for Daytona's interval fields (`0` disables). */
 export const toMinutes = (d: Duration.Input | undefined): number | undefined =>
   d === undefined ? undefined : Math.round(Duration.toMinutes(Duration.fromInputUnsafe(d)));
+
+/** Whole seconds, for Daytona's command timeouts. */
+export const toSeconds = (d: Duration.Input | undefined): number | undefined =>
+  d === undefined ? undefined : Math.ceil(Duration.toSeconds(Duration.fromInputUnsafe(d)));

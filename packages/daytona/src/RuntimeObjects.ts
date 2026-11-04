@@ -4,7 +4,7 @@ import * as snapshots from "@distilled.cloud/daytona/snapshots";
 import * as volumes from "@distilled.cloud/daytona/volumes";
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
-import { createInternalTags } from "alchemy/Tags";
+import * as Shared from "alchemy/RuntimeObjects";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { RUNTIME_OWNER_LABEL } from "./internal/Labels.ts";
@@ -17,33 +17,20 @@ import { deleteVolumeById } from "./Volume.ts";
 export type RuntimeObjectKind = "sandbox" | "volume" | "secret" | "snapshot";
 
 /** What happens to objects a binding created at runtime when the stack is destroyed. */
-export type OnDestroy = "delete" | "retain";
+export type OnDestroy = Shared.OnDestroy;
 
-export interface RuntimeObjectsProps {
-  /** The kind of object the binding creates. */
-  kind: RuntimeObjectKind;
-  /** Delete the binding's objects on destroy, or keep them. */
-  onDestroy: OnDestroy;
+export interface RuntimeObjectsProps extends Shared.RuntimeObjectsProps<RuntimeObjectKind> {
   /**
    * Volumes and snapshots carry no labels, so they are swept by name: only
-   * those whose name starts with this prefix. Required to sweep them.
+   * those whose name starts with this prefix, which the binding's user
+   * chooses (`CreateVolume({ prefix: "user-" })`). Required to sweep them.
    */
-  prefix?: string;
+  namePrefix?: string;
 }
 
-export interface RuntimeObjectsAttributes {
-  /** The owner mark stamped on every object the binding creates. */
-  owner: string;
-  /** Labels stamped on sandboxes the binding creates. */
-  labels: Record<string, string>;
-  /** Marker appended to the description of secrets the binding creates. */
-  descriptionMarker: string;
-  /** What destroy does with them. */
-  onDestroy: OnDestroy;
+export interface RuntimeObjectsAttributes extends Shared.RuntimeObjectsAttributes<RuntimeObjectKind> {
   /** Name prefix for volumes and snapshots. */
-  prefix: string | undefined;
-  /** The kind. */
-  kind: RuntimeObjectKind;
+  namePrefix: string | undefined;
 }
 
 export type RuntimeObjects = Resource<
@@ -58,26 +45,27 @@ export type RuntimeObjects = Resource<
  * Bookkeeping for the objects a runtime binding creates (sandboxes per
  * request, volumes and secrets per user, snapshots of running sandboxes).
  * They are not in alchemy state, so the binding declares this resource:
- * it carries the owner mark the binding stamps on everything it creates,
+ * it carries the owner stamp the binding writes on everything it creates,
  * and, with `onDestroy: "delete"`, deletes those objects when the stack is
  * destroyed.
  *
- * Sandboxes are marked with labels and secrets with a description marker.
- * Volumes and snapshots have neither, so they are swept by name prefix.
+ * Sandboxes are stamped with an `alchemy.owner` label and secrets with a
+ * description marker, both the stamp's `owner`. Volumes and snapshots have
+ * neither, so they are swept by the name prefix the binding's user chose.
  *
  * Bindings declare this for you; you don't use it directly.
  * @internal
  */
 export const RuntimeObjects = Resource<RuntimeObjects>("Daytona.RuntimeObjects");
 
-const ownerOf = Effect.fn(function* (id: string) {
-  const tags = yield* createInternalTags(id);
-  const values = Object.values(tags);
-  return values.join("/");
-});
+/** The label stamped on sandboxes a binding creates. */
+export const ownerLabels = (owner: string) => ({ [RUNTIME_OWNER_LABEL]: owner });
 
-const sweep = Effect.fn(function* (attrs: RuntimeObjectsAttributes) {
-  switch (attrs.kind) {
+/** The marker appended to the description of secrets a binding creates. */
+export const descriptionMarker = (owner: string) => `[alchemy:${owner}]`;
+
+const sweepKind = Effect.fn(function* (attrs: RuntimeObjectsAttributes, kind: RuntimeObjectKind) {
+  switch (kind) {
     case "sandbox": {
       const owned = yield* sandboxes.listSandboxes
         .items({ labels: JSON.stringify({ [RUNTIME_OWNER_LABEL]: attrs.owner }) })
@@ -90,7 +78,7 @@ const sweep = Effect.fn(function* (attrs: RuntimeObjectsAttributes) {
     }
     case "secret": {
       const owned = yield* secrets.listSecretsPaginated.items({}).pipe(
-        Stream.filter((s) => (s.description ?? "").includes(attrs.descriptionMarker)),
+        Stream.filter((s) => (s.description ?? "").includes(descriptionMarker(attrs.owner))),
         Stream.runCollect,
       );
       yield* Effect.forEach(
@@ -104,19 +92,21 @@ const sweep = Effect.fn(function* (attrs: RuntimeObjectsAttributes) {
       return;
     }
     case "volume": {
-      if (attrs.prefix === undefined) return;
+      const prefix = attrs.namePrefix;
+      if (prefix === undefined) return;
       const all = yield* volumes.listVolumes({});
       yield* Effect.forEach(
-        all.filter((v) => v.name.startsWith(attrs.prefix!) && v.state !== "deleted"),
+        all.filter((v) => v.name.startsWith(prefix) && v.state !== "deleted"),
         (v) => deleteVolumeById(v.id),
         { concurrency: 8 },
       );
       return;
     }
     case "snapshot": {
-      if (attrs.prefix === undefined) return;
-      const owned = yield* snapshots.getAllSnapshots.items({ name: attrs.prefix }).pipe(
-        Stream.filter((s) => s.name.startsWith(attrs.prefix!) && !s.general),
+      const prefix = attrs.namePrefix;
+      if (prefix === undefined) return;
+      const owned = yield* snapshots.getAllSnapshots.items({ name: prefix }).pipe(
+        Stream.filter((s) => s.name.startsWith(prefix) && !s.general),
         Stream.runCollect,
       );
       yield* Effect.forEach(Array.from(owned), (s) => deleteSnapshot(s.id), { concurrency: 8 });
@@ -125,26 +115,26 @@ const sweep = Effect.fn(function* (attrs: RuntimeObjectsAttributes) {
   }
 });
 
+const sweep = (attrs: RuntimeObjectsAttributes) =>
+  Effect.forEach(attrs.kinds, (kind) => sweepKind(attrs, kind), { discard: true });
+
+/**
+ * The shared stamp, plus the name prefix. `alchemy/RuntimeObjects`'
+ * `lifecycle` keeps only the shared attributes, and volumes and snapshots
+ * are swept by the user's prefix, so the lifecycle is written out here.
+ */
 export const RuntimeObjectsProvider = () =>
   Provider.effect(
     RuntimeObjects,
     Effect.succeed({
-      stables: ["owner", "labels", "descriptionMarker"],
+      stables: ["tags", "owner", "prefix"],
       nuke: { skip: true },
       list: () => Effect.succeed([]),
-      reconcile: Effect.fn(function* ({ id, news }) {
-        const owner = yield* ownerOf(id);
-        return {
-          owner,
-          labels: { [RUNTIME_OWNER_LABEL]: owner },
-          descriptionMarker: `[alchemy:${owner}]`,
-          onDestroy: news.onDestroy,
-          prefix: news.prefix,
-          kind: news.kind,
-        };
+      reconcile: Effect.fn(function* ({ id, news, output }) {
+        return { ...(yield* Shared.stamp(id, news, output)), namePrefix: news.namePrefix };
       }),
       delete: Effect.fn(function* ({ output }) {
-        if (output.onDestroy === "delete") yield* sweep(output);
+        if (output.onDestroy !== "retain") yield* sweep(output);
       }),
     }),
   );

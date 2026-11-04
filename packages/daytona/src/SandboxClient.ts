@@ -13,6 +13,7 @@ import * as system from "@distilled.cloud/daytona/system";
 import * as telemetry from "@distilled.cloud/daytona/telemetry";
 import * as toolboxStreams from "@distilled.cloud/daytona/Toolbox";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
+import type * as Sandbox from "alchemy/Sandbox";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
@@ -24,6 +25,7 @@ import * as Socket from "effect/socket/Socket";
 import * as Stream from "effect/Stream";
 import { pick, scopeModule, type ScopedModule } from "./internal/Scoped.ts";
 import { inSandbox } from "./internal/Toolbox.ts";
+import { toSeconds } from "./internal/Wait.ts";
 
 /** Operations of the sandbox service that act on one sandbox. */
 const SANDBOX_OPERATIONS = [
@@ -67,6 +69,28 @@ const SANDBOX_OPERATIONS = [
 type SandboxOperations = Pick<typeof sandboxes, (typeof SANDBOX_OPERATIONS)[number]>;
 
 /**
+ * Every error a handle's shared calls (`exec`, `start`, `files`, `pty`,
+ * `fetch`) can fail with.
+ */
+export type DaytonaError =
+  | process.ExecuteCommandError
+  | process.CreateSessionError
+  | process.SessionExecuteCommandError
+  | process.SendInputError
+  | process.DeleteSessionError
+  | process.GetSessionCommandError
+  | fileSystem.DownloadFileError
+  | fileSystem.UploadFileError
+  | fileSystem.ListFilesError
+  | fileSystem.GetFileInfoError
+  | fileSystem.DeleteFileError
+  | fileSystem.CreateFolderError
+  | sandboxes.GetPortPreviewUrlError
+  | toolboxStreams.PtyError
+  | toolboxStreams.ToolboxSocketError
+  | HttpClientError.HttpClientError;
+
+/**
  * What `exec` returns. Daytona runs a command with stdout and stderr on one
  * stream, so the output is combined in `result`, as Daytona names it.
  */
@@ -77,76 +101,40 @@ export interface ExecResult {
 
 /**
  * `exec` and `start` options. Daytona's command API takes no stdin, so
- * there is no `stdin` option: write to a {@link SandboxProcess} instead.
+ * there is no `stdin` option: `start` a process and `write` to it instead.
  */
-export interface ExecOptions {
-  /** Working directory. */
-  readonly cwd?: string;
-  /** Extra environment variables. */
-  readonly env?: Record<string, string>;
-  /** Seconds before the command is killed (`exec` only). */
-  readonly timeout?: number;
-}
+export type ExecOptions = Omit<Sandbox.ExecOptions, "stdin">;
 
 /** A command, as a shell line or as an argument vector run without a shell. */
-export type Command = string | readonly string[];
+export type Command = Sandbox.Command;
 
-/** A command started with `start`, running in its own Daytona session. */
-export interface SandboxProcess {
-  /** The session the command runs in. */
+/**
+ * A command started with `start`, running in its own Daytona session.
+ * Its `id` is the session's; `kill` deletes the session, which ends the
+ * command whatever the signal (Daytona takes no signal).
+ */
+export interface SandboxProcess extends Sandbox.Process<DaytonaError> {
+  /** The session the command runs in (also its `id`). */
   readonly sessionId: string;
   /** The command's ID in that session. */
   readonly commandId: string;
-  /** Its stdout and stderr as they are produced, until it exits. */
-  readonly output: Stream.Stream<
-    toolboxStreams.LogOutput,
-    toolboxStreams.ToolboxSocketOpenError,
-    RuntimeContext
-  >;
-  /** Write to its stdin. */
-  write(data: string): Effect.Effect<void, process.SendInputError, RuntimeContext>;
-  /** Kill it (deletes its session). */
-  readonly kill: Effect.Effect<void, process.DeleteSessionError, RuntimeContext>;
-  /** Wait for it to exit. */
-  readonly wait: Effect.Effect<
-    { readonly exitCode: number },
-    process.GetSessionCommandError,
-    RuntimeContext
-  >;
 }
 
-/** Files in the sandbox, over Daytona's file API. */
-export interface SandboxFiles {
-  /** A file's bytes. */
-  read(path: string): Effect.Effect<Uint8Array, fileSystem.DownloadFileError, RuntimeContext>;
-  /** A file's text (UTF-8). */
-  readText(path: string): Effect.Effect<string, fileSystem.DownloadFileError, RuntimeContext>;
-  /** Write a file, creating parent directories. */
-  write(
-    path: string,
-    content: string | Uint8Array,
-  ): Effect.Effect<void, fileSystem.UploadFileError, RuntimeContext>;
-  /** A directory's entries. */
-  list(
-    path: string,
-  ): Effect.Effect<readonly fileSystem.FileInfo[], fileSystem.ListFilesError, RuntimeContext>;
-  /** One entry's details. */
-  stat(
-    path: string,
-  ): Effect.Effect<fileSystem.FileInfo, fileSystem.GetFileInfoError, RuntimeContext>;
-  /** Delete a file, or a directory with `recursive`. */
-  remove(
-    path: string,
-    options?: { readonly recursive?: boolean },
-  ): Effect.Effect<void, fileSystem.DeleteFileError, RuntimeContext>;
-  /** Create a directory. */
+/** Files in the sandbox, over Daytona's file API; entries are Daytona's `FileInfo`. */
+export interface SandboxFiles extends Sandbox.Files<DaytonaError, fileSystem.FileInfo> {
+  /** Delete a file, or a directory (and what it holds). */
+  remove(path: string): Effect.Effect<void, DaytonaError, RuntimeContext>;
+  /** Create a directory and its parents, with `mode` (octal). */
   makeDir(
     path: string,
     options?: { readonly mode?: string },
-  ): Effect.Effect<void, fileSystem.CreateFolderError, RuntimeContext>;
+  ): Effect.Effect<void, DaytonaError, RuntimeContext>;
 }
 
-/** `pty.open` options. Daytona starts the user's shell; it takes no command. */
+/**
+ * `pty.open` options. Daytona starts the user's shell and takes no
+ * command, so there is no `command`: type it into the terminal.
+ */
 export interface PtyOpenOptions {
   /** Session ID. @default a generated one */
   readonly id?: string;
@@ -157,27 +145,26 @@ export interface PtyOpenOptions {
   /** Working directory. */
   readonly cwd?: string;
   /** Environment variables for the shell. */
-  readonly env?: Record<string, string>;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
-/** Terminals: a scoped connection with `output`, `write` and `resize`. */
-export interface SandboxPty {
-  /** Open a new terminal. The connection closes with the scope; the shell keeps running until it exits or is killed. */
+/** An open terminal, with Daytona's `kill` and `exit` next to the shared calls. */
+export interface PtyConnection extends Sandbox.PtyConnection<DaytonaError> {
+  /** Kill the terminal's session. */
+  readonly kill: Effect.Effect<void, DaytonaError, RuntimeContext>;
+  /** Wait for the shell to exit. */
+  readonly exit: Effect.Effect<toolboxStreams.PtyExit, DaytonaError, RuntimeContext>;
+}
+
+/** Terminals. */
+export interface SandboxPty extends Sandbox.Pty<DaytonaError, PtyOpenOptions | undefined> {
   open(
     options?: PtyOpenOptions,
-  ): Effect.Effect<
-    toolboxStreams.PtyConnection,
-    toolboxStreams.PtyError,
-    RuntimeContext | Scope.Scope
-  >;
+  ): Effect.Effect<PtyConnection, DaytonaError, RuntimeContext | Scope.Scope>;
   /** Connect to a terminal that already runs. */
   connect(
     sessionId: string,
-  ): Effect.Effect<
-    toolboxStreams.PtyConnection,
-    toolboxStreams.PtyError,
-    RuntimeContext | Scope.Scope
-  >;
+  ): Effect.Effect<PtyConnection, DaytonaError, RuntimeContext | Scope.Scope>;
 }
 
 /**
@@ -281,7 +268,14 @@ export interface SandboxBulkFiles {
  * Every method needs `RuntimeContext`: it runs in a deployed runtime, with
  * the API key its binding minted.
  */
-export interface DaytonaSandbox extends ScopedModule<SandboxOperations> {
+export interface DaytonaSandbox
+  extends
+    ScopedModule<SandboxOperations>,
+    Sandbox.SandboxExec<DaytonaError, ExecResult, ExecOptions>,
+    Sandbox.SandboxProcesses<DaytonaError, ExecOptions>,
+    Sandbox.SandboxFiles<DaytonaError, fileSystem.FileInfo>,
+    Sandbox.SandboxPty<DaytonaError, PtyOpenOptions | undefined>,
+    Sandbox.SandboxFetch<DaytonaError> {
   /** Sandbox ID. */
   readonly sandboxId: string;
   /** Sandbox name. */
@@ -318,19 +312,15 @@ export interface DaytonaSandbox extends ScopedModule<SandboxOperations> {
   exec(
     command: Command,
     options?: ExecOptions,
-  ): Effect.Effect<ExecResult, process.ExecuteCommandError, RuntimeContext>;
+  ): Effect.Effect<ExecResult, DaytonaError, RuntimeContext>;
   /**
    * Start a command in its own session and return it while it runs. Closing
    * the scope detaches; the command keeps running until it exits or is killed.
    */
   start(
     command: Command,
-    options?: Omit<ExecOptions, "timeout">,
-  ): Effect.Effect<
-    SandboxProcess,
-    process.CreateSessionError | process.SessionExecuteCommandError,
-    RuntimeContext | Scope.Scope
-  >;
+    options?: ExecOptions,
+  ): Effect.Effect<SandboxProcess, DaytonaError, RuntimeContext | Scope.Scope>;
   /** Files: read, write, list, stat, remove, make directories. */
   readonly files: SandboxFiles;
   /** Terminals. */
@@ -342,11 +332,7 @@ export interface DaytonaSandbox extends ScopedModule<SandboxOperations> {
   fetch(
     port: number,
     request: HttpClientRequest.HttpClientRequest,
-  ): Effect.Effect<
-    HttpClientResponse.HttpClientResponse,
-    sandboxes.GetPortPreviewUrlError | HttpClientError.HttpClientError,
-    RuntimeContext
-  >;
+  ): Effect.Effect<HttpClientResponse.HttpClientResponse, DaytonaError, RuntimeContext>;
 }
 
 /**
@@ -436,13 +422,13 @@ export const makeSandboxMethods = (
         command: yield* viaShell(shellLine(command)),
         cwd: options?.cwd,
         envs: options?.env,
-        timeout: options?.timeout,
+        timeout: toSeconds(options?.timeout),
       }),
     );
     return { exitCode: response.exitCode ?? 0, result: response.result } satisfies ExecResult;
   });
 
-  const start = Effect.fn(function* (command: Command, options?: Omit<ExecOptions, "timeout">) {
+  const start = Effect.fn(function* (command: Command, options?: ExecOptions) {
     const sessionId = yield* newSessionId("alchemy");
     const env = Object.entries(options?.env ?? {})
       .map(([key, value]) => `export ${key}=${quote(value)}`)
@@ -461,12 +447,22 @@ export const makeSandboxMethods = (
       }),
     );
     const commandId = begun.cmdId;
+    const encoder = new TextEncoder();
     return {
+      id: sessionId,
       sessionId,
       commandId,
-      output: stream(toolboxStreams.followSessionCommandLogs({ sessionId, commandId })),
-      write: (data: string) =>
-        toolbox(process.sendInput({ sessionId, commandId, data })).pipe(
+      output: stream(toolboxStreams.followSessionCommandLogs({ sessionId, commandId })).pipe(
+        Stream.map((piece) => ({ fd: piece.stream, data: encoder.encode(piece.text) })),
+      ),
+      write: (data: string | Uint8Array) =>
+        toolbox(
+          process.sendInput({
+            sessionId,
+            commandId,
+            data: typeof data === "string" ? data : new TextDecoder().decode(data),
+          }),
+        ).pipe(
           // The daemon creates the command's input pipe just after it starts.
           Effect.retry({
             while: (e) => e._tag === "SessionInputNotReady",
@@ -475,7 +471,8 @@ export const makeSandboxMethods = (
           }),
           Effect.asVoid,
         ),
-      kill: toolbox(process.deleteSession({ sessionId })).pipe(Effect.asVoid),
+      // Daytona takes no signal: deleting the session ends the command.
+      kill: () => toolbox(process.deleteSession({ sessionId })).pipe(Effect.asVoid),
       wait: toolbox(process.getSessionCommand({ sessionId, commandId })).pipe(
         Effect.repeat({
           schedule: Schedule.spaced("1 second"),
@@ -496,11 +493,20 @@ export const makeSandboxMethods = (
       toolbox(fileSystem.uploadFile({ path, body: content })).pipe(Effect.asVoid),
     list: (path) => toolbox(fileSystem.listFiles({ path })),
     stat: (path) => toolbox(fileSystem.getFileInfo({ path })),
-    remove: (path, options) =>
-      toolbox(fileSystem.deleteFile({ path, recursive: options?.recursive })).pipe(Effect.asVoid),
+    remove: (path) => toolbox(fileSystem.deleteFile({ path, recursive: true })).pipe(Effect.asVoid),
     makeDir: (path, options) =>
       toolbox(fileSystem.createFolder({ path, mode: options?.mode ?? "755" })).pipe(Effect.asVoid),
   };
+
+  /** The shared terminal shape over Daytona's connection. */
+  const terminal = (connection: toolboxStreams.PtyConnection): PtyConnection => ({
+    id: connection.sessionId,
+    output: connection.output,
+    write: connection.write,
+    resize: ({ cols, rows }) => toolbox(connection.resize(cols, rows)),
+    kill: toolbox(connection.kill),
+    exit: connection.exit,
+  });
 
   const pty: SandboxPty = {
     open: (options) =>
@@ -513,9 +519,10 @@ export const makeSandboxMethods = (
             cwd: options?.cwd,
             envs: options?.env,
           }),
-        ),
+        ).pipe(Effect.map(terminal)),
       ),
-    connect: (sessionId) => socket(toolboxStreams.connectPty({ sessionId })),
+    connect: (sessionId) =>
+      socket(toolboxStreams.connectPty({ sessionId })).pipe(Effect.map(terminal)),
   };
 
   const fetch = (port: number, request: HttpClientRequest.HttpClientRequest) =>

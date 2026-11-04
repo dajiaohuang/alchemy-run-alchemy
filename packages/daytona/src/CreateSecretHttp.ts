@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { CreateSecret, type CreateSecretClient, type CreateSecretOptions } from "./CreateSecret.ts";
 import { makeAccess } from "./DaytonaBindings.ts";
-import { RuntimeObjects } from "./RuntimeObjects.ts";
+import { descriptionMarker, RuntimeObjects } from "./RuntimeObjects.ts";
 import { ensureSecret, findSecretByName, toSecretAttributes } from "./Secret.ts";
 
 /** {@link CreateSecret} over Daytona's HTTP API; works on any host. */
@@ -18,10 +18,10 @@ export const CreateSecretHttp = Layer.effect(
       const host = yield* Binding.Host;
       const { authorize } = yield* access("Secrets", ["manage:secrets"]);
       const objects = yield* Objects(`${host?.LogicalId ?? ""}SecretsObjects`, {
-        kind: "secret",
+        kinds: ["secret"],
         onDestroy: options?.onDestroy ?? "delete",
       });
-      const marker = yield* objects.descriptionMarker;
+      const marker = Effect.map(yield* objects.owner, descriptionMarker);
       const client: CreateSecretClient = {
         put: (input) =>
           authorize(

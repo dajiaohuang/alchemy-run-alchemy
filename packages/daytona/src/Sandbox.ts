@@ -2,6 +2,7 @@ import * as sandboxes from "@distilled.cloud/daytona/sandbox";
 import { Unowned } from "alchemy/AdoptPolicy";
 import type * as Bundle from "alchemy/Bundle/Bundle";
 import { deepEqual, isResolved } from "alchemy/Diff";
+import type { MountCapability } from "alchemy/Mount";
 import { Platform, type Main, type PlatformProps } from "alchemy/Platform";
 import * as Provider from "alchemy/Provider";
 import type { Resource, ResourceBinding } from "alchemy/Resource";
@@ -14,6 +15,13 @@ import { Stack } from "alchemy/Stack";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import {
+  capabilitiesOf,
+  checkSupport,
+  ensureDerivedSnapshot,
+  installLinesOf,
+  isMountCapability,
+} from "./internal/Derived.ts";
 import {
   ALCHEMY_LABEL_PREFIX,
   createInternalLabels,
@@ -32,6 +40,7 @@ import {
 import { resolved, type Ref } from "./internal/Ref.ts";
 import { toMinutes, waitForState, waitUntilGone } from "./internal/Wait.ts";
 import type { Providers } from "./Providers.ts";
+import { deleteSnapshot } from "./Snapshot.ts";
 
 /** A snapshot, by name. Accepts a `Daytona.Snapshot` or `{ name }`. */
 export type SandboxSnapshot = { readonly name: string };
@@ -50,13 +59,22 @@ export interface SandboxMount {
   subpath?: string;
 }
 
+/** A volume a binding mounts into a sandbox (`Daytona.MountVolume`). */
+export interface SandboxVolumeBinding {
+  volumeId: string;
+  path: string;
+  subpath?: string;
+}
+
 /**
  * What bindings attach to a sandbox that runs a program: environment
- * variables for the process, and volumes to mount.
+ * variables for the process, and `mounts`: volumes to mount
+ * (`Daytona.MountVolume`), or `alchemy/Mount` capabilities whose clients
+ * the sandbox's image needs (a derived snapshot installs them).
  */
 export interface SandboxBinding {
   env?: Record<string, any>;
-  mounts?: Array<{ volumeId: string; path: string; subpath?: string }>;
+  mounts?: ReadonlyArray<SandboxVolumeBinding | MountCapability>;
 }
 
 /** Another sandbox, by id. Accepts a `Daytona.Sandbox` or `{ sandboxId }`. */
@@ -222,6 +240,12 @@ export interface SandboxAttributes {
   url: string | undefined;
   /** The program the sandbox runs, for a sandbox with `main`. */
   program: ProgramState | undefined;
+  /**
+   * The snapshot built for this sandbox when its bindings need clients
+   * installed (`alchemy/Mount` capabilities): `FROM` its snapshot plus their
+   * install lines. Deleted with the sandbox.
+   */
+  derivedSnapshot: string | undefined;
 }
 
 export type Sandbox = Resource<
@@ -381,9 +405,10 @@ export const toSandboxAttributes = (s: SandboxInfo): SandboxAttributes => ({
   toolboxProxyUrl: s.toolboxProxyUrl,
   url: undefined,
   program: undefined,
+  derivedSnapshot: undefined,
 });
 
-type BoundMount = NonNullable<SandboxBinding["mounts"]>[number];
+type BoundMount = SandboxVolumeBinding;
 
 /** The bindings still attached (a removed binding arrives as a `delete`). */
 const activeBindings = (bindings: ReadonlyArray<ResourceBinding<SandboxBinding>>) =>
@@ -408,7 +433,8 @@ const allMounts = Effect.fn(function* (
     })),
   );
   const bound = activeBindings(bindings as ReadonlyArray<ResourceBinding<SandboxBinding>>)
-    .flatMap((b) => b.data?.mounts ?? [])
+    .flatMap((b) => (b.data?.mounts ?? []).filter((m) => !isMountCapability(m)))
+    .map((m) => m as SandboxVolumeBinding)
     .map((m) => ({ ...m, volumeId: typeof m.volumeId === "string" ? m.volumeId : "(unresolved)" }));
   const seen = new Set<string>();
   return [...declared, ...bound]
@@ -621,7 +647,21 @@ export const SandboxProvider = () =>
               yield* allMounts(props, Array.isArray(newBindings) ? newBindings : []),
               yield* allMounts(olds, oldBindings ?? []),
             );
-          if (replace) return { action: "replace", deleteFirst: name === output.name } as const;
+          // A change to the clients bindings need rebuilds the derived snapshot.
+          // Bindings may hold Outputs at plan; capabilities are plain data.
+          const caps = capabilitiesOf(
+            (Array.isArray(newBindings) ? newBindings : []) as ReadonlyArray<
+              ResourceBinding<SandboxBinding>
+            >,
+          );
+          yield* checkSupport(caps);
+          const installChanged = !deepEqual(
+            installLinesOf(caps),
+            installLinesOf(capabilitiesOf(oldBindings ?? [])),
+          );
+          if (replace || installChanged) {
+            return { action: "replace", deleteFirst: name === output.name } as const;
+          }
           // The bundle depends only on `main`, `handler` and `build`, which are plain.
           if (typeof props.main === "string") {
             // A code change, or a process that ended (the sandbox restarted),

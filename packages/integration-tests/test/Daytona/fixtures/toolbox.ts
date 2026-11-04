@@ -704,7 +704,7 @@ export const vocabulary = Effect.fn(function* (box: Box, prefix: string) {
 
   // Files.
   const dir = `/tmp/alchemy-files-${prefix}`;
-  yield* box.files.remove(dir, { recursive: true }).pipe(Effect.ignore);
+  yield* box.files.remove(dir).pipe(Effect.ignore);
   yield* box.files.makeDir(dir);
   yield* box.files.write(`${dir}/a.txt`, "alpha");
   yield* box.files.write(`${dir}/b.bin`, new Uint8Array([0, 255]));
@@ -712,7 +712,7 @@ export const vocabulary = Effect.fn(function* (box: Box, prefix: string) {
   const bytes = Array.from(yield* box.files.read(`${dir}/b.bin`));
   const listed = (yield* box.files.list(dir)).map((f) => f.name).sort();
   const stat = yield* box.files.stat(`${dir}/a.txt`);
-  yield* box.files.remove(dir, { recursive: true });
+  yield* box.files.remove(dir);
   const gone = yield* box.files.stat(dir).pipe(
     Effect.map(() => "present"),
     Effect.catch(() => Effect.succeed("gone")),
@@ -724,6 +724,7 @@ export const vocabulary = Effect.fn(function* (box: Box, prefix: string) {
     Effect.scoped(
       Effect.gen(function* () {
         const connection = yield* box.pty.open({ cols: 100, rows: 30, env: { PTY_VAR: "pty-ok" } });
+        yield* connection.resize({ cols: 120, rows: 40 });
         yield* connection.write("echo marker-$PTY_VAR; exit 2\n");
         const output = decode(yield* Stream.runCollect(connection.output));
         return { output: output.includes("marker-pty-ok"), exit: yield* connection.exit };
@@ -757,7 +758,7 @@ export const vocabulary = Effect.fn(function* (box: Box, prefix: string) {
             times: 10,
           }),
         );
-        yield* proc.kill;
+        yield* proc.kill();
         yield* box.exec(`rm -rf ${dir}-site`);
         return response;
       }),

@@ -224,12 +224,14 @@ export type Snapshot = Resource<
 export const Snapshot = Resource<Snapshot>("Daytona.Snapshot");
 
 /**
- * What Daytona's builders can build: any Dockerfile, for amd64. Build
- * arguments are baked into `ARG` defaults; BuildKit secrets have no field
- * in Daytona's build request and are rejected.
+ * What Daytona's builders can build: any Dockerfile, for amd64. Daytona's
+ * build request has no field for build arguments, so the plan bakes them
+ * into `ARG` defaults, nor for BuildKit secrets, so the plan rejects them.
  */
 export const capabilities: BuildPlan.Capabilities = {
   target: "Daytona.Snapshot",
+  buildArgs: false,
+  secrets: false,
   platforms: ["linux/amd64"],
 };
 
@@ -287,40 +289,8 @@ const checkImage = (image: string) => {
     : Effect.void;
 };
 
-/**
- * A Dockerfile with `args` written into its `ARG` defaults, for builders
- * that take no build arguments.
- */
-const bakeArgs = (
-  dockerfile: DockerfileParser.ParsedDockerfile,
-  args: Readonly<Record<string, string>>,
-): DockerfileParser.ParsedDockerfile => {
-  if (Object.keys(args).length === 0) return dockerfile;
-  const bake = <I extends DockerfileParser.Instruction>(instruction: I): I =>
-    instruction._tag !== "ARG" || !instruction.vars.some(([name]) => name in args)
-      ? instruction
-      : {
-          ...instruction,
-          raw: `ARG ${instruction.vars
-            .map(([name, value]) => {
-              const baked = name in args ? args[name] : value;
-              return baked === undefined ? name : `${name}=${JSON.stringify(baked)}`;
-            })
-            .join(" ")}`,
-        };
-  return {
-    ...dockerfile,
-    globalArgs: dockerfile.globalArgs.map(bake),
-    stages: dockerfile.stages.map((stage) => ({
-      ...stage,
-      instructions: stage.instructions.map(bake),
-    })),
-  };
-};
-
-/** The Dockerfile's text for Daytona, with build arguments baked in. */
-const dockerfileText = (plan: BuildPlan.BuildPlan) =>
-  DockerfileParser.render(bakeArgs(plan.dockerfile, plan.args));
+/** The Dockerfile's text for Daytona; the plan has baked build arguments in. */
+const dockerfileText = (plan: BuildPlan.BuildPlan) => DockerfileParser.render(plan.dockerfile);
 
 /**
  * Check Dockerfile content built at runtime (a Worker has no file system,
