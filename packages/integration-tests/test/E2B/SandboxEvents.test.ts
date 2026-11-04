@@ -9,7 +9,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
-import E2BEventsWorker, { EVENTS_PATH, SeenEvents } from "./fixtures/events-worker.ts";
+import E2BEventsWorker, { EVENTS_PATH } from "./fixtures/events-worker.ts";
 
 const providers = Layer.mergeAll(E2B.providers(), Cloudflare.providers());
 const { test } = Test.make({ providers });
@@ -21,7 +21,6 @@ test.provider(
       yield* stack.destroy();
       const { url } = yield* stack.deploy(
         Effect.gen(function* () {
-          yield* SeenEvents;
           const worker = yield* E2BEventsWorker;
           return { url: worker.url.as<string>() };
         }),
