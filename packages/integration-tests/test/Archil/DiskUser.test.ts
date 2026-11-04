@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Schedule from "effect/Schedule";
 
 const { test } = Test.make({ providers: Archil.providers() });
 
@@ -14,6 +15,19 @@ const users = (diskId: string) =>
   archil.getDisk({ id: diskId }).pipe(
     Effect.map(({ data }) => (data.authorizedUsers ?? []).map((u) => u.identifier)),
     Effect.catchTag("DiskNotFound", () => Effect.succeed([] as Array<string | undefined>)),
+  );
+
+/**
+ * The disk's users once `identifier` is listed: for a few seconds after a
+ * user is added, some `getDisk` reads still list the disk without it.
+ */
+const usersWith = (diskId: string, identifier: string) =>
+  users(diskId).pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced("500 millis"),
+      until: (ids) => ids.includes(identifier),
+      times: 20,
+    }),
   );
 
 test.provider(
@@ -31,11 +45,11 @@ test.provider(
       const { disk, user } = yield* stack.deploy(app());
       expect(user.type).toBe("token");
       expect(Redacted.value(user.token!).length).toBeGreaterThan(0);
-      expect(yield* users(disk.diskId)).toContain(user.identifier);
+      expect(yield* usersWith(disk.diskId, user.identifier)).toContain(user.identifier);
 
       const renamed = yield* stack.deploy(app("reader-2"));
       expect(renamed.user.identifier).not.toBe(user.identifier);
-      const current = yield* users(disk.diskId);
+      const current = yield* usersWith(disk.diskId, renamed.user.identifier);
       expect(current).toContain(renamed.user.identifier);
       expect(current).not.toContain(user.identifier);
 
@@ -114,9 +128,15 @@ test.provider(
         ),
       ).toBe("ObjectAccessDenied");
 
-      const { data } = yield* archil.getDisk({ id: disk.diskId });
-      const observed = (data.authorizedUsers ?? []).find(
-        (u) => u.identifier === limited.identifier,
+      const observed = yield* archil.getDisk({ id: disk.diskId }).pipe(
+        Effect.map(({ data }) =>
+          (data.authorizedUsers ?? []).find((u) => u.identifier === limited.identifier),
+        ),
+        Effect.repeat({
+          schedule: Schedule.spaced("500 millis"),
+          until: (u) => u !== undefined,
+          times: 20,
+        }),
       );
       expect(observed?.readOnly).toBe(true);
       expect(observed?.oneUse).toBe(true);
@@ -126,7 +146,7 @@ test.provider(
       const widened = yield* stack.deploy(app(false));
       expect(widened.reader.identifier).not.toBe(reader.identifier);
       expect(widened.reader.readOnly).toBe(false);
-      const current = yield* users(disk.diskId);
+      const current = yield* usersWith(disk.diskId, widened.reader.identifier);
       expect(current).toContain(widened.reader.identifier);
       expect(current).not.toContain(reader.identifier);
       yield* Objects.putObject(ref, "now.txt", "writable").pipe(withKeys(widened.reader));
