@@ -85,14 +85,10 @@ export interface ServiceUserAttributes {
  * **Example:** CI that deploys to one environment
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Staging = Modal.Environment("Staging", {});
- * export const Deployer = Effect.gen(function* () {
- *   const staging = yield* Staging;
- *   return yield* Modal.ServiceUser("Deployer", {
- *     environments: [{ environment: staging, role: "contributor" }],
- *   });
+ * export const Deployer = Modal.ServiceUser("Deployer", {
+ *   environments: [{ environment: Staging, role: "contributor" }],
  * });
  * ```
  *

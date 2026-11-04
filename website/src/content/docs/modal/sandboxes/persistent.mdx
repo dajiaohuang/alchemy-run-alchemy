@@ -10,14 +10,9 @@ A persistent sandbox keeps its files between sessions. Each session runs up to a
 ```typescript
 // src/DevBox.ts
 import * as Modal from "@alchemy.run/modal";
-import * as Effect from "effect/Effect";
 import { Coder, Warm } from "./Coder.ts";
 
-export const DevBox = Effect.gen(function* () {
-  const app = yield* Coder;
-  const image = yield* Warm;
-  return yield* Modal.PersistentSandbox("DevBox", { app, image, workdir: "/work" });
-});
+export const DevBox = Modal.PersistentSandbox("DevBox", { app: Coder, image: Warm, workdir: "/work" });
 ```
 
 ## Resume it from a Worker

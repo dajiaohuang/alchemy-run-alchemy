@@ -15,8 +15,14 @@ export const Models = Modal.Volume("Models", {});
 ## Mount it in a sandbox
 
 ```typescript
-const models = yield* Models;
-const sandbox = yield* sandboxes.create({ volumes: { "/models": models } });
+// construction phase
+const models = yield* Modal.ReadVolume(Models);
+const sandboxes = yield* Modal.CreateSandbox(Coder);
+
+// per request
+const sandbox = yield* sandboxes.create({
+  volumes: { "/models": { volume: { volumeId: yield* models.volumeId }, readOnly: true } },
+});
 ```
 
 ## Read and write from a Worker

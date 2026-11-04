@@ -69,12 +69,11 @@ export interface WebhookTokenAttributes {
  * **Example:** A token scoped to one environment
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Agents = Modal.Environment("Agents", {});
- * export const AgentsCaller = Effect.gen(function* () {
- *   const agents = yield* Agents;
- *   return yield* Modal.WebhookToken("AgentsCaller", { scoped: true, environments: [agents] });
+ * export const AgentsCaller = Modal.WebhookToken("AgentsCaller", {
+ *   scoped: true,
+ *   environments: [Agents],
  * });
  * ```
  *

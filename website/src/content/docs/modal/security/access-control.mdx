@@ -26,14 +26,10 @@ Members not listed get `defaultMemberRole`.
 ```typescript
 // src/Identities.ts
 import * as Modal from "@alchemy.run/modal";
-import * as Effect from "effect/Effect";
 import { Production } from "./Environments.ts";
 
-export const Deployer = Effect.gen(function* () {
-  const production = yield* Production;
-  return yield* Modal.ServiceUser("Deployer", {
-    environments: [{ environment: production, role: "contributor" }],
-  });
+export const Deployer = Modal.ServiceUser("Deployer", {
+  environments: [{ environment: Production, role: "contributor" }],
 });
 ```
 
@@ -77,13 +73,9 @@ The token opens that port only.
 ```typescript
 // src/Tokens.ts
 import * as Modal from "@alchemy.run/modal";
-import * as Effect from "effect/Effect";
 import { Production } from "./Environments.ts";
 
-export const Caller = Effect.gen(function* () {
-  const production = yield* Production;
-  return yield* Modal.WebhookToken("Caller", { scoped: true, environments: [production] });
-});
+export const Caller = Modal.WebhookToken("Caller", { scoped: true, environments: [Production] });
 ```
 
 Send `tokenId` as `Modal-Key` and `tokenSecret` as `Modal-Secret`.
@@ -93,15 +85,11 @@ Send `tokenId` as `Modal-Key` and `tokenSecret` as `Modal-Secret`.
 ```typescript
 // src/Settings.ts
 import * as Modal from "@alchemy.run/modal";
-import * as Effect from "effect/Effect";
 import { Production } from "./Environments.ts";
 
-export const Settings = Effect.gen(function* () {
-  const production = yield* Production;
-  return yield* Modal.WorkspaceSettings("Settings", {
-    defaultEnvironment: production,
-    blockUnauthenticatedResources: true,
-  });
+export const Settings = Modal.WorkspaceSettings("Settings", {
+  defaultEnvironment: Production,
+  blockUnauthenticatedResources: true,
 });
 ```
 

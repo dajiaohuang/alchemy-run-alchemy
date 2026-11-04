@@ -68,13 +68,9 @@ export interface DictAttributes {
  * **Example:** A named dict in an environment
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Agents = Modal.Environment("Agents", {});
- * export const Sessions = Effect.gen(function* () {
- *   const agents = yield* Agents;
- *   return yield* Modal.Dict("Sessions", { name: "sessions", environment: agents });
- * });
+ * export const Sessions = Modal.Dict("Sessions", { name: "sessions", environment: Agents });
  * ```
  *
  * ### Reading and writing from a Worker

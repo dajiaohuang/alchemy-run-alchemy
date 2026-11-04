@@ -98,16 +98,12 @@ export interface ImageAttributes {
  * **Example:** From a registry image with extra packages
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Coder = Modal.App("Coder", {});
- * export const Node = Effect.gen(function* () {
- *   const app = yield* Coder;
- *   return yield* Modal.Image("Node", {
- *     app,
- *     image: "node:22-bookworm",
- *     commands: ["RUN apt-get update && apt-get install -y git ripgrep"],
- *   });
+ * export const Node = Modal.Image("Node", {
+ *   app: Coder,
+ *   image: "node:22-bookworm",
+ *   commands: ["RUN apt-get update && apt-get install -y git ripgrep"],
  * });
  * ```
  *
@@ -115,18 +111,14 @@ export interface ImageAttributes {
  * ```typescript
  * import * as Dockerfile from "@alchemy.run/docker/Dockerfile";
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Coder = Modal.App("Coder", {});
- * export const Python = Effect.gen(function* () {
- *   const app = yield* Coder;
- *   return yield* Modal.Image("Python", {
- *     app,
- *     dockerfile: Dockerfile.inline`
- *       FROM python:3.12-slim
- *       RUN pip install pandas
- *     `,
- *   });
+ * export const Python = Modal.Image("Python", {
+ *   app: Coder,
+ *   dockerfile: Dockerfile.inline`
+ *     FROM python:3.12-slim
+ *     RUN pip install pandas
+ *   `,
  * });
  * ```
  *
@@ -134,20 +126,16 @@ export interface ImageAttributes {
  * **Example:** Clone and install once, start every sandbox from it
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Coder = Modal.App("Coder", {});
- * export const Warm = Effect.gen(function* () {
- *   const app = yield* Coder;
- *   const node = yield* Modal.Image("Node", { app, image: "node:22-bookworm" });
- *   return yield* Modal.Image("Warm", {
- *     app,
- *     from: node,
- *     run: [
- *       "git clone https://github.com/alchemy-run/alchemy /work",
- *       "cd /work && corepack enable && pnpm install",
- *     ],
- *   });
+ * export const Node = Modal.Image("Node", { app: Coder, image: "node:22-bookworm" });
+ * export const Warm = Modal.Image("Warm", {
+ *   app: Coder,
+ *   from: Node,
+ *   run: [
+ *     "git clone https://github.com/alchemy-run/alchemy /work",
+ *     "cd /work && corepack enable && pnpm install",
+ *   ],
  * });
  * ```
  *

@@ -49,15 +49,11 @@ export interface WorkspaceSettingsAttributes {
  * **Example:** Pin the image builder and default environment
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Agents = Modal.Environment("Agents", {});
- * export const Settings = Effect.gen(function* () {
- *   const agents = yield* Agents;
- *   return yield* Modal.WorkspaceSettings("Settings", {
- *     defaultEnvironment: agents,
- *     imageBuilderVersion: "2025.06",
- *   });
+ * export const Settings = Modal.WorkspaceSettings("Settings", {
+ *   defaultEnvironment: Agents,
+ *   imageBuilderVersion: "2025.06",
  * });
  * ```
  *

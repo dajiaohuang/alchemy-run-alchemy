@@ -44,14 +44,9 @@ export interface PersistentSandboxAttributes {
  * **Example:** A dev box on a warm base image
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  * import { Coder, Warm } from "./Coder.ts";
  *
- * export const DevBox = Effect.gen(function* () {
- *   const app = yield* Coder;
- *   const image = yield* Warm;
- *   return yield* Modal.PersistentSandbox("DevBox", { app, image, workdir: "/work" });
- * });
+ * export const DevBox = Modal.PersistentSandbox("DevBox", { app: Coder, image: Warm, workdir: "/work" });
  * ```
  *
  * ### Using it at runtime

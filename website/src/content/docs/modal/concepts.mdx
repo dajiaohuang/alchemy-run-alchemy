@@ -23,14 +23,10 @@ Every sandbox runs in an app. Destroying the app stops every sandbox in it.
 ```typescript
 // src/Sandbox.ts
 import * as Modal from "@alchemy.run/modal";
-import * as Effect from "effect/Effect";
 
 export const Agents = Modal.Environment("Agents", {});
 
-export const Coder = Effect.gen(function* () {
-  const agents = yield* Agents;
-  return yield* Modal.App("Coder", { environment: agents });
-});
+export const Coder = Modal.App("Coder", { environment: Agents });
 ```
 
 Yield the environment to pass it: a declaration has no attributes until it's yielded.
@@ -42,21 +38,14 @@ Images, a shared volume, and the secrets your code needs are resources:
 ```typescript
 // src/Storage.ts
 import * as Modal from "@alchemy.run/modal";
-import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { Agents } from "./Sandbox.ts";
 
-export const Models = Effect.gen(function* () {
-  const agents = yield* Agents;
-  return yield* Modal.Volume("Models", { environment: agents });
-});
+export const Models = Modal.Volume("Models", { environment: Agents });
 
-export const OpenAI = Effect.gen(function* () {
-  const agents = yield* Agents;
-  return yield* Modal.Secret("OpenAI", {
-    environment: agents,
-    env: { OPENAI_API_KEY: Redacted.make("sk-...") },
-  });
+export const OpenAI = Modal.Secret("OpenAI", {
+  environment: Agents,
+  env: { OPENAI_API_KEY: Redacted.make("sk-...") },
 });
 ```
 

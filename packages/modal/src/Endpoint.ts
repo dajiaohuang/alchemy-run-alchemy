@@ -135,14 +135,10 @@ export interface EndpointAttributes {
  * **Example:** Fine-tuned weights from a Volume
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Weights = Modal.Volume("Weights", {});
- * export const Tuned = Effect.gen(function* () {
- *   const weights = yield* Weights;
- *   return yield* Modal.Endpoint("Tuned", {
- *     model: { volume: weights, path: "/checkpoints/final", baseModel: "Qwen/Qwen3-8B" },
- *   });
+ * export const Tuned = Modal.Endpoint("Tuned", {
+ *   model: { volume: Weights, path: "/checkpoints/final", baseModel: "Qwen/Qwen3-8B" },
  * });
  * ```
  *

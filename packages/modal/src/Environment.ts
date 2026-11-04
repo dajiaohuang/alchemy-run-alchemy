@@ -141,17 +141,10 @@ export interface EnvironmentAttributes {
  * **Example:** Put objects in it
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Agents = Modal.Environment("Agents", {});
- * export const Coder = Effect.gen(function* () {
- *   const agents = yield* Agents;
- *   return yield* Modal.App("Coder", { environment: agents });
- * });
- * export const Workspace = Effect.gen(function* () {
- *   const agents = yield* Agents;
- *   return yield* Modal.Volume("Workspace", { environment: agents });
- * });
+ * export const Coder = Modal.App("Coder", { environment: Agents });
+ * export const Workspace = Modal.Volume("Workspace", { environment: Agents });
  * ```
  *
  * @resource

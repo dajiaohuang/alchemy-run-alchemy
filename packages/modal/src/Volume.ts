@@ -78,13 +78,9 @@ export interface VolumeAttributes {
  * **Example:** A named volume in an environment
  * ```typescript
  * import * as Modal from "@alchemy.run/modal";
- * import * as Effect from "effect/Effect";
  *
  * export const Agents = Modal.Environment("Agents", {});
- * export const Models = Effect.gen(function* () {
- *   const agents = yield* Agents;
- *   return yield* Modal.Volume("Models", { name: "model-weights", environment: agents });
- * });
+ * export const Models = Modal.Volume("Models", { name: "model-weights", environment: Agents });
  * ```
  *
  * ### Mounting in a Sandbox
