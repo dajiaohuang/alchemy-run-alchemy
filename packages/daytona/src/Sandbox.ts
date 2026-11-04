@@ -40,7 +40,7 @@ import {
 import { resolved, type Ref } from "./internal/Ref.ts";
 import { toMinutes, waitForState, waitUntilGone } from "./internal/Wait.ts";
 import type { Providers } from "./Providers.ts";
-import { deleteSnapshot } from "./Snapshot.ts";
+import { deleteSnapshotByName } from "./Snapshot.ts";
 
 /** A snapshot, by name. Accepts a `Daytona.Snapshot` or `{ name }`. */
 export type SandboxSnapshot = { readonly name: string };
@@ -370,6 +370,37 @@ export type SandboxRuntimeContext = HostRuntimeContext;
 export const Sandbox: Platform<Sandbox, SandboxServices, SandboxShape, SandboxRuntimeContext> =
   Platform("Daytona.Sandbox", {
     createRuntimeContext: createHostRuntimeContext("Daytona.Sandbox"),
+    // A declaration passed as a prop (`snapshot: Base`) is an Effect until
+    // yielded. Yield it here so it is registered and the prop resolves to
+    // its attributes, as with `yield* Snapshot(...)` inside Effect.gen.
+    transformProps: (_id, props: SandboxProps) =>
+      Effect.gen(function* () {
+        if (globalThis.__ALCHEMY_RUNTIME__) return props;
+        const ref = <T>(value: T) =>
+          Effect.isEffect(value)
+            ? (value as unknown as Effect.Effect<T, never, Providers>)
+            : Effect.succeed(value);
+        return {
+          ...props,
+          snapshot: props.snapshot === undefined ? undefined : yield* ref(props.snapshot),
+          linkedSandbox:
+            props.linkedSandbox === undefined ? undefined : yield* ref(props.linkedSandbox),
+          secrets:
+            props.secrets === undefined
+              ? undefined
+              : Object.fromEntries(
+                  yield* Effect.forEach(Object.entries(props.secrets), ([key, value]) =>
+                    Effect.map(ref(value), (resolved) => [key, resolved] as const),
+                  ),
+                ),
+          mounts:
+            props.mounts === undefined
+              ? undefined
+              : yield* Effect.forEach(props.mounts, (mount) =>
+                  Effect.map(ref(mount.volume), (volume) => ({ ...mount, volume })),
+                ),
+        };
+      }),
   });
 
 const resolveRef = <T>(ref: Ref<T>) => Effect.succeed(resolved(ref));
@@ -409,6 +440,16 @@ export const toSandboxAttributes = (s: SandboxInfo): SandboxAttributes => ({
 });
 
 type BoundMount = SandboxVolumeBinding;
+
+/**
+ * The snapshot the sandbox was declared with. A sandbox booted from a
+ * derived snapshot reports that one, so the declared base is read from
+ * the last deploy's props.
+ */
+const bootedFrom = Effect.fn(function* (olds: SandboxProps | undefined, output: SandboxAttributes) {
+  if (output.derivedSnapshot === undefined) return output.snapshot;
+  return olds?.snapshot ? (yield* resolveRef(olds.snapshot)).name : undefined;
+});
 
 /** The bindings still attached (a removed binding arrives as a `delete`). */
 const activeBindings = (bindings: ReadonlyArray<ResourceBinding<SandboxBinding>>) =>
@@ -629,7 +670,7 @@ export const SandboxProvider = () =>
               : undefined;
           const replace =
             name !== output.name ||
-            (snapshot !== undefined && snapshot !== output.snapshot) ||
+            (snapshot !== undefined && snapshot !== (yield* bootedFrom(olds, output))) ||
             (known(props.user) && props.user !== olds?.user) ||
             // A sandbox env is set at create; a program's restarts the program.
             (props.main === undefined) !== (olds?.main === undefined) ||
@@ -685,6 +726,7 @@ export const SandboxProvider = () =>
             ...toSandboxAttributes(found),
             url: output?.url,
             program: output?.program,
+            derivedSnapshot: output?.derivedSnapshot,
           };
           return (yield* hasAlchemyLabels(id, found.labels)) ? attrs : Unowned(attrs);
         }),
@@ -692,7 +734,20 @@ export const SandboxProvider = () =>
           const name = yield* resolveName(id, news.name, output?.name);
           const labels = { ...(news.labels ?? {}), ...(yield* createInternalLabels(id)) };
           const mounts = yield* allMounts(news, bindings);
-          const request = yield* resolveCreate(name, news, labels, mounts);
+          const base = yield* resolveCreate(name, news, labels, mounts);
+          // Clients bindings need are installed into a snapshot derived from the base.
+          const caps = capabilitiesOf(bindings);
+          yield* checkSupport(caps);
+          const derivedSnapshot =
+            caps.length > 0
+              ? yield* ensureDerivedSnapshot({
+                  sandboxName: name,
+                  snapshot: base.snapshot,
+                  caps,
+                  note: session.note,
+                })
+              : undefined;
+          const request = derivedSnapshot ? { ...base, snapshot: derivedSnapshot } : base;
 
           // Observe
           let current = yield* getSandbox(output?.sandboxId ?? name);
@@ -792,7 +847,7 @@ export const SandboxProvider = () =>
             yield* sandboxes.getSandbox({ sandboxIdOrName: sandboxId }),
             news.state ?? "started",
           );
-          const attrs = toSandboxAttributes(final);
+          const attrs = { ...toSandboxAttributes(final), derivedSnapshot };
           // Deploy the program into the running sandbox.
           if (news.main === undefined || final.state !== "started") return attrs;
           const port = news.port ?? DEFAULT_PORT;
@@ -811,6 +866,7 @@ export const SandboxProvider = () =>
         }),
         delete: Effect.fn(function* ({ output }) {
           yield* deleteSandboxById(output.sandboxId);
+          if (output.derivedSnapshot) yield* deleteSnapshotByName(output.derivedSnapshot);
         }),
       };
     }),

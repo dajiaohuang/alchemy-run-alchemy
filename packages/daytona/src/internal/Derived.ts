@@ -81,7 +81,7 @@ export const ensureDerivedSnapshot = Effect.fn(function* (input: {
   let existing = yield* getSnapshot(name);
   // A failed build is rebuilt; the name is free once the old one is gone.
   if (existing !== undefined && ["error", "build_failed", "removing"].includes(existing.state)) {
-    yield* deleteSnapshot(name);
+    yield* deleteSnapshot(existing.id);
     existing = undefined;
   }
   if (existing === undefined) {

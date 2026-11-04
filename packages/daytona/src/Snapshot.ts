@@ -413,6 +413,12 @@ export const waitForSnapshot = Effect.fn(function* (idOrName: string) {
   });
 });
 
+/** Delete a snapshot by name (Daytona deletes by id). Deleting a missing one succeeds. */
+export const deleteSnapshotByName = Effect.fn(function* (name: string) {
+  const found = yield* getSnapshot(name);
+  if (found !== undefined) yield* deleteSnapshot(found.id);
+});
+
 export const deleteSnapshot = Effect.fn(function* (idOrName: string) {
   yield* snapshots
     .removeSnapshot({ id: idOrName })
