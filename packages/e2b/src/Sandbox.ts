@@ -1,3 +1,4 @@
+import { Credentials } from "@distilled.cloud/e2b/Credentials";
 import * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import { Unowned } from "alchemy/AdoptPolicy";
 import { isResolved } from "alchemy/Diff";
@@ -224,6 +225,12 @@ const redact = (token: string | Redacted.Redacted<string> | null | undefined) =>
       ? token
       : Redacted.make(token);
 
+/** The E2B domain the credentials address; sandboxes on it report no domain of their own. */
+const configuredDomain = Effect.gen(function* () {
+  const credentials = yield* Credentials;
+  return (yield* credentials).domain;
+});
+
 /** A sandbox's details, or `undefined` when E2B no longer has it. */
 const observeSandbox = (sandboxId: string) =>
   sandboxes.getSandbox({ sandboxID: sandboxId }).pipe(
@@ -288,14 +295,18 @@ export const SandboxProvider = () =>
           if (output === undefined) return undefined;
           const detail = yield* observeSandbox(output.sandboxId);
           if (detail === undefined) return undefined;
-          const attrs = toAttributes(detail, output, output.domain);
+          const attrs = toAttributes(detail, output, yield* configuredDomain);
           const ours = yield* hasOwnershipMetadata(id, detail.metadata as Record<string, string>);
           return ours ? attrs : Unowned(attrs);
         }),
         lookup: Effect.fn(function* ({ sandboxId }) {
           const detail = yield* observeSandbox(sandboxId);
           if (detail === undefined) return undefined;
-          return toAttributes(detail, { build: undefined, trafficAccessToken: undefined }, "");
+          return toAttributes(
+            detail,
+            { build: undefined, trafficAccessToken: undefined },
+            yield* configuredDomain,
+          );
         }),
         reconcile: Effect.fn(function* ({ id, news, olds, output, session }) {
           const timeout = secondsOf(news.timeout);
@@ -330,7 +341,7 @@ export const SandboxProvider = () =>
             return toAttributes(
               detail,
               { build: news.build, trafficAccessToken },
-              created.domain ?? "",
+              created.domain ?? (yield* configuredDomain),
             );
           }
 
@@ -376,7 +387,7 @@ export const SandboxProvider = () =>
           return toAttributes(
             detail,
             { build: news.build, trafficAccessToken },
-            output?.domain ?? "",
+            yield* configuredDomain,
           );
         }),
         delete: Effect.fn(function* ({ output }) {
@@ -385,6 +396,7 @@ export const SandboxProvider = () =>
             .pipe(Effect.catchTag("NotFound", () => Effect.void));
         }),
         list: Effect.fn(function* () {
+          const domain = yield* configuredDomain;
           const all = Array.from(
             yield* Stream.runCollect(
               sandboxes.listSandboxes.items({
@@ -402,7 +414,7 @@ export const SandboxProvider = () =>
                 sandboxId: sandbox.sandboxID,
                 templateId: sandbox.templateID,
                 build: undefined,
-                domain: "",
+                domain,
                 trafficAccessToken: undefined,
                 metadata: userMetadata(sandbox.metadata as Record<string, string>),
                 cpuCount: sandbox.cpuCount,

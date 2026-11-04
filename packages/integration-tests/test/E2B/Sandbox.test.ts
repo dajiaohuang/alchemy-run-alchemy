@@ -52,6 +52,7 @@ test.provider(
       expect(created?.lifecycle?.onTimeout).toBe("pause");
       expect(created?.lifecycle?.autoResume).toBe(true);
       expect(box.metadata).toEqual({ purpose: "lifecycle" });
+      expect(box.domain).toBe(created?.domain ?? "e2b.app");
 
       // Egress and timeout change in place: same sandbox.
       const restricted = yield* stack.deploy(

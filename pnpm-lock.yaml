@@ -4175,6 +4175,44 @@ importers:
         specifier: workspace:*
         version: link:../../packages/alchemy-test
 
+  examples/e2b-program:
+    dependencies:
+      '@alchemy.run/e2b':
+        specifier: workspace:*
+        version: link:../../packages/e2b
+      '@distilled.cloud/e2b':
+        specifier: workspace:*
+        version: link:../../submodules/distilled/packages/e2b
+      alchemy:
+        specifier: workspace:*
+        version: link:../../packages/alchemy
+      effect:
+        specifier: 4.1.0
+        version: 4.1.0
+    devDependencies:
+      '@alchemy.run/test':
+        specifier: workspace:*
+        version: link:../../packages/alchemy-test
+
+  examples/e2b-program-async:
+    dependencies:
+      '@alchemy.run/e2b':
+        specifier: workspace:*
+        version: link:../../packages/e2b
+      '@distilled.cloud/e2b':
+        specifier: workspace:*
+        version: link:../../submodules/distilled/packages/e2b
+      alchemy:
+        specifier: workspace:*
+        version: link:../../packages/alchemy
+      effect:
+        specifier: 4.1.0
+        version: 4.1.0
+    devDependencies:
+      '@alchemy.run/test':
+        specifier: workspace:*
+        version: link:../../packages/alchemy-test
+
   examples/fly-app:
     dependencies:
       '@alchemy.run/fly':
