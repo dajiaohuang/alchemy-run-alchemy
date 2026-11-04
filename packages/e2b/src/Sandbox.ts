@@ -9,8 +9,10 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { E2BUnexpectedResponse } from "./Errors.ts";
+import { declarable } from "./internal/Declared.ts";
 import { hasOwnershipMetadata, ownershipMetadata, userMetadata } from "./internal/Ownership.ts";
 import { denyUnlisted } from "./internal/SandboxHandle.ts";
+import type { VolumeMount } from "./MountVolume.ts";
 import type { Providers } from "./Providers.ts";
 
 /** Egress rules for a declared sandbox, in E2B's shape. */
@@ -38,20 +40,26 @@ export interface SandboxNetwork {
   rules?: sandboxes.SandboxNetworkConfigRulesMap;
 }
 
+/**
+ * What a sandbox boots from: an `E2B.Template` or an `E2B.Snapshot`, declared
+ * or yielded.
+ */
+export interface SandboxTemplate {
+  templateId: string;
+  /** A template's current build. A new build replaces the sandbox. */
+  buildId?: string;
+  /** A snapshot's setup hash. A new snapshot replaces the sandbox. */
+  setupHash?: string;
+  /** The volumes a template program mounts (`E2B.MountVolume`). */
+  mounts?: VolumeMount[];
+}
+
 export interface SandboxProps {
   /**
-   * The template or snapshot the sandbox boots from: a `Template`'s
-   * `templateId` or a `Snapshot`'s `snapshotId`. Changing it replaces the
-   * sandbox.
+   * The `E2B.Template` or `E2B.Snapshot` the sandbox boots from. Changing
+   * it, or rebuilding it, replaces the sandbox so it boots the new build.
    */
-  template: string;
-  /**
-   * The build of `template` the sandbox runs. Pass the template's
-   * `buildId` so a rebuild replaces the sandbox with one that boots the new
-   * build; without it, a rebuilt template leaves the sandbox on the build it
-   * started with.
-   */
-  build?: string;
+  template: SandboxTemplate;
   /**
    * How long the sandbox runs after it starts or resumes before E2B pauses
    * it. Changing it applies to the current run (and resumes a paused
@@ -82,10 +90,11 @@ export interface SandboxProps {
    */
   network?: SandboxNetwork;
   /**
-   * Volumes to mount, by name, at a path. Changing them replaces the
-   * sandbox.
+   * Volumes to mount: `{ volume, path }`, where `volume` is an `E2B.Volume`.
+   * A template program's own mounts are added. E2B attaches volumes only
+   * when a sandbox is created, so changing them replaces the sandbox.
    */
-  volumeMounts?: { name: string; path: string }[];
+  mounts?: VolumeMount[];
 }
 
 export interface SandboxAttributes {
@@ -93,8 +102,10 @@ export interface SandboxAttributes {
   sandboxId: string;
   /** The template id the sandbox booted from. */
   templateId: string;
-  /** The `build` prop the sandbox was created for. */
-  build: string | undefined;
+  /** The template build (or snapshot) the sandbox booted. */
+  templateBuild: string | undefined;
+  /** The volumes mounted into the sandbox: its own and its template program's. */
+  mounts: VolumeMount[];
   /**
    * The domain its ports are served under: port `p` answers at
    * `https://<p>-<sandboxId>.<domain>`.
@@ -130,14 +141,14 @@ export interface Sandbox extends Resource<
  * box) or to serve a template program at a stable URL. The sandbox runs for
  * `timeout` after it starts or resumes, then E2B pauses it with its memory
  * and files. A request to one of its URLs resumes it (`autoResume`), and so
- * does `connect()` from `E2B.ConnectSandbox`.
+ * does `resume()` on `E2B.ConnectSandbox`.
  *
  * Alchemy stamps its stack, stage and logical ID into the sandbox's
  * metadata to recognise the sandboxes it owns.
  *
  * :::caution
- * Replacing the sandbox (a new `template`, `build`, `env`, `metadata`,
- * `volumeMounts`, `memory`, `autoResume` or `allowPublicTraffic`) starts a
+ * Replacing the sandbox (a new or rebuilt `template`, or new `env`,
+ * `metadata`, `mounts`, `memory`, `autoResume` or `allowPublicTraffic`) starts a
  * fresh sandbox and kills the old one with its files. If E2B no longer has
  * the sandbox, the next deploy that updates it (or `alchemy drift`) creates
  * a new one.
@@ -149,19 +160,18 @@ export interface Sandbox extends Resource<
  * import * as E2B from "@alchemy.run/e2b";
  * import * as Effect from "effect/Effect";
  *
- * export const DevBox = Effect.gen(function* () {
- *   const template = yield* E2B.Template("Node", { from: "node:22" });
- *   return yield* E2B.Sandbox("DevBox", {
- *     template: template.templateId,
- *     timeout: "10 minutes",
- *   });
+ * export const Node = E2B.Template("Node", { image: "node:22" });
+ *
+ * export const DevBox = E2B.Sandbox("DevBox", {
+ *   template: Node,
+ *   timeout: "10 minutes",
  * });
  * ```
  *
  * ### Serving a template program
  * A template program starts when its sandbox boots. Declare one sandbox for
- * it and pass `build`, so each new build of the program gets a fresh
- * sandbox.
+ * it: each new build of the program replaces the sandbox, so it always runs
+ * the current one.
  *
  * **Example:** The program at a stable URL
  * ```typescript
@@ -171,11 +181,7 @@ export interface Sandbox extends Resource<
  * import Api from "./src/api.ts";
  *
  * export const ApiSandbox = Effect.gen(function* () {
- *   const api = yield* Api;
- *   const sandbox = yield* E2B.Sandbox("Api", {
- *     template: api.templateId,
- *     build: api.buildId,
- *   });
+ *   const sandbox = yield* E2B.Sandbox("Api", { template: Api });
  *   return { url: Output.interpolate`https://3000-${sandbox.sandboxId}.${sandbox.domain}` };
  * });
  * ```
@@ -184,7 +190,7 @@ export interface Sandbox extends Resource<
  * **Example:** Require the traffic token
  * ```typescript
  * const sandbox = yield* E2B.Sandbox("Private", {
- *   template: template.templateId,
+ *   template: Node,
  *   network: { allowPublicTraffic: false },
  * });
  * // send sandbox.trafficAccessToken in the `e2b-traffic-access-token` header
@@ -195,8 +201,19 @@ export interface Sandbox extends Resource<
  * ```typescript
  * const devBox = yield* E2B.ConnectSandbox(DevBox);
  * // in fetch:
- * const sandbox = yield* devBox.connect();
- * const result = yield* sandbox.commands.run("git pull && npm test", { cwd: "/home/user/repo" });
+ * yield* devBox.resume();
+ * const result = yield* devBox.exec("git pull && npm test", { cwd: "/home/user/repo" });
+ * ```
+ *
+ * ### Mounting volumes
+ * **Example:** A shared cache volume
+ * ```typescript
+ * export const Cache = E2B.Volume("Cache", {});
+ *
+ * export const Builder = E2B.Sandbox("Builder", {
+ *   template: Node,
+ *   mounts: [{ volume: Cache, path: "/cache" }],
+ * });
  * ```
  *
  * ### Referencing a sandbox the stack doesn't manage
@@ -209,7 +226,7 @@ export interface Sandbox extends Resource<
  * @resource
  * @product Sandbox
  */
-export const Sandbox = Resource<Sandbox>("E2B.Sandbox");
+export const Sandbox = declarable<Sandbox>()(Resource<Sandbox>("E2B.Sandbox"));
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
 
@@ -238,14 +255,21 @@ const observeSandbox = (sandboxId: string) =>
     Effect.catchTag("NotFound", () => Effect.undefined),
   );
 
+interface Stored {
+  readonly templateBuild: string | undefined;
+  readonly trafficAccessToken: Redacted.Redacted<string> | undefined;
+  readonly mounts: VolumeMount[];
+}
+
 const toAttributes = (
   detail: sandboxes.SandboxDetail,
-  stored: { build: string | undefined; trafficAccessToken: Redacted.Redacted<string> | undefined },
+  stored: Stored,
   fallbackDomain: string,
 ): SandboxAttributes => ({
   sandboxId: detail.sandboxID,
   templateId: detail.templateID,
-  build: stored.build,
+  templateBuild: stored.templateBuild,
+  mounts: stored.mounts,
   domain: detail.domain ?? fallbackDomain,
   trafficAccessToken: stored.trafficAccessToken,
   metadata: userMetadata(detail.metadata as Record<string, string>),
@@ -266,15 +290,27 @@ const mutableNetwork = (network: SandboxNetwork | sandboxes.SandboxNetworkConfig
 
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/** The template's mounts and the sandbox's own, by path (the sandbox's win). */
+const mountsOf = (props: SandboxProps): VolumeMount[] =>
+  [
+    ...new Map(
+      [...(props.template.mounts ?? []), ...(props.mounts ?? [])].map(
+        (mount) => [mount.path, { volume: { name: mount.volume.name }, path: mount.path }] as const,
+      ),
+    ).values(),
+  ].sort((a, b) => a.path.localeCompare(b.path));
+
+const templateBuildOf = (props: SandboxProps) => props.template.buildId ?? props.template.setupHash;
+
 /** Props whose change means a new sandbox (E2B can't change them on a live one). */
 const replacingProps = (props: SandboxProps) => ({
-  template: props.template,
-  build: props.build,
+  template: props.template.templateId,
+  build: templateBuildOf(props),
   autoResume: props.autoResume ?? true,
   memory: props.memory ?? true,
   env: props.env ?? {},
   metadata: props.metadata ?? {},
-  volumeMounts: props.volumeMounts ?? [],
+  mounts: mountsOf(props),
   allowPublicTraffic: props.network?.allowPublicTraffic ?? true,
 });
 
@@ -304,7 +340,7 @@ export const SandboxProvider = () =>
           if (detail === undefined) return undefined;
           return toAttributes(
             detail,
-            { build: undefined, trafficAccessToken: undefined },
+            { templateBuild: undefined, trafficAccessToken: undefined, mounts: [] },
             yield* configuredDomain,
           );
         }),
@@ -312,6 +348,8 @@ export const SandboxProvider = () =>
           const timeout = secondsOf(news.timeout);
           const memory = news.memory ?? true;
           const autoResume = news.autoResume ?? true;
+          const mounts = mountsOf(news);
+          const templateBuild = templateBuildOf(news);
 
           // Observe — `output` caches the id; the sandbox may be gone.
           let detail = output === undefined ? undefined : yield* observeSandbox(output.sandboxId);
@@ -319,9 +357,9 @@ export const SandboxProvider = () =>
 
           // Ensure
           if (detail === undefined) {
-            yield* session.note(`Creating sandbox from ${news.template}...`);
+            yield* session.note(`Creating sandbox from ${news.template.templateId}...`);
             const created = yield* sandboxes.createSandbox({
-              templateID: news.template,
+              templateID: news.template.templateId,
               timeout,
               autoPause: true,
               autoPauseMemory: memory,
@@ -329,7 +367,14 @@ export const SandboxProvider = () =>
               metadata: { ...news.metadata, ...(yield* ownershipMetadata(id)) },
               ...(news.env === undefined ? {} : { envVars: news.env }),
               ...(news.network === undefined ? {} : { network: denyUnlisted(news.network) }),
-              ...(news.volumeMounts === undefined ? {} : { volumeMounts: news.volumeMounts }),
+              ...(mounts.length === 0
+                ? {}
+                : {
+                    volumeMounts: mounts.map((mount) => ({
+                      name: mount.volume.name,
+                      path: mount.path,
+                    })),
+                  }),
             });
             trafficAccessToken = redact(created.trafficAccessToken);
             detail = yield* observeSandbox(created.sandboxID);
@@ -340,7 +385,7 @@ export const SandboxProvider = () =>
             }
             return toAttributes(
               detail,
-              { build: news.build, trafficAccessToken },
+              { templateBuild, trafficAccessToken, mounts },
               created.domain ?? (yield* configuredDomain),
             );
           }
@@ -386,7 +431,7 @@ export const SandboxProvider = () =>
 
           return toAttributes(
             detail,
-            { build: news.build, trafficAccessToken },
+            { templateBuild, trafficAccessToken, mounts },
             yield* configuredDomain,
           );
         }),
@@ -413,7 +458,11 @@ export const SandboxProvider = () =>
               .map((sandbox): SandboxAttributes => ({
                 sandboxId: sandbox.sandboxID,
                 templateId: sandbox.templateID,
-                build: undefined,
+                templateBuild: undefined,
+                mounts: (sandbox.volumeMounts ?? []).map((mount) => ({
+                  volume: { name: mount.name },
+                  path: mount.path,
+                })),
                 domain,
                 trafficAccessToken: undefined,
                 metadata: userMetadata(sandbox.metadata as Record<string, string>),

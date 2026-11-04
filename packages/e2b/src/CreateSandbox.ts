@@ -2,6 +2,7 @@ import type * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
+import type { BoundVolumeMount, VolumeMount } from "./MountVolume.ts";
 import type { E2BError, E2BSandbox } from "./SandboxClient.ts";
 import type { Snapshot } from "./Snapshot.ts";
 import type { Template } from "./Template.ts";
@@ -11,10 +12,20 @@ export type SandboxBase = Template | Snapshot;
 
 /**
  * E2B's `createSandbox` parameters. `templateID` defaults to the bound base;
- * `metadata` is merged with the host's ownership stamp.
+ * `metadata` is merged with the host's ownership stamp; `mounts` replaces
+ * E2B's `volumeMounts`.
  */
-export type CreateSandboxOptions = Omit<sandboxes.CreateSandboxRequest, "templateID"> & {
+export type CreateSandboxOptions = Omit<
+  sandboxes.CreateSandboxRequest,
+  "templateID" | "volumeMounts"
+> & {
   readonly templateID?: string;
+  /**
+   * Volumes to mount: a volume `CreateVolume` returned with a `path`, or a
+   * reference from `E2B.MountVolume`. A bound template's own mounts are
+   * added.
+   */
+  readonly mounts?: ReadonlyArray<VolumeMount | BoundVolumeMount>;
 };
 
 /** E2B's `listSandboxes` filters, with `metadata` as a record instead of a query string. */

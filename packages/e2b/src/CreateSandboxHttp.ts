@@ -14,7 +14,9 @@ import {
 import { bindE2B } from "./E2BBindings.ts";
 import { SandboxBaseMissing } from "./Errors.ts";
 import { denyUnlisted, makeSandboxHandle } from "./internal/SandboxHandle.ts";
+import type { BoundVolumeMount, VolumeMount } from "./MountVolume.ts";
 import { metadataQuery, Sweep } from "./Sweep.ts";
+import type { Template } from "./Template.ts";
 
 /** The `E2B.Sweep` constructor, as a binding layer's construction yields it. */
 type SweepConstructor = Effect.Success<typeof Sweep>;
@@ -81,6 +83,27 @@ export const CreateSandboxHttp = Layer.effect(
         base === undefined
           ? undefined
           : yield* (base.templateId as Output.Output<string, never>).asEffect();
+      // A template program's own mounts (`E2B.MountVolume`) go on every sandbox.
+      const baseMounts: Effect.Effect<ReadonlyArray<VolumeMount>> =
+        base !== undefined && base.Type === "E2B.Template"
+          ? yield* ((base as Template).mounts as Output.Output<VolumeMount[], never>).asEffect()
+          : Effect.succeed([]);
+
+      /** The template's mounts and the call's own, by path (the call's win). */
+      const mountsOf = Effect.fn(function* (
+        mounts: ReadonlyArray<VolumeMount | BoundVolumeMount> | undefined,
+      ) {
+        const byPath = new Map<string, { name: string; path: string }>();
+        for (const mount of yield* baseMounts) {
+          byPath.set(mount.path, { name: mount.volume.name, path: mount.path });
+        }
+        for (const mount of mounts ?? []) {
+          const name =
+            typeof mount.volume.name === "string" ? mount.volume.name : yield* mount.volume.name;
+          byPath.set(mount.path, { name, path: mount.path });
+        }
+        return [...byPath.values()];
+      });
 
       const withStamp = Effect.fn(function* (
         metadata: Readonly<Record<string, string | undefined>> | undefined,
@@ -98,9 +121,12 @@ export const CreateSandboxHttp = Layer.effect(
             });
           }
           const domain = yield* auth.domain;
+          const { mounts, ...request } = createOptions ?? {};
+          const volumeMounts = yield* mountsOf(mounts);
           const created = yield* auth.authorize(
             sandboxes.createSandbox({
-              ...createOptions,
+              ...request,
+              ...(volumeMounts.length === 0 ? {} : { volumeMounts }),
               ...(createOptions?.network === undefined
                 ? {}
                 : { network: denyUnlisted(createOptions.network) }),

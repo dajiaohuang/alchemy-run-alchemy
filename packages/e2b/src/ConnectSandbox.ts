@@ -1,32 +1,19 @@
-import type * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import * as Binding from "alchemy/Binding";
-import type { RuntimeContext } from "alchemy/RuntimeContext";
-import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
 import type { Sandbox } from "./Sandbox.ts";
-import type { E2BError, E2BSandbox } from "./SandboxClient.ts";
-
-/** One declared sandbox, from a host. */
-export interface ConnectedSandbox {
-  /** The sandbox's id. */
-  readonly sandboxId: Effect.Effect<string, never, RuntimeContext>;
-  /**
-   * A handle to the sandbox, resumed if it was paused. `timeout` sets how
-   * long it runs before it pauses again.
-   */
-  connect(options?: {
-    readonly timeout?: Duration.Input;
-  }): Effect.Effect<E2BSandbox, E2BError, RuntimeContext>;
-  /** Live details (state, resources, network), without resuming it. */
-  describe(): Effect.Effect<sandboxes.SandboxDetail, E2BError, RuntimeContext>;
-  /** Pauses the sandbox now, keeping its memory and files. */
-  pause(): Effect.Effect<void, E2BError, RuntimeContext>;
-}
+import type { ConnectedSandbox } from "./SandboxClient.ts";
 
 /**
  * Work with one {@link Sandbox} declared in the stack, from a Worker,
- * Function or any other host: resume it, run commands, read and write
- * files, call its ports, snapshot or fork it.
+ * Function or any other host: run commands, read and write files, open
+ * terminals, call its ports, snapshot or fork it. The handle has the same
+ * operations as the sandboxes `CreateSandbox` returns; its `sandboxId` and
+ * `url(port)` are Effects, read at runtime.
+ *
+ * A declared sandbox pauses when it is idle. Calls inside it (`exec`,
+ * `start`, `files`, `pty`) then fail with `SandboxNotRunning`: call
+ * `resume()` first. A request to one of its ports resumes it on its own
+ * (`autoResume`).
  *
  * The host gets its own E2B API key, minted at deploy and revoked when the
  * host is destroyed. E2B keys are not scoped, so the key reaches the whole
@@ -38,18 +25,24 @@ export interface ConnectedSandbox {
  * const devBox = yield* E2B.ConnectSandbox(DevBox);
  * return {
  *   fetch: Effect.gen(function* () {
- *     const sandbox = yield* devBox.connect();
- *     const test = yield* sandbox.commands.run("git pull && npm test", { cwd: "/home/user/repo" });
+ *     yield* devBox.resume({ timeout: "10 minutes" });
+ *     const test = yield* devBox.exec("git pull && npm test", { cwd: "/home/user/repo" });
  *     return yield* HttpServerResponse.json(test);
  *   }),
  * };
  * ```
  *
+ * ### Streaming a process
+ * **Example:** Stream a build's output
+ * ```typescript
+ * const build = yield* devBox.start("npm run build", { cwd: "/home/user/repo" });
+ * const output = build.output.pipe(Stream.map((chunk) => chunk.data));
+ * ```
+ *
  * ### Calling a program in the sandbox
  * **Example:** Forward a request to port 3000
  * ```typescript
- * const sandbox = yield* api.connect();
- * const response = yield* sandbox.fetch(3000, HttpClientRequest.get("/health"));
+ * const response = yield* api.fetch(3000, HttpClientRequest.get("/health"));
  * ```
  *
  * ### Pausing it early

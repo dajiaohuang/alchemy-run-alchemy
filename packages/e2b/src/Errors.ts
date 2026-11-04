@@ -35,3 +35,13 @@ export class SnapshotSetupFailed extends Data.TaggedError("E2B.SnapshotSetupFail
 export class SandboxBaseMissing extends Data.TaggedError("E2B.SandboxBaseMissing")<{
   readonly message: string;
 }> {}
+
+/** `exec` killed a command that ran past its `timeout`. */
+export class ExecTimedOut extends Data.TaggedError("E2B.ExecTimedOut")<{
+  readonly pid: number;
+  readonly timeoutMs: number;
+}> {
+  override get message() {
+    return `process ${this.pid} ran longer than ${this.timeoutMs}ms and was killed`;
+  }
+}

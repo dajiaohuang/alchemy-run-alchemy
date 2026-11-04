@@ -1,34 +1,44 @@
 /**
- * Builds an {@link E2BSandbox} handle over E2B's control plane (lifecycle) and
- * envd (processes and files), from what `createSandbox` / `connectSandbox`
- * returned. envd calls address the sandbox with its own access token; the
- * team key is used only for control-plane calls.
+ * Builds sandbox handles over E2B's control plane (lifecycle) and envd
+ * (processes, files, terminals). envd calls address the sandbox with its
+ * own access token; the host's team key is used only for control-plane
+ * calls.
  */
-import { sandboxConnectionFor } from "@distilled.cloud/e2b";
+import { sandboxConnection } from "@distilled.cloud/e2b";
 import * as envd from "@distilled.cloud/e2b/envd";
 import * as filesystem from "@distilled.cloud/e2b/filesystem";
 import * as process from "@distilled.cloud/e2b/process";
 import * as sandboxes from "@distilled.cloud/e2b/sandboxes";
+import type { RuntimeContext } from "alchemy/RuntimeContext";
+import type * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type { E2BAuth } from "../E2BBindings.ts";
+import { E2BUnexpectedResponse, ExecTimedOut } from "../Errors.ts";
 import type {
-  CommandResult,
+  Command,
+  ConnectedSandbox,
   E2BError,
-  ForkResult,
-  ProcessEvent,
-  RunOptions,
   E2BSandbox,
+  ExecResult,
+  ForkResult,
+  Process,
+  ProcessOutput,
+  ProcessSelector,
+  SandboxOperations,
+  StartOptions,
 } from "../SandboxClient.ts";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 const toBase64 = (data: string | Uint8Array) => {
   const bytes = typeof data === "string" ? encoder.encode(data) : data;
@@ -40,49 +50,12 @@ const toBase64 = (data: string | Uint8Array) => {
 const seconds = (duration: Duration.Input) =>
   Math.max(1, Math.round(Duration.toMillis(Duration.fromInputUnsafe(duration)) / 1000));
 
-/** Collects a process's events into its output and exit code. */
-const collect = (events: Stream.Stream<ProcessEvent, E2BError, never>) =>
-  events.pipe(
-    Stream.runFold(
-      () => ({
-        pid: 0,
-        exitCode: -1,
-        stdout: "",
-        stderr: "",
-        error: undefined as string | undefined,
-      }),
-      (acc, event) => {
-        switch (event._tag) {
-          case "Start":
-            return { ...acc, pid: event.pid };
-          case "Stdout":
-          case "Pty":
-            return { ...acc, stdout: acc.stdout + decoder.decode(event.data) };
-          case "Stderr":
-            return { ...acc, stderr: acc.stderr + decoder.decode(event.data) };
-          case "End":
-            return { ...acc, exitCode: event.exitCode, error: event.error };
-          default:
-            return acc;
-        }
-      },
-    ),
-    Effect.map((result): CommandResult => result),
-  );
-
-const shell = (command: string, options: RunOptions | undefined) => ({
-  process: {
-    cmd: "/bin/bash",
-    args: ["-l", "-c", command],
-    ...(options?.envs ? { envs: options.envs } : {}),
-    ...(options?.cwd ? { cwd: options.cwd } : {}),
-  },
-  ...(options?.tag ? { tag: options.tag } : {}),
-  ...(options?.stdin ? { stdin: true } : {}),
-});
-
-const signalOf = (signal: "SIGTERM" | "SIGKILL" | undefined) =>
-  signal === "SIGTERM" ? ("SIGNAL_SIGTERM" as const) : ("SIGNAL_SIGKILL" as const);
+const redact = (token: string | Redacted.Redacted<string> | null | undefined) =>
+  token === undefined || token === null
+    ? undefined
+    : Redacted.isRedacted(token)
+      ? token
+      : Redacted.make(token);
 
 /**
  * `allowOut` lists the only destinations a sandbox may reach: E2B allows
@@ -98,90 +71,259 @@ export const denyUnlisted = <
     ? { ...network, denyOut: ["0.0.0.0/0"] }
     : network;
 
-export const makeSandboxHandle = (
-  auth: E2BAuth,
-  info: sandboxes.Sandbox,
-  domain: string,
-): E2BSandbox => {
-  const sandboxId = info.sandboxID;
-  const sandboxDomain = info.domain ?? domain;
-  const connection = Layer.mergeAll(
-    sandboxConnectionFor({ ...info, domain: sandboxDomain }),
-    FetchHttpClient.layer,
-  );
-  /** An envd call against this sandbox. */
-  const inSandbox = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof connection>>) =>
-    effect.pipe(Effect.provide(connection));
-  const streamInSandbox = <A, E>(stream: Stream.Stream<A, E, Layer.Success<typeof connection>>) =>
-    stream.pipe(Stream.provide(connection));
-  const trafficToken =
-    info.trafficAccessToken === undefined || info.trafficAccessToken === null
-      ? undefined
-      : Redacted.isRedacted(info.trafficAccessToken)
-        ? info.trafficAccessToken
-        : Redacted.make(info.trafficAccessToken);
+/** What envd calls need to reach one sandbox. */
+interface Reach {
+  readonly sandboxId: string;
+  readonly accessToken: Redacted.Redacted<string> | undefined;
+  readonly trafficToken: Redacted.Redacted<string> | undefined;
+  readonly domain: string;
+}
 
-  const handle: E2BSandbox = {
-    sandboxId,
-    templateId: info.templateID,
-    domain: sandboxDomain,
-    info,
-    commands: {
-      run: (command, options) =>
-        process.startProcess(shell(command, options)).pipe(streamInSandbox, collect),
-      exec: (argv, options) =>
-        process
-          .startProcess({
-            process: {
-              cmd: argv[0],
-              args: argv.slice(1),
-              ...(options?.envs ? { envs: options.envs } : {}),
-              ...(options?.cwd ? { cwd: options.cwd } : {}),
-            },
-            ...(options?.tag ? { tag: options.tag } : {}),
-            ...(options?.stdin ? { stdin: true } : {}),
-          })
-          .pipe(streamInSandbox, collect),
-      start: (command, options) => streamInSandbox(process.startProcess(shell(command, options))),
-      connect: (selector) => streamInSandbox(process.connectProcess({ process: selector })),
+const reachOf = (
+  info: {
+    readonly sandboxID: string;
+    readonly envdAccessToken?: string | Redacted.Redacted<string>;
+    readonly trafficAccessToken?: string | Redacted.Redacted<string> | null;
+    readonly domain?: string | null;
+  },
+  domain: string,
+  trafficToken?: Redacted.Redacted<string>,
+): Reach => ({
+  sandboxId: info.sandboxID,
+  accessToken: redact(info.envdAccessToken),
+  trafficToken: redact(info.trafficAccessToken) ?? trafficToken,
+  domain: info.domain ?? domain,
+});
+
+const processConfig = (
+  command: Command,
+  cwd: string | undefined,
+  env: Readonly<Record<string, string>> | undefined,
+) => ({
+  ...(typeof command === "string"
+    ? { cmd: "/bin/bash", args: ["-l", "-c", command] }
+    : { cmd: command[0], args: command.slice(1) }),
+  ...(env ? { envs: env } : {}),
+  ...(cwd ? { cwd } : {}),
+});
+
+const signalOf = (signal: "SIGTERM" | "SIGKILL" | undefined) =>
+  signal === "SIGTERM" ? ("SIGNAL_SIGTERM" as const) : ("SIGNAL_SIGKILL" as const);
+
+/**
+ * The operations every handle shares. `reach` resolves how to address the
+ * sandbox; `resumed` records what a resume returned; `forked` builds a
+ * handle for a fork.
+ */
+const makeOperations = (
+  auth: E2BAuth,
+  sandboxIdOf: Effect.Effect<string, never, RuntimeContext>,
+  reach: Effect.Effect<Reach, E2BError, RuntimeContext>,
+  resumed: (info: sandboxes.Sandbox) => void,
+  forked: (info: sandboxes.Sandbox, domain: string) => E2BSandbox,
+): SandboxOperations => {
+  const connection = (r: Reach) =>
+    Layer.mergeAll(
+      sandboxConnection({
+        sandboxId: r.sandboxId,
+        domain: r.domain,
+        ...(r.accessToken === undefined ? {} : { accessToken: r.accessToken }),
+      }),
+      FetchHttpClient.layer,
+    );
+  type Envd = Layer.Success<ReturnType<typeof connection>>;
+  /** An envd call against this sandbox. */
+  const inSandbox = <A, E>(effect: Effect.Effect<A, E, Envd>) =>
+    Effect.flatMap(reach, (r) => effect.pipe(Effect.provide(connection(r))));
+  const streamInSandbox = <A, E>(stream: Stream.Stream<A, E, Envd>) =>
+    Stream.unwrap(Effect.map(reach, (r) => stream.pipe(Stream.provide(connection(r)))));
+  /** A control-plane call on this sandbox. */
+  const onSandbox = <A, E>(
+    call: (sandboxID: string) => Effect.Effect<A, E, sandboxes.E2BOpContext>,
+  ) => Effect.flatMap(sandboxIdOf, (id) => auth.authorize(call(id)));
+
+  /**
+   * Runs a process's event stream in the current scope and hands back its
+   * controls once envd reports its pid. Closing the scope detaches.
+   */
+  const attachTo = (
+    events: Stream.Stream<process.ProcessEvent, E2BError, RuntimeContext>,
+    knownPid?: number,
+  ): Effect.Effect<Process, E2BError, RuntimeContext | Scope.Scope> =>
+    Effect.gen(function* () {
+      const queue = yield* Queue.unbounded<ProcessOutput, E2BError | Cause.Done>();
+      const started = yield* Deferred.make<number, E2BError>();
+      const exited = yield* Deferred.make<ExecResult, E2BError>();
+      if (knownPid !== undefined) yield* Deferred.succeed(started, knownPid);
+      const stdout = new TextDecoder();
+      const stderr = new TextDecoder();
+      let pid = knownPid ?? 0;
+      let out = "";
+      let err = "";
+      const fail = (error: E2BError) =>
+        Effect.all([
+          Deferred.fail(started, error),
+          Deferred.fail(exited, error),
+          Queue.fail(queue, error),
+        ]);
+      yield* events.pipe(
+        Stream.runForEach((event) =>
+          Effect.gen(function* () {
+            switch (event._tag) {
+              case "Start":
+                pid = event.pid;
+                yield* Deferred.succeed(started, event.pid);
+                return;
+              case "Stdout":
+              case "Pty":
+                out += stdout.decode(event.data, { stream: true });
+                yield* Queue.offer(queue, { _tag: "Stdout", data: event.data });
+                return;
+              case "Stderr":
+                err += stderr.decode(event.data, { stream: true });
+                yield* Queue.offer(queue, { _tag: "Stderr", data: event.data });
+                return;
+              case "End":
+                yield* Deferred.succeed(exited, {
+                  pid,
+                  exitCode: event.exitCode,
+                  stdout: out + stdout.decode(),
+                  stderr: err + stderr.decode(),
+                  error: event.error,
+                });
+                yield* Queue.end(queue);
+                return;
+            }
+          }),
+        ),
+        // A stream that ends without an End event: envd dropped it.
+        Effect.andThen(
+          Effect.suspend(() =>
+            Deferred.isDone(exited).pipe(
+              Effect.flatMap((done) =>
+                done
+                  ? Effect.void
+                  : fail(
+                      new E2BUnexpectedResponse({
+                        message: `envd closed process ${pid}'s stream before it exited`,
+                      }),
+                    ),
+              ),
+            ),
+          ),
+        ),
+        Effect.catch(fail),
+        Effect.forkScoped,
+      );
+      const processPid = yield* Deferred.await(started);
+      const selector: ProcessSelector = { pid: processPid };
+      return {
+        pid: processPid,
+        output: Stream.fromQueue(queue),
+        write: (data) =>
+          inSandbox(
+            process.sendProcessInput({ process: selector, input: { stdin: toBase64(data) } }),
+          ).pipe(Effect.asVoid),
+        closeStdin: () =>
+          inSandbox(process.closeProcessStdin({ process: selector })).pipe(Effect.asVoid),
+        kill: (signal) =>
+          inSandbox(
+            process.sendProcessSignal({ process: selector, signal: signalOf(signal) }),
+          ).pipe(Effect.asVoid),
+        wait: Deferred.await(exited),
+      } satisfies Process;
+    });
+
+  const start = (command: Command, options?: StartOptions) =>
+    attachTo(
+      streamInSandbox(
+        process.startProcess({
+          process: processConfig(command, options?.cwd, options?.env),
+          ...(options?.tag ? { tag: options.tag } : {}),
+          ...(options?.stdin ? { stdin: true } : {}),
+        }),
+      ),
+    );
+
+  return {
+    exec: (command, options) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const proc = yield* start(command, {
+            ...(options?.cwd ? { cwd: options.cwd } : {}),
+            ...(options?.env ? { env: options.env } : {}),
+            ...(options?.stdin === undefined ? {} : { stdin: true }),
+          });
+          if (options?.stdin !== undefined) {
+            yield* proc.write(options.stdin);
+            yield* proc.closeStdin();
+          }
+          if (options?.timeout === undefined) return yield* proc.wait;
+          const timeoutMs = Duration.toMillis(Duration.fromInputUnsafe(options.timeout));
+          return yield* proc.wait.pipe(
+            Effect.timeoutOrElse({
+              duration: options.timeout,
+              orElse: () =>
+                proc
+                  .kill()
+                  .pipe(
+                    Effect.ignore,
+                    Effect.andThen(Effect.fail(new ExecTimedOut({ pid: proc.pid, timeoutMs }))),
+                  ),
+            }),
+          );
+        }),
+      ),
+    start,
+    processes: {
       list: () =>
         inSandbox(process.listProcesses({})).pipe(Effect.map((res) => res.processes ?? [])),
-      sendStdin: (selector, data) =>
-        inSandbox(
-          process.sendProcessInput({ process: selector, input: { stdin: toBase64(data) } }),
-        ).pipe(Effect.asVoid),
-      closeStdin: (selector) =>
-        inSandbox(process.closeProcessStdin({ process: selector })).pipe(Effect.asVoid),
-      kill: (selector, signal) =>
-        inSandbox(process.sendProcessSignal({ process: selector, signal: signalOf(signal) })).pipe(
-          Effect.asVoid,
+      attach: (selector) =>
+        attachTo(
+          streamInSandbox(process.connectProcess({ process: selector })),
+          "pid" in selector ? selector.pid : undefined,
         ),
     },
     pty: {
-      create: (options) =>
-        streamInSandbox(
-          process.startProcess({
-            process: {
-              cmd: "/bin/bash",
-              args: options.command ? ["-l", "-c", options.command] : ["-i", "-l"],
-              envs: { TERM: "xterm-256color", ...options.envs },
-              ...(options.cwd ? { cwd: options.cwd } : {}),
-            },
-            pty: { size: { cols: options.cols, rows: options.rows } },
-            ...(options.tag ? { tag: options.tag } : {}),
-          }),
-        ),
-      sendInput: (selector, data) =>
-        inSandbox(
-          process.sendProcessInput({ process: selector, input: { pty: toBase64(data) } }),
-        ).pipe(Effect.asVoid),
-      resize: (selector, size) =>
-        inSandbox(process.updateProcess({ process: selector, pty: { size } })).pipe(Effect.asVoid),
+      open: (options) =>
+        Effect.gen(function* () {
+          const proc = yield* attachTo(
+            streamInSandbox(
+              process.startProcess({
+                process: {
+                  cmd: "/bin/bash",
+                  args: options.command ? ["-l", "-c", options.command] : ["-i", "-l"],
+                  envs: { TERM: "xterm-256color", ...options.env },
+                  ...(options.cwd ? { cwd: options.cwd } : {}),
+                },
+                pty: { size: { cols: options.cols, rows: options.rows } },
+                ...(options.tag ? { tag: options.tag } : {}),
+              }),
+            ),
+          );
+          const selector: ProcessSelector = { pid: proc.pid };
+          return {
+            pid: proc.pid,
+            output: proc.output.pipe(Stream.map((chunk) => chunk.data)),
+            write: (data: string | Uint8Array) =>
+              inSandbox(
+                process.sendProcessInput({ process: selector, input: { pty: toBase64(data) } }),
+              ).pipe(Effect.asVoid),
+            resize: (size: { readonly cols: number; readonly rows: number }) =>
+              inSandbox(process.updateProcess({ process: selector, pty: { size } })).pipe(
+                Effect.asVoid,
+              ),
+            kill: () => proc.kill(),
+            wait: Effect.map(proc.wait, (result) => ({ exitCode: result.exitCode })),
+          };
+        }),
     },
     files: {
       read: (path) => inSandbox(envd.readFile({ path })),
       readText: (path) =>
-        inSandbox(envd.readFile({ path })).pipe(Effect.map((bytes) => decoder.decode(bytes))),
+        inSandbox(envd.readFile({ path })).pipe(
+          Effect.map((bytes) => new TextDecoder().decode(bytes)),
+        ),
       write: (path, data) =>
         inSandbox(
           envd.writeFiles({
@@ -225,79 +367,159 @@ export const makeSandboxHandle = (
           }),
         ),
     },
-    getHost: (port) => `${port}-${sandboxId}.${sandboxDomain}`,
-    url: (port) => `https://${port}-${sandboxId}.${sandboxDomain}`,
     fetch: (port, request) =>
       Effect.gen(function* () {
+        const r = yield* reach;
         const client = yield* HttpClient.HttpClient;
         // Raw HTTP: the user's own server inside the sandbox, at the URL
         // E2B serves its ports under.
         return yield* client.execute(
           request.pipe(
-            HttpClientRequest.prependUrl(`https://${port}-${sandboxId}.${sandboxDomain}`),
-            trafficToken === undefined
-              ? (r) => r
+            HttpClientRequest.prependUrl(`https://${port}-${r.sandboxId}.${r.domain}`),
+            r.trafficToken === undefined
+              ? (req) => req
               : HttpClientRequest.setHeader(
                   "e2b-traffic-access-token",
-                  Redacted.value(trafficToken),
+                  Redacted.value(r.trafficToken),
                 ),
           ),
         );
       }).pipe(Effect.provide(FetchHttpClient.layer)),
-    describe: () => auth.authorize(sandboxes.getSandbox({ sandboxID: sandboxId })),
+    describe: () => onSandbox((sandboxID) => sandboxes.getSandbox({ sandboxID })),
     pause: () =>
-      auth.authorize(sandboxes.pauseSandbox({ sandboxID: sandboxId })).pipe(Effect.asVoid),
+      onSandbox((sandboxID) => sandboxes.pauseSandbox({ sandboxID })).pipe(Effect.asVoid),
+    resume: (options) =>
+      onSandbox((sandboxID) =>
+        sandboxes.connectSandbox({
+          sandboxID,
+          ...(options?.timeout === undefined ? {} : { timeout: seconds(options.timeout) }),
+        }),
+      ).pipe(
+        Effect.tap((info) => Effect.sync(() => resumed(info))),
+        Effect.asVoid,
+      ),
     kill: () =>
-      auth.authorize(sandboxes.deleteSandbox({ sandboxID: sandboxId })).pipe(
+      onSandbox((sandboxID) => sandboxes.deleteSandbox({ sandboxID })).pipe(
         Effect.asVoid,
         Effect.catchTag("NotFound", () => Effect.void),
       ),
     setTimeout: (timeout) =>
-      auth
-        .authorize(sandboxes.setSandboxTimeout({ sandboxID: sandboxId, timeout: seconds(timeout) }))
-        .pipe(Effect.asVoid),
+      onSandbox((sandboxID) =>
+        sandboxes.setSandboxTimeout({ sandboxID, timeout: seconds(timeout) }),
+      ).pipe(Effect.asVoid),
     refresh: (duration) =>
-      auth
-        .authorize(
-          sandboxes.refreshSandbox({
-            sandboxID: sandboxId,
-            ...(duration === undefined ? {} : { duration: seconds(duration) }),
-          }),
-        )
-        .pipe(Effect.asVoid),
+      onSandbox((sandboxID) =>
+        sandboxes.refreshSandbox({
+          sandboxID,
+          ...(duration === undefined ? {} : { duration: seconds(duration) }),
+        }),
+      ).pipe(Effect.asVoid),
     updateNetwork: (network) =>
-      auth
-        .authorize(
-          sandboxes.updateSandboxNetwork({ ...denyUnlisted(network), sandboxID: sandboxId }),
-        )
-        .pipe(Effect.asVoid),
+      onSandbox((sandboxID) =>
+        sandboxes.updateSandboxNetwork({ ...denyUnlisted(network), sandboxID }),
+      ).pipe(Effect.asVoid),
     snapshot: (options) =>
-      auth.authorize(sandboxes.createSandboxSnapshot({ sandboxID: sandboxId, ...options })),
+      onSandbox((sandboxID) => sandboxes.createSandboxSnapshot({ sandboxID, ...options })),
     fork: (options) =>
-      auth
-        .authorize(
-          sandboxes.forkSandbox({
-            sandboxID: sandboxId,
-            ...(options?.count === undefined ? {} : { count: options.count }),
-            ...(options?.timeout === undefined ? {} : { timeout: seconds(options.timeout) }),
-          }),
-        )
-        .pipe(
-          Effect.map((results) =>
-            results.map((result): ForkResult =>
-              result.sandbox !== undefined
-                ? { _tag: "Forked", sandbox: makeSandboxHandle(auth, result.sandbox, domain) }
-                : {
-                    _tag: "ForkFailed",
-                    code: result.error?.code,
-                    message: result.error?.message ?? "fork failed",
-                  },
-            ),
+      onSandbox((sandboxID) =>
+        sandboxes.forkSandbox({
+          sandboxID,
+          ...(options?.count === undefined ? {} : { count: options.count }),
+          ...(options?.timeout === undefined ? {} : { timeout: seconds(options.timeout) }),
+        }),
+      ).pipe(
+        Effect.flatMap((results) => Effect.map(auth.domain, (domain) => ({ results, domain }))),
+        Effect.map(({ results, domain }) =>
+          results.map((result): ForkResult =>
+            result.sandbox !== undefined
+              ? { _tag: "Forked", sandbox: forked(result.sandbox, domain) }
+              : {
+                  _tag: "ForkFailed",
+                  code: result.error?.code,
+                  message: result.error?.message ?? "fork failed",
+                },
           ),
         ),
-    metrics: () => auth.authorize(sandboxes.listSandboxMetrics({ sandboxID: sandboxId })),
+      ),
+    metrics: () => onSandbox((sandboxID) => sandboxes.listSandboxMetrics({ sandboxID })),
     logs: (options) =>
-      auth.authorize(sandboxes.listSandboxLogs({ ...options, sandboxID: sandboxId })),
+      onSandbox((sandboxID) => sandboxes.listSandboxLogs({ ...options, sandboxID })),
   };
-  return handle;
+};
+
+/** A handle to a sandbox created or connected at runtime, from what E2B returned. */
+export const makeSandboxHandle = (
+  auth: E2BAuth,
+  info: sandboxes.Sandbox,
+  domain: string,
+): E2BSandbox => {
+  let current = reachOf(info, domain);
+  const operations = makeOperations(
+    auth,
+    Effect.succeed(info.sandboxID),
+    Effect.sync(() => current),
+    (resumed) => {
+      current = reachOf(resumed, current.domain, current.trafficToken);
+    },
+    (fork, domain) => makeSandboxHandle(auth, fork, domain),
+  );
+  return {
+    ...operations,
+    sandboxId: info.sandboxID,
+    templateId: info.templateID,
+    domain: current.domain,
+    info,
+    getHost: (port) => `${port}-${info.sandboxID}.${current.domain}`,
+    url: (port) => `https://${port}-${info.sandboxID}.${current.domain}`,
+  };
+};
+
+/**
+ * A handle to a sandbox declared in the stack. Its envd token is read from
+ * E2B on first use (without resuming it) and kept; `trafficTokenOf` comes
+ * from the sandbox's attributes, since E2B returns the traffic token only
+ * on create and connect.
+ */
+export const makeConnectedSandbox = (
+  auth: E2BAuth,
+  sandboxIdOf: Effect.Effect<string, never, RuntimeContext>,
+  trafficTokenOf: Effect.Effect<Redacted.Redacted<string> | undefined, never, RuntimeContext>,
+): ConnectedSandbox => {
+  let cached: Reach | undefined;
+  const reach = Effect.suspend(() =>
+    cached !== undefined
+      ? Effect.succeed(cached)
+      : Effect.gen(function* () {
+          const sandboxID = yield* sandboxIdOf;
+          const detail = yield* auth.authorize(sandboxes.getSandbox({ sandboxID }));
+          const domain = yield* auth.domain;
+          const trafficToken = yield* trafficTokenOf;
+          const resolved = reachOf(detail, domain, trafficToken);
+          cached = resolved;
+          return resolved;
+        }),
+  );
+  const domainOf = Effect.suspend(() =>
+    cached !== undefined ? Effect.succeed(cached.domain) : auth.domain,
+  );
+  const operations = makeOperations(
+    auth,
+    sandboxIdOf,
+    reach,
+    // The next call re-reads the sandbox's envd token.
+    () => {
+      cached = undefined;
+    },
+    (fork, domain) => makeSandboxHandle(auth, fork, domain),
+  );
+  return {
+    ...operations,
+    sandboxId: sandboxIdOf,
+    url: (port) =>
+      Effect.gen(function* () {
+        const sandboxId = yield* sandboxIdOf;
+        const domain = yield* domainOf;
+        return `https://${port}-${sandboxId}.${domain}`;
+      }),
+  };
 };

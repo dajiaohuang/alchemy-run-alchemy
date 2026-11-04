@@ -15,6 +15,8 @@ export * from "./CreateVolumeHttp.ts";
 export * from "./Credentials.ts";
 export * from "./Errors.ts";
 export * from "./InferEnv.ts";
+export * from "./MountVolume.ts";
+export * from "./MountVolumeLive.ts";
 export * from "./Providers.ts";
 export * from "./ReadTeam.ts";
 export * from "./ReadTeamHttp.ts";

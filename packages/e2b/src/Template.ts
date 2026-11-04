@@ -27,6 +27,7 @@ import {
   type TemplateSteps,
 } from "./internal/TemplateBuild.ts";
 import { planSource } from "./internal/TemplatePlan.ts";
+import type { VolumeMount } from "./MountVolume.ts";
 import type { Providers } from "./Providers.ts";
 
 export type { TemplateFile, TemplateRegistry, TemplateSteps } from "./internal/TemplateBuild.ts";
@@ -126,11 +127,18 @@ export interface TemplateAttributes {
   public: boolean;
   cpuCount: number | undefined;
   memoryMB: number | undefined;
+  /**
+   * Volumes the template's program mounts (`E2B.MountVolume`). E2B attaches
+   * volumes when a sandbox is created, so `CreateSandbox(template)` and
+   * `E2B.Sandbox({ template })` mount them on every sandbox.
+   */
+  mounts: VolumeMount[];
 }
 
-/** What bindings attach to a template program: its environment. */
+/** What bindings attach to a template program: its environment and volume mounts. */
 export interface TemplateBinding {
   env?: Record<string, any>;
+  mounts?: VolumeMount[];
 }
 
 export interface Template extends Resource<
@@ -331,6 +339,23 @@ export const observeTemplate = (templateId: string | undefined, name: string) =>
     Effect.catchTag("NotFound", () => Effect.undefined),
   );
 
+/** The mounts the template's bindings attach, by path (a later binding wins). */
+const boundMounts = (
+  bindings: ReadonlyArray<ResourceBinding<TemplateBinding>> | undefined,
+): VolumeMount[] => [
+  ...new Map(
+    (bindings ?? [])
+      .filter(
+        (binding: ResourceBinding<TemplateBinding> & { action?: string }) =>
+          binding.action !== "delete",
+      )
+      .flatMap((binding) => binding.data?.mounts ?? [])
+      .map(
+        (mount) => [mount.path, { volume: { name: mount.volume.name }, path: mount.path }] as const,
+      ),
+  ).values(),
+];
+
 const boundEnv = (bindings: ReadonlyArray<ResourceBinding<TemplateBinding>> | undefined) =>
   (bindings ?? [])
     .filter(
@@ -448,6 +473,7 @@ export const TemplateProvider = () =>
             public: template.public,
             cpuCount: template.cpuCount,
             memoryMB: template.memoryMB,
+            mounts: [],
           } satisfies TemplateAttributes;
         }),
         read: Effect.fn(function* ({ id, olds, output }) {
@@ -464,6 +490,7 @@ export const TemplateProvider = () =>
             public: template.public,
             cpuCount: template.cpuCount,
             memoryMB: template.memoryMB,
+            mounts: output?.mounts ?? [],
           };
           return output !== undefined || olds?.name === undefined ? attrs : Unowned(attrs);
         }),
@@ -496,6 +523,7 @@ export const TemplateProvider = () =>
               public: observed.public,
               cpuCount: observed.cpuCount,
               memoryMB: observed.memoryMB,
+              mounts: boundMounts(bindings),
             };
           } else {
             yield* session.note(`Building template ${name}...`);
@@ -510,6 +538,7 @@ export const TemplateProvider = () =>
               public: built.public,
               cpuCount: news.cpuCount,
               memoryMB: news.memoryMB,
+              mounts: boundMounts(bindings),
             };
           }
 
@@ -553,6 +582,7 @@ export const TemplateProvider = () =>
               public: template.public,
               cpuCount: template.cpuCount,
               memoryMB: template.memoryMB,
+              mounts: [],
             }));
         }),
       };
