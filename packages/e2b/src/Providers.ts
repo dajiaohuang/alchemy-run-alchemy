@@ -6,10 +6,10 @@ import * as Layer from "effect/Layer";
 import { ApiKey, ApiKeyProvider } from "./ApiKey.ts";
 import { E2BAuth } from "./AuthProvider.ts";
 import * as Credentials from "./Credentials.ts";
+import { RuntimeObjects, RuntimeObjectsProvider } from "./RuntimeObjects.ts";
 import { Sandbox, SandboxProvider } from "./Sandbox.ts";
 import { Secret, SecretProvider } from "./Secret.ts";
 import { Snapshot, SnapshotProvider } from "./Snapshot.ts";
-import { Sweep, SweepProvider } from "./Sweep.ts";
 import { Template, TemplateProvider } from "./Template.ts";
 import { Volume, VolumeProvider } from "./Volume.ts";
 import { Webhook, WebhookProvider } from "./Webhook.ts";
@@ -27,7 +27,16 @@ export type ProviderRequirements = Layer.Services<ReturnType<typeof providers>>;
 export const providers = () =>
   Layer.effect(
     Providers,
-    Provider.collection([ApiKey, Sandbox, Secret, Snapshot, Sweep, Template, Volume, Webhook]),
+    Provider.collection([
+      ApiKey,
+      Sandbox,
+      Secret,
+      Snapshot,
+      RuntimeObjects,
+      Template,
+      Volume,
+      Webhook,
+    ]),
   ).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -35,7 +44,7 @@ export const providers = () =>
         SandboxProvider(),
         SecretProvider(),
         SnapshotProvider(),
-        SweepProvider(),
+        RuntimeObjectsProvider(),
         TemplateProvider(),
         VolumeProvider(),
         WebhookProvider(),

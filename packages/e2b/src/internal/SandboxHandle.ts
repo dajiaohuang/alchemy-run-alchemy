@@ -177,11 +177,11 @@ const makeOperations = (
               case "Stdout":
               case "Pty":
                 out += stdout.decode(event.data, { stream: true });
-                yield* Queue.offer(queue, { _tag: "Stdout", data: event.data });
+                yield* Queue.offer(queue, { fd: "stdout", data: event.data });
                 return;
               case "Stderr":
                 err += stderr.decode(event.data, { stream: true });
-                yield* Queue.offer(queue, { _tag: "Stderr", data: event.data });
+                yield* Queue.offer(queue, { fd: "stderr", data: event.data });
                 return;
               case "End":
                 yield* Deferred.succeed(exited, {
@@ -218,6 +218,7 @@ const makeOperations = (
       const processPid = yield* Deferred.await(started);
       const selector: ProcessSelector = { pid: processPid };
       return {
+        id: String(processPid),
         pid: processPid,
         output: Stream.fromQueue(queue),
         write: (data) =>
@@ -299,6 +300,7 @@ const makeOperations = (
             .pipe(streamInSandbox, (events) => attachTo(events));
           const selector: ProcessSelector = { pid: proc.pid };
           return {
+            id: proc.id,
             pid: proc.pid,
             output: proc.output.pipe(Stream.map((chunk) => chunk.data)),
             write: (data: string | Uint8Array) =>
@@ -326,12 +328,7 @@ const makeOperations = (
             path,
             file: new Blob([typeof data === "string" ? data : new Uint8Array(data)]),
           }),
-        ).pipe(
-          Effect.map((entries) => {
-            const entry = entries[0];
-            return { name: entry?.name, path: entry?.path ?? path } as filesystem.EntryInfo;
-          }),
-        ),
+        ).pipe(Effect.asVoid),
       list: (path, options) =>
         inSandbox(filesystem.listDir({ path, depth: options?.depth ?? 1 })).pipe(
           Effect.map((res) => res.entries ?? []),
@@ -343,8 +340,7 @@ const makeOperations = (
           Effect.as(true),
           Effect.catchTag("NotFound", () => Effect.succeed(false)),
         ),
-      makeDir: (path) =>
-        inSandbox(filesystem.makeDir({ path })).pipe(Effect.map((res) => res.entry ?? { path })),
+      makeDir: (path) => inSandbox(filesystem.makeDir({ path })).pipe(Effect.asVoid),
       move: (source, destination) =>
         inSandbox(filesystem.movePath({ source, destination })).pipe(
           Effect.map((res) => res.entry ?? { path: destination }),

@@ -2,16 +2,14 @@ import * as secrets from "@distilled.cloud/e2b/secrets";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { declareSweep } from "./CreateSandboxHttp.ts";
 import {
   CreateSecret,
   type CreateSecretBindingOptions,
   type SecretsClient,
 } from "./CreateSecret.ts";
-import { bindE2B } from "./E2BBindings.ts";
+import { bindE2B, runtimeStamp } from "./E2BBindings.ts";
 import { E2BUnexpectedResponse } from "./Errors.ts";
 import { toSecretAttributes } from "./Secret.ts";
-import { Sweep } from "./Sweep.ts";
 
 /**
  * HTTP implementation of {@link CreateSecret}. Works on any host.
@@ -32,12 +30,9 @@ import { Sweep } from "./Sweep.ts";
 export const CreateSecretHttp = Layer.effect(
   CreateSecret,
   Effect.gen(function* () {
-    // Yielding the resource class erases its `Providers` requirement; the
-    // stack satisfies it at plan time.
-    const sweep = yield* Sweep;
     return Effect.fn("E2B.CreateSecret")(function* (options?: CreateSecretBindingOptions) {
       const auth = yield* bindE2B;
-      yield* declareSweep(sweep, "secrets", auth.deployStamp, options?.onDestroy);
+      const stamp = yield* runtimeStamp("secrets", options?.onDestroy);
 
       const get = (nameOrId: string) =>
         auth.authorize(secrets.getSecret({ secretID: nameOrId.toLowerCase() })).pipe(
@@ -47,7 +42,7 @@ export const CreateSecretHttp = Layer.effect(
 
       const client: SecretsClient = {
         put: Effect.fn("E2B.CreateSecret.put")(function* (name, value, putOptions) {
-          const metadata = { ...putOptions?.metadata, ...(yield* auth.stamp) };
+          const metadata = { ...putOptions?.metadata, ...(yield* stamp) };
           const existing = yield* get(name);
           const stored =
             existing !== undefined
@@ -77,13 +72,13 @@ export const CreateSecretHttp = Layer.effect(
             Effect.map((secret) => (secret === undefined ? undefined : toSecretAttributes(secret))),
           ),
         list: Effect.fn("E2B.CreateSecret.list")(function* () {
-          const stamp = yield* auth.stamp;
+          const owned = yield* stamp;
           const all = yield* auth.authorize(
             Stream.runCollect(secrets.listSecrets.items({ limit: 100 })),
           );
           return Array.from(all)
             .filter((secret) =>
-              Object.entries(stamp).every(([key, value]) => secret.metadata[key] === value),
+              Object.entries(owned).every(([key, value]) => secret.metadata[key] === value),
             )
             .map(toSecretAttributes);
         }),

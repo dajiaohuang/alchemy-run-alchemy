@@ -14,6 +14,7 @@ import { hasOwnershipMetadata, ownershipMetadata, userMetadata } from "./interna
 import { denyUnlisted } from "./internal/SandboxHandle.ts";
 import type { VolumeMount } from "./MountVolume.ts";
 import type { Providers } from "./Providers.ts";
+import { RUNTIME_KIND_KEY } from "./RuntimeObjects.ts";
 
 /** Egress rules for a declared sandbox, in E2B's shape. */
 export interface SandboxNetwork {
@@ -455,8 +456,13 @@ export const SandboxProvider = () =>
           return (
             all
               // Declared sandboxes carry `alchemy::id`; the ones bindings create
-              // at runtime carry a host stamp instead, and the host's Sweep owns them.
-              .filter((sandbox) => sandbox.metadata?.["alchemy::id"] !== undefined)
+              // at runtime are marked `alchemy::runtime`, and the host's
+              // RuntimeObjects owns them.
+              .filter(
+                (sandbox) =>
+                  sandbox.metadata?.["alchemy::id"] !== undefined &&
+                  sandbox.metadata?.[RUNTIME_KIND_KEY] === undefined,
+              )
               .map((sandbox): SandboxAttributes => ({
                 sandboxId: sandbox.sandboxID,
                 templateId: sandbox.templateID,

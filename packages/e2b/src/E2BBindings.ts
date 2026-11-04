@@ -11,10 +11,10 @@
  * Every runtime call provides `Credentials` from those accessors, so nothing
  * reads `process.env`.
  *
- * Bindings also capture an ownership stamp (`alchemy::stack`,
- * `alchemy::stage`, `alchemy::host`) that runtime-created sandboxes and
- * secrets carry in their metadata, so the host's sweep can delete them when
- * the host is destroyed.
+ * Bindings that create sandboxes or secrets at runtime declare an
+ * `E2B.RuntimeObjects` in the host's namespace (`runtimeStamp`). What they
+ * create carries its tags in E2B metadata, and destroying the host deletes
+ * them.
  */
 import { ConfigError } from "@distilled.cloud/core/errors";
 import {
@@ -28,8 +28,6 @@ import * as Binding from "alchemy/Binding";
 import * as Namespace from "alchemy/Namespace";
 import * as Output from "alchemy/Output";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
-import { Stack } from "alchemy/Stack";
-import { Stage } from "alchemy/Stage";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import type * as HttpClient from "effect/http/HttpClient";
@@ -38,6 +36,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { ApiKey } from "./ApiKey.ts";
 import { withTeamId } from "./Credentials.ts";
+import { RUNTIME_KIND_KEY, RuntimeObjects, type RuntimeObjectKind } from "./RuntimeObjects.ts";
 
 /** A plain value as an Output with no requirements (`asOutput` leaves them `any`). */
 const output = <A>(value: A) => Output.asOutput(value) as Output.Output<A, never>;
@@ -50,10 +49,6 @@ export interface E2BAuth {
   readonly authorize: <A, E>(
     effect: Effect.Effect<A, E, Credentials | HttpClient.HttpClient>,
   ) => Effect.Effect<A, E, RuntimeContext>;
-  /** The ownership stamp for objects this host creates. */
-  readonly stamp: Effect.Effect<RuntimeStamp>;
-  /** The same stamp as plain data, for the host's sweep; empty at runtime. */
-  readonly deployStamp: RuntimeStamp;
   /** The E2B domain sandboxes are addressed under. */
   readonly domain: Effect.Effect<string>;
   /** The team the host's key belongs to. */
@@ -93,7 +88,6 @@ export const bindE2B = Effect.gen(function* () {
   let apiKey: Output.Output<Redacted.Redacted<string>, never> = output(Redacted.make(""));
   let domain = DEFAULT_DOMAIN;
   let teamId = "";
-  let stamp: RuntimeStamp = {};
   if (!globalThis.__ALCHEMY_RUNTIME__) {
     const config = yield* deployCredentials.pipe(orDieCredentialsUnavailable("E2B"));
     yield* requireAccessToken(config).pipe(orDieCredentialsUnavailable("E2B"));
@@ -104,17 +98,9 @@ export const bindE2B = Effect.gen(function* () {
       const hostKey = yield* Namespace.push(host.LogicalId, makeKey("E2BHostKey", {}));
       apiKey = hostKey.key as Output.Output<Redacted.Redacted<string>, never>;
     }
-    const stack = yield* Effect.serviceOption(Stack);
-    const stage = yield* Effect.serviceOption(Stage);
-    stamp = {
-      "alchemy::stack": Option.match(stack, { onNone: () => "", onSome: (s) => s.name }),
-      "alchemy::stage": Option.getOrElse(stage, () => ""),
-      "alchemy::host": host?.LogicalId ?? "",
-    };
   }
   const key = yield* Output.named(apiKey, "E2B_API_KEY").asEffect();
   const boundDomain = yield* Output.named(output(domain), "E2B_DOMAIN").asEffect();
-  const boundStamp = yield* Output.named(output(JSON.stringify(stamp)), "E2B_STAMP").asEffect();
   const boundTeamId = yield* Output.named(output(teamId), "E2B_TEAM_ID").asEffect();
 
   const domainOf = Effect.map(boundDomain, (value) => value || DEFAULT_DOMAIN);
@@ -130,15 +116,51 @@ export const bindE2B = Effect.gen(function* () {
 
   return {
     authorize: (effect) => effect.pipe(Effect.provide(services)),
-    stamp: Effect.map(boundStamp, (json): RuntimeStamp => {
-      try {
-        return JSON.parse(json || "{}");
-      } catch {
-        return {};
-      }
-    }),
     domain: domainOf,
     teamId: boundTeamId,
-    deployStamp: stamp,
   } satisfies E2BAuth;
+});
+
+const parseStamp = (json: string): RuntimeStamp => {
+  try {
+    return JSON.parse(json || "{}");
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * Declares the host's `E2B.RuntimeObjects` for `kind` (once per host and
+ * kind) and returns the stamp objects of that kind carry at runtime: the
+ * resource's tags plus `alchemy::runtime`. Without a host (a script) the
+ * stamp only marks the kind.
+ */
+export const runtimeStamp = Effect.fn(function* (
+  kind: RuntimeObjectKind,
+  onDestroy: "delete" | "retain" | undefined,
+) {
+  // Yielding the resource class erases its `Providers` requirement; the
+  // stack satisfies it at plan time.
+  const make = yield* RuntimeObjects;
+  let tags: Output.Output<string, never> = output("{}");
+  if (!globalThis.__ALCHEMY_RUNTIME__) {
+    const host = yield* Binding.Host;
+    if (host !== undefined) {
+      const objects = yield* Namespace.push(
+        host.LogicalId,
+        make(kind === "sandboxes" ? "E2BSandboxes" : "E2BSecrets", {
+          kinds: [kind],
+          ...(onDestroy === undefined ? {} : { onDestroy }),
+        }),
+      );
+      tags = (objects.tags as Output.Output<Record<string, string>, never>).pipe(
+        Output.map((value) => JSON.stringify(value)),
+      );
+    }
+  }
+  const bound = yield* Output.named(tags, `E2B_${kind.toUpperCase()}_STAMP`).asEffect();
+  return Effect.map(bound, (json): RuntimeStamp => ({
+    ...parseStamp(json),
+    [RUNTIME_KIND_KEY]: kind,
+  }));
 });

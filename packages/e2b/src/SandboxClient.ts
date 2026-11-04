@@ -6,6 +6,7 @@ import type * as sandboxes from "@distilled.cloud/e2b/sandboxes";
 import type * as templates from "@distilled.cloud/e2b/templates";
 import type * as volumes from "@distilled.cloud/e2b/volumes";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
+import type * as Sandbox from "alchemy/Sandbox";
 import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
 import type * as HttpClientError from "effect/http/HttpClientError";
@@ -44,25 +45,17 @@ export type ProcessInfo = process.ProcessInfo;
  * A command: a shell command line (run with `bash -l -c`), or an argument
  * vector run directly.
  */
-export type Command = string | readonly [string, ...string[]];
+export type Command = Sandbox.Command;
 
-export interface ExecOptions {
-  /** Working directory. @default the sandbox user's home */
-  readonly cwd?: string;
-  /** Environment variables for the command. */
-  readonly env?: Readonly<Record<string, string>>;
-  /** Kill the command and fail with `ExecTimedOut` when it runs longer. */
-  readonly timeout?: Duration.Input;
-  /** Written to the command's stdin, which is then closed. */
-  readonly stdin?: string | Uint8Array;
-}
+/**
+ * `cwd` defaults to the sandbox user's home; `timeout` kills the command and
+ * fails with `ExecTimedOut`.
+ */
+export type ExecOptions = Sandbox.ExecOptions;
 
 /** What a finished command printed, and its exit code. A non-zero exit code is returned, not failed. */
-export interface ExecResult {
+export interface ExecResult extends Sandbox.ExecResult {
   readonly pid: number;
-  readonly exitCode: number;
-  readonly stdout: string;
-  readonly stderr: string;
   /** envd's error for a process that could not run (e.g. the executable is missing). */
   readonly error: string | undefined;
 }
@@ -79,15 +72,14 @@ export interface StartOptions {
 }
 
 /** A chunk of a process's output. */
-export type ProcessOutput =
-  | { readonly _tag: "Stdout"; readonly data: Uint8Array }
-  | { readonly _tag: "Stderr"; readonly data: Uint8Array };
+export type ProcessOutput = Sandbox.ProcessOutput;
 
 /**
  * A process started (or attached to) in the current scope. Closing the
  * scope detaches: the process keeps running until it exits or is killed.
+ * `id` is its pid as a string.
  */
-export interface Process {
+export interface Process extends Sandbox.Process<E2BError> {
   readonly pid: number;
   /** stdout and stderr, from now until the process exits. Read it once. */
   readonly output: Stream.Stream<ProcessOutput, E2BError>;
@@ -108,18 +100,13 @@ export interface Processes {
   attach(process: ProcessSelector): Effect.Effect<Process, E2BError, RuntimeContext | Scope.Scope>;
 }
 
-export interface PtyOptions {
-  readonly cols: number;
-  readonly rows: number;
-  /** A command line to run instead of an interactive login shell. */
-  readonly command?: string;
-  readonly cwd?: string;
-  readonly env?: Readonly<Record<string, string>>;
+export interface PtyOptions extends Sandbox.PtyOptions {
+  /** A tag to find the terminal's process by. */
   readonly tag?: string;
 }
 
-/** A pseudo-terminal opened in the current scope. Closing the scope detaches. */
-export interface PtyConnection {
+/** A pseudo-terminal opened in the current scope. Closing the scope detaches. `id` is its pid as a string. */
+export interface PtyConnection extends Sandbox.PtyConnection<E2BError> {
   readonly pid: number;
   /** The terminal's output. Read it once. */
   readonly output: Stream.Stream<Uint8Array, E2BError>;
@@ -136,26 +123,24 @@ export interface PtyConnection {
 }
 
 /** Pseudo-terminals inside the sandbox. */
-export interface Pty {
+export interface Pty extends Sandbox.Pty<E2BError, PtyOptions> {
   open(options: PtyOptions): Effect.Effect<PtyConnection, E2BError, RuntimeContext | Scope.Scope>;
 }
 
 /** The sandbox's filesystem, through envd. Relative paths resolve in the user's home. */
-export interface Files {
+export interface Files extends Sandbox.Files<E2BError, EntryInfo> {
   read(path: string): Effect.Effect<Uint8Array, E2BError, RuntimeContext>;
   readText(path: string): Effect.Effect<string, E2BError, RuntimeContext>;
   /** Writes a file, creating parent directories. */
-  write(
-    path: string,
-    data: string | Uint8Array,
-  ): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
+  write(path: string, data: string | Uint8Array): Effect.Effect<void, E2BError, RuntimeContext>;
   list(
     path: string,
     options?: { readonly depth?: number },
   ): Effect.Effect<ReadonlyArray<EntryInfo>, E2BError, RuntimeContext>;
   stat(path: string): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
   remove(path: string): Effect.Effect<void, E2BError, RuntimeContext>;
-  makeDir(path: string): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
+  /** Creates the directory and its parents. */
+  makeDir(path: string): Effect.Effect<void, E2BError, RuntimeContext>;
   exists(path: string): Effect.Effect<boolean, E2BError, RuntimeContext>;
   move(source: string, destination: string): Effect.Effect<EntryInfo, E2BError, RuntimeContext>;
   /** Concatenates files into `destination`. */
@@ -184,7 +169,13 @@ export type SandboxNetworkUpdate = Omit<sandboxes.UpdateSandboxNetworkRequest, "
  * `SandboxNotRunning`: `resume()` it first. A sandbox created with
  * `autoResume` is the exception: E2B resumes it on any request.
  */
-export interface SandboxOperations {
+export interface SandboxOperations
+  extends
+    Sandbox.SandboxExec<E2BError, ExecResult, ExecOptions>,
+    Sandbox.SandboxProcesses<E2BError, StartOptions>,
+    Sandbox.SandboxFiles<E2BError, EntryInfo>,
+    Sandbox.SandboxPty<E2BError, PtyOptions>,
+    Sandbox.SandboxFetch<E2BError> {
   /** Runs a command to completion. */
   exec(
     command: Command,

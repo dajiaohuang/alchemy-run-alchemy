@@ -1,6 +1,4 @@
 import * as sandboxes from "@distilled.cloud/e2b/sandboxes";
-import * as Binding from "alchemy/Binding";
-import * as Namespace from "alchemy/Namespace";
 import type * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,42 +9,12 @@ import {
   type SandboxBase,
   type SandboxesClient,
 } from "./CreateSandbox.ts";
-import { bindE2B } from "./E2BBindings.ts";
+import { bindE2B, runtimeStamp } from "./E2BBindings.ts";
 import { SandboxBaseMissing } from "./Errors.ts";
 import { denyUnlisted, makeSandboxHandle } from "./internal/SandboxHandle.ts";
 import type { BoundVolumeMount, VolumeMount } from "./MountVolume.ts";
-import { metadataQuery, Sweep } from "./Sweep.ts";
+import { metadataQuery } from "./RuntimeObjects.ts";
 import type { Template } from "./Template.ts";
-
-/** The `E2B.Sweep` constructor, as a binding layer's construction yields it. */
-type SweepConstructor = Effect.Success<typeof Sweep>;
-
-/**
- * Declares the host's sweep for the runtime-created objects of `kind`.
- * Deploy-time only; a no-op inside the deployed host and without a host.
- *
- * @internal
- */
-export const declareSweep = Effect.fn(function* (
-  sweep: SweepConstructor,
-  kind: "sandboxes" | "secrets",
-  stamp: Readonly<Record<string, string>>,
-  onDestroy: "delete" | "retain" | undefined,
-) {
-  if (globalThis.__ALCHEMY_RUNTIME__) return;
-  const host = yield* Binding.Host;
-  if (host === undefined) return;
-  yield* Namespace.push(
-    host.LogicalId,
-    Effect.asVoid(
-      sweep(`E2B${kind === "sandboxes" ? "Sandbox" : "Secret"}Sweep`, {
-        stamp: { ...stamp },
-        kinds: [kind],
-        ...(onDestroy === undefined ? {} : { onDestroy }),
-      }),
-    ),
-  );
-});
 
 /**
  * HTTP implementation of {@link CreateSandbox}: E2B's control plane with the
@@ -69,15 +37,12 @@ export const declareSweep = Effect.fn(function* (
 export const CreateSandboxHttp = Layer.effect(
   CreateSandbox,
   Effect.gen(function* () {
-    // Yielding the resource class erases its `Providers` requirement; the
-    // stack satisfies it at plan time.
-    const sweep = yield* Sweep;
     return Effect.fn("E2B.CreateSandbox")(function* (
       base?: SandboxBase,
       options?: CreateSandboxBindingOptions,
     ) {
       const auth = yield* bindE2B;
-      yield* declareSweep(sweep, "sandboxes", auth.deployStamp, options?.onDestroy);
+      const stamp = yield* runtimeStamp("sandboxes", options?.onDestroy);
       // Both a Template and a Snapshot expose the template id sandboxes boot from.
       const baseId: Effect.Effect<string> | undefined =
         base === undefined
@@ -108,7 +73,7 @@ export const CreateSandboxHttp = Layer.effect(
       const withStamp = Effect.fn(function* (
         metadata: Readonly<Record<string, string | undefined>> | undefined,
       ) {
-        return { ...metadata, ...(yield* auth.stamp) };
+        return { ...metadata, ...(yield* stamp) };
       });
 
       const client: SandboxesClient = {
