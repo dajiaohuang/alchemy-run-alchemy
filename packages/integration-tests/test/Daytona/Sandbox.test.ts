@@ -229,3 +229,98 @@ test.provider.skipIf(!!process.env.FAST || !windowsEntitled)(
     }),
   { tags: ["provider:daytona", "live"], timeout: 900_000 },
 );
+
+test.provider(
+  "mount a volume and a secret, set the user and previews, archive it and wake it",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const deploy = (options: {
+        public: boolean;
+        state?: "started" | "archived";
+        secretHost: string;
+      }) =>
+        stack.deploy(
+          Effect.gen(function* () {
+            const cache = yield* Daytona.Volume("Cache", {});
+            const token = yield* Daytona.Secret("Token", {
+              value: "not-a-token",
+              hosts: [options.secretHost],
+            });
+            const box = yield* Daytona.Sandbox("Mounted", {
+              user: "daytona",
+              volumes: [{ volume: cache, mountPath: "/home/daytona/cache" }],
+              secrets: { API_TOKEN: token },
+              public: options.public,
+              otelEndpointOverride: "https://api.honeycomb.io/",
+              state: options.state,
+            });
+            return { cache, token, box };
+          }),
+        );
+
+      const first = yield* deploy({ public: true, secretHost: "api.github.com" });
+      const observed = yield* sandboxes.getSandbox({ sandboxIdOrName: first.box.sandboxId });
+      expect(observed.user).toEqual("daytona");
+      expect(observed.public).toBe(true);
+      expect(observed.volumes?.map((v) => [v.volumeId, v.mountPath])).toEqual([
+        [first.cache.volumeId, "/home/daytona/cache"],
+      ]);
+      expect(observed.otelEndpointOverride).toEqual("https://api.honeycomb.io/");
+      expect(Object.keys(observed.env ?? {})).toContain("API_TOKEN");
+
+      // Previews go private in place, and a changed secret is remounted.
+      const second = yield* deploy({ public: false, secretHost: "api.gitlab.com" });
+      expect(second.box.sandboxId).toEqual(first.box.sandboxId);
+      expect((yield* sandboxes.getSandbox({ sandboxIdOrName: first.box.sandboxId })).public).toBe(
+        false,
+      );
+
+      // Archive it, then wake it again.
+      const archived = yield* deploy({
+        public: false,
+        state: "archived",
+        secretHost: "api.gitlab.com",
+      });
+      expect(archived.box.state).toEqual("archived");
+      const woken = yield* deploy({ public: false, secretHost: "api.gitlab.com" });
+      expect(woken.box.sandboxId).toEqual(first.box.sandboxId);
+      expect(woken.box.state).toEqual("started");
+
+      yield* stack.destroy();
+      expect(yield* observe(first.box.sandboxId)).toBeUndefined();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 900_000 },
+);
+
+// Per-sandbox queue timeouts need the organization feature; set
+// DAYTONA_TEST_QUEUE_TIMEOUT=1 on an account that has it.
+const queueTimeoutEntitled = !!process.env.DAYTONA_TEST_QUEUE_TIMEOUT;
+
+test.provider.skipIf(queueTimeoutEntitled)(
+  "a queue timeout without the feature fails with QueueTimeoutNotEnabled",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const error = yield* stack
+        .deploy(Daytona.Sandbox("Queued", { queueTimeout: "10 minutes" }))
+        .pipe(Effect.flip);
+      expect(error._tag).toEqual("QueueTimeoutNotEnabled");
+      yield* stack.destroy();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 120_000 },
+);
+
+test.provider.skipIf(!queueTimeoutEntitled)(
+  "a sandbox with a queue timeout",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+      const box = yield* stack.deploy(Daytona.Sandbox("Queued", { queueTimeout: "10 minutes" }));
+      const observed = yield* sandboxes.getSandbox({ sandboxIdOrName: box.sandboxId });
+      expect(observed.queueTimeout).toEqual(10);
+      yield* stack.destroy();
+      expect(yield* observe(box.sandboxId)).toBeUndefined();
+    }),
+  { tags: ["provider:daytona", "live"], timeout: 600_000 },
+);

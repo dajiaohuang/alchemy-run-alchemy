@@ -89,7 +89,11 @@ export interface SandboxProps {
   volumes?: SandboxVolumeMount[];
   /** Stop after this long without activity. `0` never stops. Updated in place. @default "15 minutes" */
   autoStopInterval?: Duration.Input;
-  /** Pause (memory kept) after this long without activity. Updated in place. */
+  /**
+   * Pause (memory kept) after this long without activity. Only `linux-vm`
+   * and `windows` sandboxes can pause; a container fails with
+   * `AutoPauseNotSupported`. Updated in place.
+   */
   autoPauseInterval?: Duration.Input;
   /** Archive after being stopped this long. Updated in place. @default "7 days" */
   autoArchiveInterval?: Duration.Input;
@@ -102,9 +106,10 @@ export interface SandboxProps {
    */
   ttl?: Duration.Input;
   /**
-   * Give up if no runner takes the sandbox within this long. Daytona honors
-   * it only when the organization has a default queue timeout. Only used
-   * when the sandbox is created.
+   * Give up if no runner takes the sandbox within this long. The
+   * organization needs the queue-timeout feature; without it, creating the
+   * sandbox fails with `QueueTimeoutNotEnabled`. Only used when the sandbox
+   * is created.
    */
   queueTimeout?: Duration.Input;
   /**
