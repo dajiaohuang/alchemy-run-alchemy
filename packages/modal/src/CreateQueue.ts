@@ -1,7 +1,10 @@
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
+import type { QueuesOps } from "./CreateQueueHttp.ts";
 import type { Environment } from "./Environment.ts";
+import type { ErrorOf, OpError } from "./internal.ts";
+import type { ensureQueue, lookupQueue } from "./Queue.ts";
 import type { QueueAttributes } from "./Queue.ts";
 import type { ReadWriteQueueClient } from "./QueueClient.ts";
 
@@ -16,13 +19,24 @@ export interface QueueHandle extends ReadWriteQueueClient {
 /** Get, create, list and delete queues by name in one environment. */
 export interface QueuesClient {
   /** The queue named `name`, created when missing (Modal's own get-or-create). */
-  getOrCreate(name: string): Effect.Effect<QueueHandle, any, RuntimeContext>;
+  getOrCreate(
+    name: string,
+  ): Effect.Effect<QueueHandle, ErrorOf<typeof ensureQueue>, RuntimeContext>;
   /** The queue named `name`, or `undefined`. */
-  get(name: string): Effect.Effect<QueueHandle | undefined, any, RuntimeContext>;
+  get(
+    name: string,
+  ): Effect.Effect<QueueHandle | undefined, ErrorOf<typeof lookupQueue>, RuntimeContext>;
   /** Delete the queue named `name` (no-op when missing). */
-  delete(name: string): Effect.Effect<void, any, RuntimeContext>;
+  delete(
+    name: string,
+  ): Effect.Effect<
+    void,
+    | ErrorOf<typeof lookupQueue>
+    | Exclude<OpError<QueuesOps, "delete">, { readonly _tag: "QueueNotFound" }>,
+    RuntimeContext
+  >;
   /** Names of every queue in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, any, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<QueuesOps, "list">, RuntimeContext>;
 }
 
 /**

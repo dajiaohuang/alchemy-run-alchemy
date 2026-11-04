@@ -2,6 +2,7 @@ import type { Input } from "alchemy/Input";
 import type { ResourceLike } from "alchemy/Resource";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import type { OperationServices } from "./internal.ts";
 import * as ModalBindings from "./ModalBindings.ts";
 
 /**
@@ -41,7 +42,7 @@ export const makeModalBinding = <
   /** Fully qualified binding tag, e.g. `Modal.WriteQueue`. */
   readonly tag: string;
   /** The distilled operations the client calls, e.g. `operations({ put: queue.putQueue })`. */
-  readonly operations: Effect.Effect<Ops, never, any>;
+  readonly operations: Effect.Effect<Ops, never, OperationServices>;
   /** The role the host needs on the resource's environment. */
   readonly role: Role;
   readonly make: (resource: Res, ops: Ops) => Effect.Effect<Client>;
@@ -67,7 +68,7 @@ export const makeModalBinding = <
  */
 export const makeOpenModalBinding = <Args extends ReadonlyArray<unknown>, Ops, Client>(options: {
   readonly tag: string;
-  readonly operations: Effect.Effect<Ops, never, any>;
+  readonly operations: Effect.Effect<Ops, never, OperationServices>;
   readonly role: Role;
   /** The environment the client acts in (an `Input`, read at deploy). */
   readonly environmentOf: (...args: Args) => Input<string | undefined>;

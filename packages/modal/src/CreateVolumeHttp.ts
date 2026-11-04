@@ -17,7 +17,7 @@ const VolumesOps = operations({
   client: VolumeFileOps,
 });
 
-type VolumesOps = Effect.Success<typeof VolumesOps>;
+export type VolumesOps = Effect.Success<typeof VolumesOps>;
 
 const handleOf = (attributes: VolumeAttributes, ops: VolumesOps): VolumeHandle => ({
   ...makeReadWriteVolumeClient(Effect.succeed(attributes.volumeId), ops.client),

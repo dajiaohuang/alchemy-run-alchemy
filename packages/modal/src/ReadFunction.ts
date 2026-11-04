@@ -2,7 +2,10 @@ import type * as functions from "@distilled.cloud/modal/functions";
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
+import type { FunctionLookupError } from "./FunctionTarget.ts";
+import type { OpError } from "./internal.ts";
 import type { FunctionTarget } from "./InvokeFunction.ts";
+import type { ReadFunctionOps } from "./ReadFunctionHttp.ts";
 import type { Server } from "./Server.ts";
 
 /** A time range: `Date`s, ISO strings, or epoch milliseconds. */
@@ -21,13 +24,17 @@ export interface FunctionReader {
       readonly containers: number;
       readonly inputHeadroom: number;
     },
-    any,
+    FunctionLookupError | OpError<ReadFunctionOps, "currentStats">,
     RuntimeContext
   >;
   /** Input outcomes, latency percentiles and container counts over a time range. */
   timeRangeStats(
     range: TimeRange & { readonly containerId?: string },
-  ): Effect.Effect<functions.FunctionGetTimeRangeStatsResponse, any, RuntimeContext>;
+  ): Effect.Effect<
+    functions.FunctionGetTimeRangeStatsResponse,
+    FunctionLookupError | OpError<ReadFunctionOps, "timeRangeStats">,
+    RuntimeContext
+  >;
   /** Metric series (`containers`, `calls`) over a time range. */
   metrics(
     range: TimeRange & {
@@ -35,20 +42,36 @@ export interface FunctionReader {
       readonly bucketSecs?: number;
       readonly groups?: ReadonlyArray<string>;
     },
-  ): Effect.Effect<functions.FunctionGetMetricsResponse, any, RuntimeContext>;
+  ): Effect.Effect<
+    functions.FunctionGetMetricsResponse,
+    FunctionLookupError | OpError<ReadFunctionOps, "metrics">,
+    RuntimeContext
+  >;
   /** Calls started per time bucket. */
   callCount(
     range: TimeRange & {
       /** Seconds per bucket. @default 3600 */
       readonly bucketSecs?: number;
     },
-  ): Effect.Effect<functions.FunctionCallCountResponse, any, RuntimeContext>;
+  ): Effect.Effect<
+    functions.FunctionCallCountResponse,
+    FunctionLookupError | OpError<ReadFunctionOps, "callCount">,
+    RuntimeContext
+  >;
   /** The inputs of one call, by outcome. */
   callInfo(call: {
     readonly functionCallId: string;
-  }): Effect.Effect<functions.FunctionCallGetInfoResponse, any, RuntimeContext>;
+  }): Effect.Effect<
+    functions.FunctionCallGetInfoResponse,
+    FunctionLookupError | OpError<ReadFunctionOps, "callInfo">,
+    RuntimeContext
+  >;
   /** The autoscaler settings in effect. */
-  autoscaler(): Effect.Effect<functions.AutoscalerSettings | undefined, any, RuntimeContext>;
+  autoscaler(): Effect.Effect<
+    functions.AutoscalerSettings | undefined,
+    FunctionLookupError | OpError<ReadFunctionOps, "schedulingParams">,
+    RuntimeContext
+  >;
 }
 
 /**

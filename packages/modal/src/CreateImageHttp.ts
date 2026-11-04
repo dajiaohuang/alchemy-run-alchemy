@@ -17,7 +17,7 @@ const ImagesOps = operations({
   delete: image.deleteImage,
 });
 
-type ImagesOps = Effect.Success<typeof ImagesOps>;
+export type ImagesOps = Effect.Success<typeof ImagesOps>;
 
 const toBytes = (data: string | Uint8Array) =>
   Effect.sync(() => (typeof data === "string" ? new TextEncoder().encode(data) : data));

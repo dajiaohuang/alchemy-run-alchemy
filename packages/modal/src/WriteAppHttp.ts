@@ -14,7 +14,7 @@ const WriteAppOps = operations({
   stop: app.stopApp,
 });
 
-type WriteAppOps = Effect.Success<typeof WriteAppOps>;
+export type WriteAppOps = Effect.Success<typeof WriteAppOps>;
 
 /**
  * {@link WriteApp} over Modal's API. Grants the host's identity (a scoped

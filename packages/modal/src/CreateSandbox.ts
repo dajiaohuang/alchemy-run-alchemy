@@ -3,12 +3,19 @@ import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type { App } from "./App.ts";
 import type { Image } from "./Image.ts";
+import type { ErrorOf } from "./internal.ts";
 import type { Sandbox } from "./Sandbox.ts";
 import type {
+  createPersistentSandbox,
+  createSandbox,
+  listSandboxes,
   PersistentSandboxCreateOptions,
   PersistentSandboxHandle,
+  restoreSandbox,
   SandboxCreateOptions,
   SandboxHandle,
+  sandboxFromName,
+  SandboxOpError,
 } from "./SandboxClient.ts";
 
 export type {
@@ -46,16 +53,20 @@ export interface SandboxesClient {
   /** The App sandboxes are created in. */
   readonly appId: Effect.Effect<string>;
   /** Create a sandbox. Modal's own sandbox parameters; the bound image is the default `image`. */
-  create(options?: SandboxCreateOptions): Effect.Effect<SandboxHandle, any, RuntimeContext>;
+  create(
+    options?: SandboxCreateOptions,
+  ): Effect.Effect<SandboxHandle, ErrorOf<typeof createSandbox>, RuntimeContext>;
   /** A running sandbox by name, or `undefined`. */
-  fromName(name: string): Effect.Effect<SandboxHandle | undefined, any, RuntimeContext>;
+  fromName(
+    name: string,
+  ): Effect.Effect<SandboxHandle | undefined, ErrorOf<typeof sandboxFromName>, RuntimeContext>;
   /** A sandbox by id. */
   fromId(sandboxId: string): Effect.Effect<SandboxHandle>;
   /** Running sandboxes of the App, optionally filtered by tags. */
   list(options?: {
     readonly tags?: Record<string, string>;
     readonly includeFinished?: boolean;
-  }): Effect.Effect<ReadonlyArray<SandboxSummary>, any, RuntimeContext>;
+  }): Effect.Effect<ReadonlyArray<SandboxSummary>, ErrorOf<typeof listSandboxes>, RuntimeContext>;
   /**
    * Create a persistent sandbox: one box whose filesystem outlives its
    * sessions. Each session runs up to an hour and pauses after five idle
@@ -63,7 +74,11 @@ export interface SandboxesClient {
    */
   createPersistent(
     options?: PersistentSandboxCreateOptions,
-  ): Effect.Effect<PersistentSandboxHandle, any, RuntimeContext>;
+  ): Effect.Effect<
+    PersistentSandboxHandle,
+    ErrorOf<typeof createPersistentSandbox>,
+    RuntimeContext
+  >;
   /** A persistent sandbox by id (a `Modal.PersistentSandbox`, or one `createPersistent` made). */
   persistent(
     box: string | { readonly persistentSandboxId: string },
@@ -79,12 +94,12 @@ export interface SandboxesClient {
     readonly until?: Date | string | number;
     readonly groupByTags?: ReadonlyArray<string>;
     readonly tags?: Record<string, string>;
-  }): Effect.Effect<ReadonlyArray<SandboxUsageGroup>, any, RuntimeContext>;
+  }): Effect.Effect<ReadonlyArray<SandboxUsageGroup>, SandboxOpError<"usage">, RuntimeContext>;
   /** Start a new sandbox from a memory snapshot (`handle.snapshotMemory()`). */
   restore(
     snapshot: { readonly snapshotId: string },
     options?: { readonly name?: string },
-  ): Effect.Effect<SandboxHandle, any, RuntimeContext>;
+  ): Effect.Effect<SandboxHandle, ErrorOf<typeof restoreSandbox>, RuntimeContext>;
 }
 
 /**

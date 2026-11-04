@@ -41,7 +41,7 @@ const ReadAppOps = operations({
   deployments: app.appDeploymentHistory,
 });
 
-type ReadAppOps = Effect.Success<typeof ReadAppOps>;
+export type ReadAppOps = Effect.Success<typeof ReadAppOps>;
 
 /**
  * {@link ReadApp} over Modal's API. Grants the host's identity (a scoped

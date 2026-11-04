@@ -2,7 +2,10 @@ import type * as functions from "@distilled.cloud/modal/functions";
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
+import type { FunctionLookupError } from "./FunctionTarget.ts";
+import type { OpError } from "./internal.ts";
 import type { FunctionTarget } from "./InvokeFunction.ts";
+import type { ScaleFunctionOps } from "./ScaleFunctionHttp.ts";
 import type { Server } from "./Server.ts";
 
 /** Autoscaler settings to override; unset fields keep their value. */
@@ -24,14 +27,22 @@ export interface AutoscalerOverride {
 /** Change a function's autoscaler at runtime. */
 export interface FunctionScaler {
   /** The settings in effect. */
-  autoscaler(): Effect.Effect<functions.AutoscalerSettings | undefined, any, RuntimeContext>;
+  autoscaler(): Effect.Effect<
+    functions.AutoscalerSettings | undefined,
+    FunctionLookupError | OpError<ScaleFunctionOps, "schedulingParams">,
+    RuntimeContext
+  >;
   /**
    * Override settings until the next deploy, which restores the declared
    * ones. Returns the settings now in effect.
    */
   update(
     settings: AutoscalerOverride,
-  ): Effect.Effect<functions.AutoscalerSettings | undefined, any, RuntimeContext>;
+  ): Effect.Effect<
+    functions.AutoscalerSettings | undefined,
+    FunctionLookupError | OpError<ScaleFunctionOps, "schedulingParams" | "updateSchedulingParams">,
+    RuntimeContext
+  >;
 }
 
 /**

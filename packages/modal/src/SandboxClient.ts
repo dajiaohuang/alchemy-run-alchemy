@@ -5,11 +5,12 @@ import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Schedule from "effect/Schedule";
 import { buildImage, gpuConfig, ImageBuildOps, type ImageBuildSpec } from "./ImageBuild.ts";
-import { environmentOf, operations, seconds } from "./internal.ts";
+import { environmentOf, type ErrorOf, operations, seconds } from "./internal.ts";
 import { withRouter } from "./ModalBindings.ts";
 import { type ModalMounts, modalMountsOf, type SandboxMount } from "./Mounts.ts";
 
@@ -177,9 +178,13 @@ export interface ExecResult {
   readonly stderr: string;
 }
 
-/** Options for {@link SandboxHandle.exec}. */
+/** A command: a shell string (run with `sh -c`), or an argument vector (no shell). */
+export type Command = string | ReadonlyArray<string>;
+
+/** Options for {@link SandboxHandleOf.exec}. */
 export interface ExecOptions {
-  readonly workdir?: string;
+  /** Working directory. @default the sandbox's `workdir` */
+  readonly cwd?: string;
   /** Extra environment variables for this command. */
   readonly env?: Record<string, string>;
   /** Secrets whose variables this command sees. */
@@ -190,11 +195,18 @@ export interface ExecOptions {
   readonly stdin?: string | Uint8Array;
 }
 
-/** One entry of {@link SandboxHandle.listFiles}. */
+/** A filesystem entry inside a sandbox. */
 export interface SandboxFileEntry {
   readonly path: string;
-  readonly type: string;
-  readonly size?: number;
+  readonly type: "file" | "directory" | "symlink" | "other";
+}
+
+/** What `files.stat` reports about a path. */
+export interface SandboxFileStat extends SandboxFileEntry {
+  /** Size in bytes. */
+  readonly size: number;
+  /** Last modification time. */
+  readonly modifiedAt: Date;
 }
 
 /** A tunnel to a port inside the sandbox. */
@@ -205,25 +217,70 @@ export interface SandboxTunnel {
   readonly port: number;
 }
 
+/** The error of one of {@link SandboxOps}. */
+export type SandboxOpError<K extends keyof SandboxOps> = ErrorOf<SandboxOps[K]>;
+type RouterOpError<K extends keyof typeof routerOps> = ErrorOf<
+  Effect.Success<ReturnType<(typeof routerOps)[K]>>
+>;
+
+/** Reaching a sandbox's task: it ended, or Modal's task lookup failed. */
+export type SandboxTaskError =
+  | SandboxNotRunning
+  | SandboxUnexpectedResponse
+  | SandboxOpError<"getTaskId">
+  | SandboxOpError<"getCommandRouterAccess">;
+
+/** Running a command in a sandbox. */
+export type SandboxExecError =
+  | SandboxTaskError
+  | RouterOpError<"execStart">
+  | RouterOpError<"execStdinWrite">
+  | RouterOpError<"execStdioRead">
+  | RouterOpError<"execWait">;
+
+/** A file operation inside a sandbox (it runs as a command). */
+export type SandboxFilesError = SandboxExecError | SandboxFilesystemError;
+
+/** Taking a snapshot or changing a running sandbox through its command router. */
+export type SandboxRouterError<K extends keyof typeof routerOps> =
+  | SandboxTaskError
+  | RouterOpError<K>;
+
+/** The files inside a sandbox, read and written with commands its image has (`sh`, `base64`, `stat`). */
+export interface SandboxFilesOf<R> {
+  /** Read a file. */
+  read(path: string): Effect.Effect<Uint8Array, SandboxFilesError, R>;
+  /** Read a UTF-8 file. */
+  readText(path: string): Effect.Effect<string, SandboxFilesError, R>;
+  /** Write (create or truncate) a file, creating its directory. */
+  write(path: string, data: string | Uint8Array): Effect.Effect<void, SandboxFilesError, R>;
+  /** List a directory. */
+  list(path: string): Effect.Effect<ReadonlyArray<SandboxFileEntry>, SandboxFilesError, R>;
+  /** A path's type, size and modification time. */
+  stat(path: string): Effect.Effect<SandboxFileStat, SandboxFilesError, R>;
+  /** Remove a file, or a directory with `recursive`. */
+  remove(
+    path: string,
+    options?: { readonly recursive?: boolean },
+  ): Effect.Effect<void, SandboxFilesError, R>;
+  /** Create a directory and its parents. */
+  makeDir(path: string): Effect.Effect<void, SandboxFilesError, R>;
+}
+
 /** A running (or finished) Modal sandbox. Every method calls Modal's API. */
 export interface SandboxHandleOf<R> {
   readonly sandboxId: string;
-  /** Run a command (an argument vector, no shell) and wait for it. */
-  exec(command: ReadonlyArray<string>, options?: ExecOptions): Effect.Effect<ExecResult, any, R>;
-  /** Read a file. */
-  readFile(path: string): Effect.Effect<Uint8Array, any, R>;
-  /** Read a UTF-8 file. */
-  readFileString(path: string): Effect.Effect<string, any, R>;
-  /** Write (create or truncate) a file. */
-  writeFile(path: string, data: string | Uint8Array): Effect.Effect<void, any, R>;
-  /** List a directory. */
-  listFiles(path: string): Effect.Effect<ReadonlyArray<SandboxFileEntry>, any, R>;
-  /** Create a directory (and its parents). */
-  mkdir(path: string): Effect.Effect<void, any, R>;
-  /** Remove a file or directory. */
-  remove(path: string, options?: { readonly recursive?: boolean }): Effect.Effect<void, any, R>;
+  /**
+   * Run a command and wait for it. A string runs with `sh -c`; an argument
+   * vector runs without a shell. A non-zero exit code is returned, not failed.
+   */
+  exec(command: Command, options?: ExecOptions): Effect.Effect<ExecResult, SandboxExecError, R>;
+  /** The sandbox's files. */
+  readonly files: SandboxFilesOf<R>;
   /** Tunnels to the sandbox's open ports, by container port. */
-  tunnels(timeout?: DurationInput): Effect.Effect<Record<number, SandboxTunnel>, any, R>;
+  tunnels(
+    timeout?: DurationInput,
+  ): Effect.Effect<Record<number, SandboxTunnel>, SandboxOpError<"getTunnels">, R>;
   /**
    * A token-authenticated URL for one port, for a browser or client that
    * shouldn't hold Modal credentials.
@@ -231,53 +288,88 @@ export interface SandboxHandleOf<R> {
   connectToken(options?: {
     readonly port?: number;
     readonly userMetadata?: string;
-  }): Effect.Effect<{ readonly url: string; readonly token: string }, any, R>;
+  }): Effect.Effect<
+    { readonly url: string; readonly token: string },
+    SandboxOpError<"createConnectToken"> | SandboxUnexpectedResponse,
+    R
+  >;
   /** Capture the filesystem as a new image (usable as `image` later). */
-  snapshotFilesystem(timeout?: DurationInput): Effect.Effect<{ readonly imageId: string }, any, R>;
+  snapshotFilesystem(
+    timeout?: DurationInput,
+  ): Effect.Effect<{ readonly imageId: string }, SandboxRouterError<"snapshotFilesystem">, R>;
   /** Capture memory and filesystem (needs `enableSnapshot`); restore with `restore`. */
-  snapshotMemory(): Effect.Effect<{ readonly snapshotId: string }, any, R>;
+  snapshotMemory(): Effect.Effect<
+    { readonly snapshotId: string },
+    SandboxRouterError<"snapshotMemory">,
+    R
+  >;
   /** Capture one directory as an image (mount it into another sandbox with `mountDirectory`). */
-  snapshotDirectory(path: string): Effect.Effect<{ readonly imageId: string }, any, R>;
+  snapshotDirectory(
+    path: string,
+  ): Effect.Effect<{ readonly imageId: string }, SandboxRouterError<"snapshotDirectory">, R>;
   /** Mount a directory snapshot at `path`. */
-  mountDirectory(path: string, snapshot: { readonly imageId: string }): Effect.Effect<void, any, R>;
+  mountDirectory(
+    path: string,
+    snapshot: { readonly imageId: string },
+  ): Effect.Effect<void, SandboxRouterError<"mountDirectory">, R>;
   /** Replace the sandbox's outbound network policy while it runs. */
   setNetworkAccess(access: {
     readonly blockNetwork?: boolean;
     readonly cidrAllowlist?: ReadonlyArray<string>;
     readonly allowedDomains?: ReadonlyArray<string>;
-  }): Effect.Effect<void, any, R>;
+  }): Effect.Effect<void, SandboxRouterError<"setNetworkAccess">, R>;
   /** Replace the outbound header injection rules while it runs. */
-  setOutboundPolicy(policy: OutboundPolicy): Effect.Effect<void, any, R>;
+  setOutboundPolicy(
+    policy: OutboundPolicy,
+  ): Effect.Effect<void, SandboxOpError<"setOutboundPolicy">, R>;
   /** Replace the sandbox's tags. */
-  setTags(tags: Record<string, string>): Effect.Effect<void, any, R>;
+  setTags(tags: Record<string, string>): Effect.Effect<void, SandboxOpError<"setTags">, R>;
   /** The sandbox's tags. */
-  getTags(): Effect.Effect<Record<string, string>, any, R>;
+  getTags(): Effect.Effect<Record<string, string>, SandboxOpError<"getTags">, R>;
   /** Name the sandbox (unique among its app's running sandboxes) so `fromName` finds it. */
-  setName(name: string): Effect.Effect<void, any, R>;
+  setName(name: string): Effect.Effect<void, SandboxOpError<"setName">, R>;
   /** CPU, memory and GPU used so far (core-seconds, GiB-seconds, GPU-seconds). */
   resourceUsage(): Effect.Effect<
     { readonly cpuSeconds: number; readonly memoryGibSeconds: number; readonly gpuSeconds: number },
-    any,
+    SandboxOpError<"getResourceUsage">,
     R
   >;
   /** The main process's output so far. */
-  logs(options?: { readonly timeout?: DurationInput }): Effect.Effect<string, any, R>;
+  logs(options?: {
+    readonly timeout?: DurationInput;
+  }): Effect.Effect<string, SandboxOpError<"getLogs">, R>;
   /** Wait for the sandbox to finish; `undefined` exit code while still running. */
   wait(
     timeout?: DurationInput,
-  ): Effect.Effect<{ readonly exitCode?: number; readonly status: string }, any, R>;
+  ): Effect.Effect<
+    { readonly exitCode?: number; readonly status: string },
+    SandboxOpError<"wait">,
+    R
+  >;
   /** Terminate the sandbox (no-op when it already finished). */
-  terminate(): Effect.Effect<void, any, R>;
+  terminate(): Effect.Effect<
+    void,
+    Exclude<SandboxOpError<"terminate">, { readonly _tag: "SandboxNotFound" }>,
+    R
+  >;
   /**
-   * Send a request to the program's port (a `Modal.Sandbox` program's
-   * `fetch` handler, or `port`): the URL's path and query are kept, the host
-   * is the sandbox's tunnel.
+   * Send a request to a port's tunnel: the URL's path and query are kept,
+   * the host is the tunnel's. Without a port, the `Modal.Sandbox` program's.
    */
   fetch(
     request: HttpClientRequest.HttpClientRequest,
-    options?: { readonly port?: number },
-  ): Effect.Effect<HttpClientResponse.HttpClientResponse, any, R>;
+  ): Effect.Effect<HttpClientResponse.HttpClientResponse, SandboxFetchError, R>;
+  fetch(
+    port: number,
+    request: HttpClientRequest.HttpClientRequest,
+  ): Effect.Effect<HttpClientResponse.HttpClientResponse, SandboxFetchError, R>;
 }
+
+/** Sending a request to a sandbox port. */
+export type SandboxFetchError =
+  | SandboxOpError<"getTunnels">
+  | SandboxUnexpectedResponse
+  | HttpClientError.HttpClientError;
 
 /** A sandbox handle as bindings return it: calls run inside a deployed runtime. */
 export type SandboxHandle = SandboxHandleOf<RuntimeContext>;
@@ -550,7 +642,7 @@ export const sandboxHandle = (
    */
   const fsExec = (path: string, script: string, stdin?: string | Uint8Array) =>
     Effect.flatMap(
-      handle.exec(["sh", "-c", script, "sh", path], stdin === undefined ? {} : { stdin }),
+      exec(["sh", "-c", script, "sh", path], stdin === undefined ? {} : { stdin }),
       (result) =>
         result.exitCode === 0
           ? Effect.succeed(result.stdout)
@@ -562,114 +654,165 @@ export const sandboxHandle = (
             ),
     );
 
-  const handle: RawSandboxHandle = {
-    sandboxId,
-    exec: Effect.fn(function* (command, options = {}) {
-      // V2 sandboxes run commands through the task command router: start
-      // the command under an id we choose, then read its output streams
-      // while waiting for it to exit.
-      const id = yield* taskId;
-      const access = yield* ops.getCommandRouterAccess({ sandboxId, taskId: id });
-      if (!access.url || !access.jwt) {
-        return yield* new SandboxUnexpectedResponse({
-          message: `Modal returned no command router for sandbox ${sandboxId}`,
-        });
-      }
-      const at = { url: access.url, jwt: access.jwt };
-      const start = yield* routerOps.execStart(at);
-      const stdinWrite = yield* routerOps.execStdinWrite(at);
-      const stdioRead = yield* routerOps.execStdioRead(at);
-      const wait = yield* routerOps.execWait(at);
-      const execId = yield* Effect.sync(() => crypto.randomUUID());
-      yield* start({
+  const exec = Effect.fn(function* (command: Command, options: ExecOptions = {}) {
+    // V2 sandboxes run commands through the task command router: start the
+    // command under an id we choose, then read its output streams while
+    // waiting for it to exit.
+    const id = yield* taskId;
+    const access = yield* ops.getCommandRouterAccess({ sandboxId, taskId: id });
+    if (!access.url || !access.jwt) {
+      return yield* new SandboxUnexpectedResponse({
+        message: `Modal returned no command router for sandbox ${sandboxId}`,
+      });
+    }
+    const at = { url: access.url, jwt: access.jwt };
+    const start = yield* routerOps.execStart(at);
+    const stdinWrite = yield* routerOps.execStdinWrite(at);
+    const stdioRead = yield* routerOps.execStdioRead(at);
+    const wait = yield* routerOps.execWait(at);
+    const execId = yield* Effect.sync(() => crypto.randomUUID());
+    yield* start({
+      taskId: id,
+      execId,
+      commandArgs: typeof command === "string" ? ["sh", "-c", command] : [...command],
+      workdir: options.cwd,
+      timeoutSecs: seconds(options.timeout),
+      secretIds: options.secrets?.map((s) => s.secretId),
+      env: options.env,
+      stdoutConfig: "TASK_EXEC_STDOUT_CONFIG_PIPE",
+      stderrConfig: "TASK_EXEC_STDERR_CONFIG_PIPE",
+    });
+    if (options.stdin !== undefined) {
+      yield* stdinWrite({
         taskId: id,
         execId,
-        commandArgs: [...command],
-        workdir: options.workdir,
-        timeoutSecs: seconds(options.timeout),
-        secretIds: options.secrets?.map((s) => s.secretId),
-        env: options.env,
-        stdoutConfig: "TASK_EXEC_STDOUT_CONFIG_PIPE",
-        stderrConfig: "TASK_EXEC_STDERR_CONFIG_PIPE",
+        offset: "0",
+        data: yield* encodeBase64(options.stdin),
+        eof: true,
       });
-      if (options.stdin !== undefined) {
-        yield* stdinWrite({
-          taskId: id,
-          execId,
-          offset: "0",
-          data: yield* encodeBase64(options.stdin),
-          eof: true,
-        });
-      }
-      const read = (fileDescriptor: router.TaskExecStdioFileDescriptor) =>
-        stdioRead({ taskId: id, execId, offset: "0", fileDescriptor }).pipe(
-          Effect.map(({ items }) => streamText(items)),
-        );
-      const [stdout, stderr, exit] = yield* Effect.all(
-        [
-          read("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDOUT"),
-          read("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDERR"),
-          wait({ taskId: id, execId }),
-        ],
-        { concurrency: "unbounded" },
+    }
+    const read = (fileDescriptor: router.TaskExecStdioFileDescriptor) =>
+      stdioRead({ taskId: id, execId, offset: "0", fileDescriptor }).pipe(
+        Effect.map(({ items }) => streamText(items)),
       );
-      return {
-        exitCode: exit.code ?? (exit.signal !== undefined ? 128 + exit.signal : -1),
-        stdout,
-        stderr,
-      };
-    }),
-    readFile: Effect.fn(function* (path) {
-      // base64 keeps binary content intact through the text output stream.
-      const encoded = yield* fsExec(path, 'base64 < "$1" | tr -d "\\n"');
-      return yield* decodeBase64(encoded);
-    }),
-    readFileString: (path) =>
-      handle.readFile(path).pipe(Effect.map((bytes) => new TextDecoder().decode(bytes))),
-    writeFile: Effect.fn(function* (path, data) {
+    const [stdout, stderr, exit] = yield* Effect.all(
+      [
+        read("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDOUT"),
+        read("TASK_EXEC_STDIO_FILE_DESCRIPTOR_STDERR"),
+        wait({ taskId: id, execId }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return {
+      exitCode: exit.code ?? (exit.signal !== undefined ? 128 + exit.signal : -1),
+      stdout,
+      stderr,
+    };
+  });
+
+  const read = Effect.fn(function* (path: string) {
+    // base64 keeps binary content intact through the text output stream.
+    const encoded = yield* fsExec(path, 'base64 < "$1" | tr -d "\\n"');
+    return yield* decodeBase64(encoded);
+  });
+
+  const typeOf = (letter: string): SandboxFileEntry["type"] =>
+    letter === "d" ? "directory" : letter === "l" ? "symlink" : letter === "f" ? "file" : "other";
+
+  const files: SandboxFilesOf<never> = {
+    read,
+    readText: (path) => read(path).pipe(Effect.map((bytes) => new TextDecoder().decode(bytes))),
+    write: Effect.fn(function* (path, data) {
       const encoded = yield* encodeBase64(data);
       yield* fsExec(path, 'mkdir -p "$(dirname "$1")" && base64 -d > "$1"', encoded);
     }),
-    listFiles: Effect.fn(function* (path) {
+    list: Effect.fn(function* (path) {
       const output = yield* fsExec(
         path,
-        'cd "$1" && for f in * .[!.]* ..?*; do [ -e "$f" ] || [ -L "$f" ] || continue; if [ -d "$f" ]; then echo "d $f"; else echo "f $f"; fi; done',
+        'cd "$1" && for f in * .[!.]* ..?*; do [ -e "$f" ] || [ -L "$f" ] || continue; if [ -L "$f" ]; then echo "l $f"; elif [ -d "$f" ]; then echo "d $f"; elif [ -f "$f" ]; then echo "f $f"; else echo "o $f"; fi; done',
       );
       return output
         .split("\n")
         .filter((line) => line.length > 2)
         .map((line) => ({
           path: `${path.replace(/\/$/, "")}/${line.slice(2)}`,
-          type: line.startsWith("d ") ? "DIRECTORY" : "FILE",
+          type: typeOf(line[0]!),
         }));
     }),
-    mkdir: Effect.fn(function* (path) {
-      yield* fsExec(path, 'mkdir -p "$1"');
+    stat: Effect.fn(function* (path) {
+      // `%F` is GNU stat's type name; busybox prints the same names.
+      const output = yield* fsExec(path, 'stat -c "%F|%s|%Y" "$1"');
+      const [kind = "", size = "0", mtime = "0"] = output.trim().split("|");
+      return {
+        path,
+        type: kind.includes("directory")
+          ? "directory"
+          : kind.includes("symbolic link")
+            ? "symlink"
+            : kind.includes("regular")
+              ? "file"
+              : "other",
+        size: Number(size),
+        modifiedAt: new Date(Number(mtime) * 1000),
+      } satisfies SandboxFileStat;
     }),
     remove: Effect.fn(function* (path, options = {}) {
       yield* fsExec(path, options.recursive ? 'rm -r "$1"' : 'rm "$1"');
     }),
-    tunnels: Effect.fn(function* (timeout) {
-      const { tunnels } = yield* ops.getTunnels({
-        sandboxId,
-        timeout: seconds(timeout) ?? 50,
-      });
-      const out: Record<number, SandboxTunnel> = {};
-      for (const tunnel of tunnels ?? []) {
-        if (tunnel.containerPort === undefined) continue;
-        const encrypted = tunnel.host !== undefined && tunnel.host !== "";
-        const host = (encrypted ? tunnel.host : tunnel.unencryptedHost) ?? "";
-        const port = (encrypted ? tunnel.port : tunnel.unencryptedPort) ?? 443;
-        out[tunnel.containerPort] = {
-          host,
-          port,
-          url: encrypted
-            ? `https://${host}${port === 443 ? "" : `:${port}`}`
-            : `tcp://${host}:${port}`,
-        };
-      }
-      return out;
+    makeDir: Effect.fn(function* (path) {
+      yield* fsExec(path, 'mkdir -p "$1"');
     }),
+  };
+
+  const tunnelsOf = Effect.fn(function* (timeout?: DurationInput) {
+    const { tunnels } = yield* ops.getTunnels({
+      sandboxId,
+      timeout: seconds(timeout) ?? 50,
+    });
+    const out: Record<number, SandboxTunnel> = {};
+    for (const tunnel of tunnels ?? []) {
+      if (tunnel.containerPort === undefined) continue;
+      const encrypted = tunnel.host !== undefined && tunnel.host !== "";
+      const host = (encrypted ? tunnel.host : tunnel.unencryptedHost) ?? "";
+      const port = (encrypted ? tunnel.port : tunnel.unencryptedPort) ?? 443;
+      out[tunnel.containerPort] = {
+        host,
+        port,
+        url: encrypted
+          ? `https://${host}${port === 443 ? "" : `:${port}`}`
+          : `tcp://${host}:${port}`,
+      };
+    }
+    return out;
+  });
+
+  const fetchPort = Effect.fn(function* (
+    port: number | undefined,
+    request: HttpClientRequest.HttpClientRequest,
+  ) {
+    if (port === undefined) {
+      return yield* new SandboxUnexpectedResponse({
+        message: "fetch needs a port: create the sandbox from a Modal.Sandbox, or pass one",
+      });
+    }
+    const tunnel = (yield* tunnelsOf(50))[port];
+    if (!tunnel) {
+      return yield* new SandboxUnexpectedResponse({
+        message: `Port ${port} of sandbox ${sandboxId} has no tunnel; open it with encryptedPorts`,
+      });
+    }
+    const url = new URL(request.url, "http://sandbox");
+    // The user's own program, reached through its tunnel (allowed raw HTTP).
+    return yield* ops.http.execute(
+      HttpClientRequest.setUrl(request, `${tunnel.url}${url.pathname}${url.search}`),
+    );
+  });
+
+  const handle: RawSandboxHandle = {
+    sandboxId,
+    exec,
+    files,
+    tunnels: tunnelsOf,
     connectToken: Effect.fn(function* (options = {}) {
       const response = yield* ops.createConnectToken({
         sandboxId,
@@ -780,26 +923,13 @@ export const sandboxHandle = (
         status: result?.status ?? "GENERIC_STATUS_UNSPECIFIED",
       };
     }),
-    fetch: Effect.fn(function* (request, options = {}) {
-      const port = options.port ?? target.program?.port;
-      if (port === undefined) {
-        return yield* new SandboxUnexpectedResponse({
-          message: "fetch needs a port: create the sandbox from a Modal.Sandbox, or pass { port }",
-        });
-      }
-      const tunnels = yield* handle.tunnels(50);
-      const tunnel = tunnels[port];
-      if (!tunnel) {
-        return yield* new SandboxUnexpectedResponse({
-          message: `Port ${port} of sandbox ${sandboxId} has no tunnel; open it with encryptedPorts`,
-        });
-      }
-      const url = new URL(request.url, "http://sandbox");
-      // The user's own program, reached through its tunnel (allowed raw HTTP).
-      return yield* ops.http.execute(
-        HttpClientRequest.setUrl(request, `${tunnel.url}${url.pathname}${url.search}`),
-      );
-    }),
+    fetch: ((
+      portOrRequest: number | HttpClientRequest.HttpClientRequest,
+      request?: HttpClientRequest.HttpClientRequest,
+    ) =>
+      typeof portOrRequest === "number"
+        ? fetchPort(portOrRequest, request!)
+        : fetchPort(target.program?.port, portOrRequest)) as RawSandboxHandle["fetch"],
     terminate: Effect.fn(function* () {
       yield* ops
         .terminate({ sandboxId })
@@ -926,9 +1056,19 @@ export interface PersistentSandboxHandleOf<R> {
    * The running session, resuming the box from its last session's
    * filesystem when it's paused.
    */
-  session(): Effect.Effect<SandboxHandleOf<R>, any, R>;
+  session(): Effect.Effect<
+    SandboxHandleOf<R>,
+    | SandboxOpError<"getPersistent">
+    | SandboxOpError<"resumePersistent">
+    | SandboxUnexpectedResponse,
+    R
+  >;
   /** Terminate the box for good. */
-  terminate(): Effect.Effect<void, any, R>;
+  terminate(): Effect.Effect<
+    void,
+    Exclude<SandboxOpError<"terminatePersistent">, { readonly _tag: "PersistentSandboxNotFound" }>,
+    R
+  >;
 }
 
 export type RawPersistentSandboxHandle = PersistentSandboxHandleOf<never>;

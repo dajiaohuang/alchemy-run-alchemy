@@ -1,7 +1,10 @@
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
+import type { VolumesOps } from "./CreateVolumeHttp.ts";
 import type { Environment } from "./Environment.ts";
+import type { ErrorOf, OpError } from "./internal.ts";
+import type { ensureVolume, lookupVolume } from "./Volume.ts";
 import type { VolumeAttributes } from "./Volume.ts";
 import type { ReadWriteVolumeClient } from "./VolumeClient.ts";
 
@@ -16,13 +19,24 @@ export interface VolumeHandle extends ReadWriteVolumeClient {
 /** Get, create, list and delete volumes by name in one environment. */
 export interface VolumesClient {
   /** The volume named `name`, created when missing (Modal's own get-or-create). */
-  getOrCreate(name: string): Effect.Effect<VolumeHandle, any, RuntimeContext>;
+  getOrCreate(
+    name: string,
+  ): Effect.Effect<VolumeHandle, ErrorOf<typeof ensureVolume>, RuntimeContext>;
   /** The volume named `name`, or `undefined`. */
-  get(name: string): Effect.Effect<VolumeHandle | undefined, any, RuntimeContext>;
+  get(
+    name: string,
+  ): Effect.Effect<VolumeHandle | undefined, ErrorOf<typeof lookupVolume>, RuntimeContext>;
   /** Delete the volume named `name` (no-op when missing). */
-  delete(name: string): Effect.Effect<void, any, RuntimeContext>;
+  delete(
+    name: string,
+  ): Effect.Effect<
+    void,
+    | ErrorOf<typeof lookupVolume>
+    | Exclude<OpError<VolumesOps, "delete">, { readonly _tag: "VolumeNotFound" }>,
+    RuntimeContext
+  >;
   /** Names of every volume in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, any, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<VolumesOps, "list">, RuntimeContext>;
 }
 
 /**

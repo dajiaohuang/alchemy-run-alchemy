@@ -2,7 +2,11 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Data from "effect/Data";
 import type * as Effect from "effect/Effect";
+import type { downloadBlob, uploadBlob } from "./Blob.ts";
 import type { Function } from "./Function.ts";
+import type { FunctionLookupError } from "./FunctionTarget.ts";
+import type { ErrorOf, OpError } from "./internal.ts";
+import type { InvokeOps } from "./InvokeFunctionHttp.ts";
 
 /** A function deployed outside the Stack (`modal deploy`), by name. */
 export interface FunctionRef {
@@ -30,6 +34,15 @@ export class FunctionCallFailed extends Data.TaggedError("Modal.FunctionCallFail
 }> {}
 
 /** The call didn't finish within its timeout. */
+/** Calling a function: looking it up, sending inputs, reading outputs, and the call's own failure. */
+export type InvokeError =
+  | FunctionLookupError
+  | OpError<InvokeOps, "map" | "putInputs" | "getOutputs">
+  | ErrorOf<typeof uploadBlob>
+  | ErrorOf<typeof downloadBlob>
+  | FunctionCallFailed
+  | FunctionCallTimeout;
+
 export class FunctionCallTimeout extends Data.TaggedError("Modal.FunctionCallTimeout")<{
   readonly functionCallId: string;
   readonly message: string;
@@ -48,7 +61,7 @@ export interface FunctionClient {
     args?: ReadonlyArray<unknown>,
     kwargs?: Record<string, unknown>,
     options?: CallOptions,
-  ): Effect.Effect<A, any, RuntimeContext>;
+  ): Effect.Effect<A, InvokeError, RuntimeContext>;
   /**
    * Call the function once per input, in parallel across containers, and
    * return the results in input order. Each input is a list of positional
@@ -57,19 +70,21 @@ export interface FunctionClient {
   map<A = unknown>(
     inputs: ReadonlyArray<ReadonlyArray<unknown>>,
     options?: CallOptions,
-  ): Effect.Effect<A[], any, RuntimeContext>;
+  ): Effect.Effect<A[], InvokeError, RuntimeContext>;
   /** Start a call without waiting; read it later with {@link result}. */
   spawn(
     args?: ReadonlyArray<unknown>,
     kwargs?: Record<string, unknown>,
-  ): Effect.Effect<{ readonly functionCallId: string }, any, RuntimeContext>;
+  ): Effect.Effect<{ readonly functionCallId: string }, InvokeError, RuntimeContext>;
   /** The result of a spawned call, waiting up to `timeout`. */
   result<A = unknown>(
     call: { readonly functionCallId: string },
     options?: CallOptions,
-  ): Effect.Effect<A, any, RuntimeContext>;
+  ): Effect.Effect<A, InvokeError, RuntimeContext>;
   /** Cancel a spawned call. */
-  cancel(call: { readonly functionCallId: string }): Effect.Effect<void, any, RuntimeContext>;
+  cancel(call: {
+    readonly functionCallId: string;
+  }): Effect.Effect<void, FunctionLookupError | OpError<InvokeOps, "cancel">, RuntimeContext>;
 }
 
 /**

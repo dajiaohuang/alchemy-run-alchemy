@@ -2,7 +2,10 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
+import type { SecretsOps } from "./CreateSecretHttp.ts";
 import type { Environment } from "./Environment.ts";
+import type { ErrorOf, OpError } from "./internal.ts";
+import type { lookupSecret, putSecret } from "./Secret.ts";
 import type { SecretAttributes } from "./Secret.ts";
 
 /** Write, find, list and delete secrets by name in one environment. */
@@ -15,13 +18,22 @@ export interface SecretsClient {
   put(
     name: string,
     env: Record<string, string | Redacted.Redacted<string>>,
-  ): Effect.Effect<SecretAttributes, any, RuntimeContext>;
+  ): Effect.Effect<SecretAttributes, ErrorOf<typeof putSecret>, RuntimeContext>;
   /** The secret named `name` (its variable names, never its values), or `undefined`. */
-  get(name: string): Effect.Effect<SecretAttributes | undefined, any, RuntimeContext>;
+  get(
+    name: string,
+  ): Effect.Effect<SecretAttributes | undefined, ErrorOf<typeof lookupSecret>, RuntimeContext>;
   /** Delete the secret named `name` (no-op when missing). */
-  delete(name: string): Effect.Effect<void, any, RuntimeContext>;
+  delete(
+    name: string,
+  ): Effect.Effect<
+    void,
+    | ErrorOf<typeof lookupSecret>
+    | Exclude<OpError<SecretsOps, "delete">, { readonly _tag: "SecretNotFound" }>,
+    RuntimeContext
+  >;
   /** Names of every secret in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, any, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<SecretsOps, "list">, RuntimeContext>;
 }
 
 /**

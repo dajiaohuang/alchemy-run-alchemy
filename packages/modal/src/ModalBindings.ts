@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { withAuthTokens } from "./Credentials.ts";
+import type { OperationServices } from "./internal.ts";
 import { isWorkerd, ModalHttpClient, socketFetch } from "./internal/SocketFetch.ts";
 import { ServiceUser } from "./ServiceUser.ts";
 
@@ -231,12 +232,15 @@ const operationContext = Effect.gen(function* () {
  * );
  * ```
  */
-export const withCredentials: <Op>(operation: Effect.Effect<Op, never, any>) => Effect.Effect<Op> =
-  Effect.fn(function* <Op>(operation: Effect.Effect<Op, never, any>) {
-    const context = yield* operationContext;
-    const resolved = yield* (operation as Effect.Effect<Op>).pipe(Effect.provide(context));
-    return isWorkerd() ? overSocket(resolved) : resolved;
-  });
+export const withCredentials: <Op>(
+  operation: Effect.Effect<Op, never, OperationServices>,
+) => Effect.Effect<Op> = Effect.fn(function* <Op>(
+  operation: Effect.Effect<Op, never, OperationServices>,
+) {
+  const context = yield* operationContext;
+  const resolved = yield* (operation as Effect.Effect<Op>).pipe(Effect.provide(context));
+  return isWorkerd() ? overSocket(resolved) : resolved;
+});
 
 /**
  * On workerd, send every call of a resolved operation (or record of them)
@@ -276,7 +280,7 @@ const overSocket = <Op>(value: Op): Op => {
  * client the router requires.
  */
 export const withRouter =
-  <I, O, E>(operation: (input: I) => Effect.Effect<O, E, any>) =>
+  <I, O, E>(operation: (input: I) => Effect.Effect<O, E, OperationServices>) =>
   (access: {
     readonly url: string;
     readonly jwt: string;

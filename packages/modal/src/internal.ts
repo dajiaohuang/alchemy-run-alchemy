@@ -1,7 +1,9 @@
+import type { Credentials } from "@distilled.cloud/modal/Credentials";
 import * as environment from "@distilled.cloud/modal/environment";
 import type { ListPagination } from "@distilled.cloud/modal/volume";
 import { createPhysicalName } from "alchemy/PhysicalName";
 import * as Effect from "effect/Effect";
+import type * as HttpClient from "effect/http/HttpClient";
 
 /**
  * Modal object names: letters, digits, `-`, `.` and `_`, shorter than 64
@@ -123,15 +125,22 @@ export const timestampOf = (value: Date | string | number): string =>
  * const { put } = yield* ModalBindings.withCredentials(QueueOps);
  * ```
  */
-export const operations = <const Ops extends Record<string, Effect.Effect<unknown, never, any>>>(
+export const operations = <
+  const Ops extends Record<string, Effect.Effect<unknown, never, OperationServices>>,
+>(
   ops: Ops,
-): Effect.Effect<
-  { readonly [K in keyof Ops]: Effect.Success<Ops[K]> },
-  never,
-  Effect.Services<Ops[keyof Ops]>
-> =>
+): Effect.Effect<{ readonly [K in keyof Ops]: Effect.Success<Ops[K]> }, never, OperationServices> =>
   Effect.gen(function* () {
     const resolved: Record<string, unknown> = {};
     for (const [key, op] of Object.entries(ops)) resolved[key] = yield* op;
     return resolved as { readonly [K in keyof Ops]: Effect.Success<Ops[K]> };
   });
+
+/** The error of a resolved distilled call (or any function returning an Effect). */
+export type ErrorOf<F> = F extends (...args: any[]) => Effect.Effect<any, infer E, any> ? E : never;
+
+/** The error of operation `K` of a resolved operations record. */
+export type OpError<Ops, K extends keyof Ops> = ErrorOf<Ops[K]>;
+
+/** What a distilled Modal operation needs to run: credentials and an HTTP client. */
+export type OperationServices = Credentials | HttpClient.HttpClient;

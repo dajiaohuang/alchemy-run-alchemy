@@ -14,7 +14,7 @@ const SecretsOps = operations({
   list: secret.listSecret,
 });
 
-type SecretsOps = Effect.Success<typeof SecretsOps>;
+export type SecretsOps = Effect.Success<typeof SecretsOps>;
 
 /** A secrets client over an environment name resolved per call. */
 export const makeSecretsClient = (

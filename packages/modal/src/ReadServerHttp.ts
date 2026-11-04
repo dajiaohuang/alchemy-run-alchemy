@@ -16,7 +16,7 @@ const ReadServerOps = operations({
   containers: flash.listFlashContainer,
 });
 
-type ReadServerOps = Effect.Success<typeof ReadServerOps>;
+export type ReadServerOps = Effect.Success<typeof ReadServerOps>;
 
 /**
  * {@link ReadServer} over Modal's API. Grants the host's identity (a scoped

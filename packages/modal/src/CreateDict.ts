@@ -1,9 +1,12 @@
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
+import type { DictsOps } from "./CreateDictHttp.ts";
+import type { ensureDict, lookupDict } from "./Dict.ts";
 import type { DictAttributes } from "./Dict.ts";
 import type { ReadWriteDictClient } from "./DictClient.ts";
 import type { Environment } from "./Environment.ts";
+import type { ErrorOf, OpError } from "./internal.ts";
 
 /** A dict created or found at runtime: its attributes plus a read-write client. */
 export interface DictHandle extends ReadWriteDictClient {
@@ -16,13 +19,22 @@ export interface DictHandle extends ReadWriteDictClient {
 /** Get, create, list and delete dicts by name in one environment. */
 export interface DictsClient {
   /** The dict named `name`, created when missing (Modal's own get-or-create). */
-  getOrCreate(name: string): Effect.Effect<DictHandle, any, RuntimeContext>;
+  getOrCreate(name: string): Effect.Effect<DictHandle, ErrorOf<typeof ensureDict>, RuntimeContext>;
   /** The dict named `name`, or `undefined`. */
-  get(name: string): Effect.Effect<DictHandle | undefined, any, RuntimeContext>;
+  get(
+    name: string,
+  ): Effect.Effect<DictHandle | undefined, ErrorOf<typeof lookupDict>, RuntimeContext>;
   /** Delete the dict named `name` (no-op when missing). */
-  delete(name: string): Effect.Effect<void, any, RuntimeContext>;
+  delete(
+    name: string,
+  ): Effect.Effect<
+    void,
+    | ErrorOf<typeof lookupDict>
+    | Exclude<OpError<DictsOps, "delete">, { readonly _tag: "DictNotFound" }>,
+    RuntimeContext
+  >;
   /** Names of every dict in the environment. */
-  list(): Effect.Effect<ReadonlyArray<string>, any, RuntimeContext>;
+  list(): Effect.Effect<ReadonlyArray<string>, OpError<DictsOps, "list">, RuntimeContext>;
 }
 
 /**

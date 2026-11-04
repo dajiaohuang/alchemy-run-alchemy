@@ -23,7 +23,7 @@ const InvokeOps = operations({
   blobs: BlobOps,
 });
 
-type InvokeOps = Effect.Success<typeof InvokeOps>;
+export type InvokeOps = Effect.Success<typeof InvokeOps>;
 
 /** One input: CBOR `[args, kwargs]`, inline or (over 2 MiB) as a blob. */
 const encodeInput = Effect.fn(function* (

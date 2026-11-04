@@ -16,7 +16,7 @@ const QueuesOps = operations({
   client: QueueOps,
 });
 
-type QueuesOps = Effect.Success<typeof QueuesOps>;
+export type QueuesOps = Effect.Success<typeof QueuesOps>;
 
 const handleOf = (attributes: QueueAttributes, ops: QueuesOps): QueueHandle => ({
   ...makeReadWriteQueueClient(Effect.succeed(attributes.queueId), ops.client),

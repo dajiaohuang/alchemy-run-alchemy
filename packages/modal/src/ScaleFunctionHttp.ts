@@ -13,7 +13,7 @@ const ScaleFunctionOps = operations({
   updateSchedulingParams: functions.functionUpdateSchedulingParams,
 });
 
-type ScaleFunctionOps = Effect.Success<typeof ScaleFunctionOps>;
+export type ScaleFunctionOps = Effect.Success<typeof ScaleFunctionOps>;
 
 /**
  * {@link ScaleFunction} over Modal's API. Grants the host's identity (a scoped

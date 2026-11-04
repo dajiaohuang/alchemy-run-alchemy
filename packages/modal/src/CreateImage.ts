@@ -2,6 +2,8 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type { App } from "./App.ts";
+import type { buildFromOptions, ImagesOps } from "./CreateImageHttp.ts";
+import type { ErrorOf, OpError } from "./internal.ts";
 
 /** What to build: Modal's image inputs, in memory (no build context directory). */
 export interface ImageBuildOptions {
@@ -31,20 +33,26 @@ export interface ImagesClient {
    */
   build(
     options: ImageBuildOptions,
-  ): Effect.Effect<{ readonly imageId: string }, any, RuntimeContext>;
+  ): Effect.Effect<{ readonly imageId: string }, ErrorOf<typeof buildFromOptions>, RuntimeContext>;
   /** The image published under `tag`, or `undefined`. */
   fromTag(
     tag: string,
-  ): Effect.Effect<{ readonly imageId: string } | undefined, any, RuntimeContext>;
+  ): Effect.Effect<
+    { readonly imageId: string } | undefined,
+    OpError<ImagesOps, "getByTag">,
+    RuntimeContext
+  >;
   /** Publish an image under `tag` (moving the tag if it points elsewhere). */
   publish(
     image: { readonly imageId: string },
     tag: string,
-  ): Effect.Effect<void, any, RuntimeContext>;
+  ): Effect.Effect<void, OpError<ImagesOps, "publish">, RuntimeContext>;
   /** Remove a published tag (`name` or `name:tag`); the image itself stays. */
-  unpublish(tag: string): Effect.Effect<void, any, RuntimeContext>;
+  unpublish(tag: string): Effect.Effect<void, OpError<ImagesOps, "deleteName">, RuntimeContext>;
   /** Delete an image. */
-  delete(image: { readonly imageId: string }): Effect.Effect<void, any, RuntimeContext>;
+  delete(image: {
+    readonly imageId: string;
+  }): Effect.Effect<void, OpError<ImagesOps, "delete">, RuntimeContext>;
 }
 
 /**

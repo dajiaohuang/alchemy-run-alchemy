@@ -16,7 +16,7 @@ const DictsOps = operations({
   client: DictOps,
 });
 
-type DictsOps = Effect.Success<typeof DictsOps>;
+export type DictsOps = Effect.Success<typeof DictsOps>;
 
 const handleOf = (attributes: DictAttributes, ops: DictsOps): DictHandle => ({
   ...makeReadWriteDictClient(Effect.succeed(attributes.dictId), ops.client),

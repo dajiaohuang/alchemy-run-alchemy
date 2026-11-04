@@ -6,7 +6,8 @@ import * as functions from "@distilled.cloud/modal/functions";
 import type { Input } from "alchemy/Input";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import { environmentOf, operations } from "./internal.ts";
+import { environmentOf, type ErrorOf, type OpError, operations } from "./internal.ts";
+import type { OperationServices } from "./internal.ts";
 import type { FunctionRef, FunctionTarget } from "./InvokeFunction.ts";
 import * as ModalBindings from "./ModalBindings.ts";
 
@@ -24,7 +25,7 @@ export const isFunctionRef = (target: unknown): target is FunctionRef =>
 
 /** A resolved target: its function id (looked up once) and the class method, if any. */
 export interface ResolvedFunction {
-  readonly functionId: Effect.Effect<string, any, any>;
+  readonly functionId: Effect.Effect<string, FunctionLookupError>;
   readonly method: string | undefined;
 }
 
@@ -97,6 +98,11 @@ export const FunctionLookupOps = operations({
 
 export type FunctionLookupOps = Effect.Success<typeof FunctionLookupOps>;
 
+/** Looking a function up by name (and binding a class's parameters). */
+export type FunctionLookupError =
+  | OpError<FunctionLookupOps, "get" | "bindParams">
+  | ErrorOf<typeof serializeParameters>;
+
 export const resolveFunction = Effect.fn(function* (
   lookup: FunctionLookupOps,
   target: FunctionTarget | { readonly functionId: unknown },
@@ -147,7 +153,7 @@ export const resolveFunction = Effect.fn(function* (
  */
 export const makeFunctionBinding = <Target, Ops, Client>(options: {
   readonly tag: string;
-  readonly operations: Effect.Effect<Ops, never, any>;
+  readonly operations: Effect.Effect<Ops, never, OperationServices>;
   readonly role: ModalBindings.EnvironmentGrant["role"];
   readonly make: (resolved: ResolvedFunction, ops: Ops, target: Target) => Effect.Effect<Client>;
 }) =>

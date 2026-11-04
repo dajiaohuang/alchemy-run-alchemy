@@ -2,7 +2,9 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
+import type { OpError } from "./internal.ts";
 import type { Secret } from "./Secret.ts";
+import type { WriteSecretOps } from "./WriteSecretHttp.ts";
 
 /** Replace one secret's variables. */
 export interface WriteSecretClient {
@@ -13,7 +15,7 @@ export interface WriteSecretClient {
    */
   put(
     env: Record<string, string | Redacted.Redacted<string>>,
-  ): Effect.Effect<void, any, RuntimeContext>;
+  ): Effect.Effect<void, OpError<WriteSecretOps, "getInfo" | "update">, RuntimeContext>;
 }
 
 /**

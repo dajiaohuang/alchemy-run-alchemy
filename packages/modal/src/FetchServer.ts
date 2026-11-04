@@ -1,23 +1,29 @@
 import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
+import type * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type { Endpoint } from "./Endpoint.ts";
+import type { ServerUrlMissing } from "./FetchServerHttp.ts";
 import type { Function } from "./Function.ts";
 import type { Server } from "./Server.ts";
 
 /** Send requests to a deployed Modal Server, web Function or model Endpoint. */
 export interface ServerClient {
   /** The server's URL. */
-  readonly url: Effect.Effect<string, any, RuntimeContext>;
+  readonly url: Effect.Effect<string, ServerUrlMissing, RuntimeContext>;
   /**
    * Send a request: its path and query are kept, the host is the server's,
    * and Modal's proxy auth headers are added.
    */
   fetch(
     request: HttpClientRequest.HttpClientRequest,
-  ): Effect.Effect<HttpClientResponse.HttpClientResponse, any, RuntimeContext>;
+  ): Effect.Effect<
+    HttpClientResponse.HttpClientResponse,
+    ServerUrlMissing | HttpClientError.HttpClientError,
+    RuntimeContext
+  >;
 }
 
 /**

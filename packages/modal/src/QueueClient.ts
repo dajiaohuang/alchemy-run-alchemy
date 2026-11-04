@@ -1,8 +1,8 @@
 import * as queue from "@distilled.cloud/modal/queue";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
-import { decodeJson, encodeJson } from "./BindingHttp.ts";
-import { operations, seconds } from "./internal.ts";
+import { decodeJson, encodeJson, type ModalValueNotJson } from "./BindingHttp.ts";
+import { type OpError, operations, seconds } from "./internal.ts";
 
 /** The queue operations the clients call, resolved by `ModalBindings.withCredentials`. */
 export const QueueOps = operations({
@@ -14,6 +14,9 @@ export const QueueOps = operations({
 });
 
 export type QueueOps = Effect.Success<typeof QueueOps>;
+
+/** A queue call's error: the operation's typed errors, and items that aren't JSON. */
+export type QueueError<K extends keyof QueueOps> = OpError<QueueOps, K> | ModalValueNotJson;
 
 /** Which partition of a queue a call uses; omitted means the default partition. */
 export interface QueuePartitionOptions {
@@ -35,15 +38,15 @@ export interface ReadQueueClient {
       readonly count?: number;
       readonly timeout?: number | string;
     },
-  ): Effect.Effect<ReadonlyArray<A>, any, RuntimeContext>;
+  ): Effect.Effect<ReadonlyArray<A>, QueueError<"getQueue">, RuntimeContext>;
   /** Items currently in the queue, without removing them. */
   peek<A = unknown>(
     options?: QueuePartitionOptions,
-  ): Effect.Effect<ReadonlyArray<A>, any, RuntimeContext>;
+  ): Effect.Effect<ReadonlyArray<A>, QueueError<"queueNextItems">, RuntimeContext>;
   /** Number of items in a partition (or, with `total`, in every partition). */
   len(
     options?: QueuePartitionOptions & { readonly total?: boolean },
-  ): Effect.Effect<number, any, RuntimeContext>;
+  ): Effect.Effect<number, OpError<QueueOps, "queueLen">, RuntimeContext>;
 }
 
 /** Put items into one queue. */
@@ -53,16 +56,16 @@ export interface WriteQueueClient {
   put(
     value: unknown,
     options?: QueuePartitionOptions & { readonly partitionTtl?: number | string },
-  ): Effect.Effect<void, any, RuntimeContext>;
+  ): Effect.Effect<void, OpError<QueueOps, "putQueue">, RuntimeContext>;
   /** Append many items in order. */
   putMany(
     values: Iterable<unknown>,
     options?: QueuePartitionOptions & { readonly partitionTtl?: number | string },
-  ): Effect.Effect<void, any, RuntimeContext>;
+  ): Effect.Effect<void, OpError<QueueOps, "putQueue">, RuntimeContext>;
   /** Remove every item of a partition (or of all partitions). */
   clear(
     options?: QueuePartitionOptions & { readonly all?: boolean },
-  ): Effect.Effect<void, any, RuntimeContext>;
+  ): Effect.Effect<void, OpError<QueueOps, "clearQueue">, RuntimeContext>;
 }
 
 /** Put and take items. */

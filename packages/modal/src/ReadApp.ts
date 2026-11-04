@@ -3,6 +3,8 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type { App } from "./App.ts";
+import type { OpError } from "./internal.ts";
+import type { ReadAppOps } from "./ReadAppHttp.ts";
 import type { TimeRange } from "./ReadFunction.ts";
 
 /** One log line. */
@@ -32,7 +34,7 @@ export interface AppReader {
   /** Log lines in a time range, oldest first. */
   logs(
     query: TimeRange & AppLogFilter & { readonly limit?: number },
-  ): Effect.Effect<ReadonlyArray<AppLogLine>, any, RuntimeContext>;
+  ): Effect.Effect<ReadonlyArray<AppLogLine>, OpError<ReadAppOps, "fetchLogs">, RuntimeContext>;
   /**
    * Follow the App's logs: lines after `cursor` (or the latest), waiting up
    * to `timeout` for new ones. Pass the returned cursor to the next call.
@@ -41,25 +43,33 @@ export interface AppReader {
     query?: AppLogFilter & { readonly cursor?: string; readonly timeout?: number },
   ): Effect.Effect<
     { readonly lines: ReadonlyArray<AppLogLine>; readonly cursor: string | undefined },
-    any,
+    OpError<ReadAppOps, "getLogs">,
     RuntimeContext
   >;
   /** Log lines per time bucket. */
   logCount(
     query: TimeRange & AppLogFilter & { readonly bucketSecs?: number },
-  ): Effect.Effect<app.AppCountLogsResponse, any, RuntimeContext>;
+  ): Effect.Effect<app.AppCountLogsResponse, OpError<ReadAppOps, "countLogs">, RuntimeContext>;
   /** The App's metadata and a summary of each function. */
-  info(): Effect.Effect<app.AppGetInfoResponse, any, RuntimeContext>;
+  info(): Effect.Effect<app.AppGetInfoResponse, OpError<ReadAppOps, "info">, RuntimeContext>;
   /** When the App was created, deployed and stopped, and by whom. */
-  lifecycle(): Effect.Effect<app.AppLifecycle | undefined, any, RuntimeContext>;
+  lifecycle(): Effect.Effect<
+    app.AppLifecycle | undefined,
+    OpError<ReadAppOps, "lifecycle">,
+    RuntimeContext
+  >;
   /** The functions and classes the App serves, by name. */
   layout(): Effect.Effect<
     { readonly functionIds: Record<string, string>; readonly classIds: Record<string, string> },
-    any,
+    OpError<ReadAppOps, "layout">,
     RuntimeContext
   >;
   /** Every deployed version, and the version in production. */
-  deployments(): Effect.Effect<app.AppDeploymentHistoryResponse, any, RuntimeContext>;
+  deployments(): Effect.Effect<
+    app.AppDeploymentHistoryResponse,
+    OpError<ReadAppOps, "deployments">,
+    RuntimeContext
+  >;
 }
 
 /**

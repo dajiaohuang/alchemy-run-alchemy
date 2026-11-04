@@ -20,7 +20,7 @@ const ReadFunctionOps = operations({
   schedulingParams: functions.functionGetSchedulingParams,
 });
 
-type ReadFunctionOps = Effect.Success<typeof ReadFunctionOps>;
+export type ReadFunctionOps = Effect.Success<typeof ReadFunctionOps>;
 
 /**
  * {@link ReadFunction} over Modal's API. Grants the host's identity (a scoped

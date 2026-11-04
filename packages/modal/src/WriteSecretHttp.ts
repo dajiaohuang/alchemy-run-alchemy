@@ -10,7 +10,7 @@ import { WriteSecret, type WriteSecretClient } from "./WriteSecret.ts";
 /** The operations the client calls, resolved by `ModalBindings.withCredentials`. */
 const WriteSecretOps = operations({ getInfo: secret.secretGetInfo, update: secret.updateSecret });
 
-type WriteSecretOps = Effect.Success<typeof WriteSecretOps>;
+export type WriteSecretOps = Effect.Success<typeof WriteSecretOps>;
 
 /** A write client over a secret id. */
 export const makeWriteSecretClient = (

@@ -93,8 +93,8 @@ export const bindingRoutes = Effect.gen(function* () {
             timeout: "5 minutes",
           });
           const out = yield* Effect.gen(function* () {
-            yield* sandbox.writeFile("/tmp/x.txt", "written");
-            const read = yield* sandbox.readFileString("/tmp/x.txt");
+            yield* sandbox.files.write("/tmp/x.txt", "written");
+            const read = yield* sandbox.files.readText("/tmp/x.txt");
             const snapshot = yield* sandbox.snapshotFilesystem();
             return { read, snapshot: snapshot.imageId };
           }).pipe(Effect.ensuring(Effect.ignore(sandbox.terminate())));
@@ -118,10 +118,10 @@ export const bindingRoutes = Effect.gen(function* () {
           const box = yield* appSandboxes.createPersistent({ image: "debian:bookworm-slim" });
           const out = yield* Effect.gen(function* () {
             const session = yield* box.session();
-            yield* session.writeFile("/root/notes.txt", `kept ${key}`);
+            yield* session.files.write("/root/notes.txt", `kept ${key}`);
             // A second handle by id reaches the same running session.
             const again = yield* (yield* appSandboxes.persistent(box)).session();
-            return { read: yield* again.readFileString("/root/notes.txt") };
+            return { read: yield* again.files.readText("/root/notes.txt") };
           }).pipe(Effect.ensuring(Effect.ignore(box.terminate())));
           return yield* HttpServerResponse.json(out);
         }
