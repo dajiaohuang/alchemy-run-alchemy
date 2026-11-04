@@ -15,21 +15,34 @@ import E2BWorker from "./fixtures/worker.ts";
 const providers = Layer.mergeAll(E2B.providers(), Cloudflare.providers());
 const { test } = Test.make({ providers });
 
-/** The ids of the per-host API keys bindings mint. */
-const hostKeyIds = apiKeys
-  .listApiKeys({})
-  .pipe(
-    Effect.map(
-      (all) => new Set(all.filter((key) => key.name.includes("e2bhostkey")).map((key) => key.id)),
-    ),
-  );
+/** Letters and digits only, lowercased: how a stack name survives inside a physical name. */
+const squash = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * The ids of the API keys a stack owns. Generated names start with the stack
+ * name, and the stack's only API key is its host's minted one; the name is
+ * truncated to 64 characters, so match on a prefix.
+ */
+const stackKeyIds = (stackName: string) =>
+  apiKeys
+    .listApiKeys({})
+    .pipe(
+      Effect.map(
+        (all) =>
+          new Set(
+            all
+              .filter((key) => squash(key.name).startsWith(squash(stackName).slice(0, 24)))
+              .map((key) => key.id),
+          ),
+      ),
+    );
 
 test.provider(
   "destroying a host kills its runtime sandboxes and secrets and revokes its minted key",
   (stack) =>
     Effect.gen(function* () {
       yield* stack.destroy();
-      const before = yield* hostKeyIds;
+      const before = yield* stackKeyIds(stack.name);
       const { url } = yield* stack.deploy(
         Effect.gen(function* () {
           yield* BindingAgent;
@@ -54,10 +67,20 @@ test.provider(
       expect(res.status).toBe(200);
 
       // The Worker ran on its own minted key, not the deployer's credentials.
-      const minted = [...(yield* hostKeyIds)].filter((id) => !before.has(id));
+      const minted = [...(yield* stackKeyIds(stack.name))].filter((id) => !before.has(id));
       expect(minted.length).toBeGreaterThan(0);
-      const used = (yield* apiKeys.listApiKeys({})).filter((key) => minted.includes(key.id));
-      expect(used.some((key) => key.lastUsed !== null && key.lastUsed !== undefined)).toBe(true);
+      // E2B records a key's last use asynchronously.
+      const usedAt = yield* apiKeys.listApiKeys({}).pipe(
+        Effect.map((all) =>
+          all.filter((key) => minted.includes(key.id)).map((key) => key.lastUsed ?? undefined),
+        ),
+        Effect.repeat({
+          schedule: Schedule.spaced("3 seconds"),
+          until: (stamps) => stamps.some((stamp) => stamp !== undefined),
+          times: 10,
+        }),
+      );
+      expect(usedAt.some((stamp) => stamp !== undefined)).toBe(true);
 
       const alive = yield* sandboxes.getSandbox({ sandboxID: left.sandboxId });
       expect(alive.metadata?.["alchemy::host"]).toBe("E2BWorker");
@@ -75,7 +98,7 @@ test.provider(
       );
       expect(secret).toBe("gone");
       // Destroying the host revokes its key.
-      const after = yield* hostKeyIds;
+      const after = yield* stackKeyIds(stack.name);
       expect(minted.filter((id) => after.has(id))).toEqual([]);
     }),
   {
