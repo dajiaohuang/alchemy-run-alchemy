@@ -109,7 +109,7 @@ export const OrganizationOtelConfigProvider = () =>
           headerNames: Object.keys(config.headers ?? {}),
         };
       }),
-      reconcile: Effect.fn(function* ({ news, olds, output }) {
+      reconcile: Effect.fn(function* ({ news, olds }) {
         const organizationId = yield* organizationIdFor(news.organization);
         // Observe — header values aren't returned, so they are written
         // whenever they changed since the last deploy (or on first deploy).

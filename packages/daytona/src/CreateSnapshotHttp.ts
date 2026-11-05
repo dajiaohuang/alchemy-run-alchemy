@@ -44,7 +44,7 @@ export const CreateSnapshotHttp = Layer.effect(
       const client: CreateSnapshotClient = {
         create: ({ name, ...source }) =>
           prefix !== undefined && !name.startsWith(prefix)
-            ? Effect.fail(new NameOutsidePrefix({ name, prefix }))
+            ? Effect.fail(new NameOutsidePrefix({ objectName: name, prefix }))
             : authorize(
                 Effect.gen(function* () {
                   if (source.dockerfile !== undefined)

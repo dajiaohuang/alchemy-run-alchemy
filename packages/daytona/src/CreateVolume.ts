@@ -8,11 +8,11 @@ import type { VolumeAttributes } from "./Volume.ts";
 
 /** A name outside the binding's `prefix`. */
 export class NameOutsidePrefix extends Data.TaggedError("Daytona.NameOutsidePrefix")<{
-  readonly name: string;
+  readonly objectName: string;
   readonly prefix: string;
 }> {
   override get message() {
-    return `${this.name} must start with ${this.prefix}: the binding only manages names with that prefix`;
+    return `${this.objectName} must start with ${this.prefix}: the binding only manages names with that prefix`;
   }
 }
 

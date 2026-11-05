@@ -7,6 +7,7 @@ import * as interpreter from "@distilled.cloud/daytona/interpreter";
 import * as lsp from "@distilled.cloud/daytona/lsp";
 import * as port from "@distilled.cloud/daytona/port";
 import * as process from "@distilled.cloud/daytona/process";
+import type { DaytonaOpError } from "@distilled.cloud/daytona/Protocol";
 import * as sandboxes from "@distilled.cloud/daytona/sandbox";
 import * as server from "@distilled.cloud/daytona/server";
 import * as system from "@distilled.cloud/daytona/system";
@@ -14,6 +15,7 @@ import * as telemetry from "@distilled.cloud/daytona/telemetry";
 import * as toolboxStreams from "@distilled.cloud/daytona/Toolbox";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Sandbox from "alchemy/Sandbox";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
@@ -73,19 +75,11 @@ type SandboxOperations = Pick<typeof sandboxes, (typeof SANDBOX_OPERATIONS)[numb
  * `fetch`) can fail with.
  */
 export type DaytonaError =
-  | process.ExecuteCommandError
-  | process.CreateSessionError
-  | process.SessionExecuteCommandError
-  | process.SendInputError
-  | process.DeleteSessionError
-  | process.GetSessionCommandError
-  | fileSystem.DownloadFileError
-  | fileSystem.UploadFileError
-  | fileSystem.ListFilesError
-  | fileSystem.GetFileInfoError
-  | fileSystem.DeleteFileError
-  | fileSystem.CreateFolderError
-  | sandboxes.GetPortPreviewUrlError
+  | DaytonaOpError
+  | process.SessionNotFound
+  | process.SessionCommandNotFound
+  | process.SessionInputNotReady
+  | sandboxes.SandboxNotFound
   | toolboxStreams.PtyError
   | toolboxStreams.ToolboxSocketError
   | HttpClientError.HttpClientError;
@@ -379,8 +373,12 @@ const shellLine = (command: Command) =>
 const viaShell = (line: string) =>
   Effect.sync(() => `sh -c "echo '${Buffer.from(line).toString("base64")}' | base64 -d | sh"`);
 
-/** A fresh session ID. */
-const newSessionId = (prefix: string) => Effect.sync(() => `${prefix}-${crypto.randomUUID()}`);
+/** A fresh session ID, from WebCrypto (every runtime a handle runs on has it). */
+const newSessionId = (prefix: string) =>
+  Effect.gen(function* () {
+    const random = yield* SecureRandom.SecureRandom;
+    return `${prefix}-${yield* random.uuidV4()}`;
+  }).pipe(Effect.provide(SecureRandom.layerWebCrypto));
 
 /**
  * Build the methods for one sandbox. `identity` resolves the sandbox (at
@@ -407,13 +405,10 @@ export const makeSandboxMethods = (
   const socket = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     toolbox(Effect.provide(effect, Socket.layerWebSocketConstructorGlobal));
   const stream = <A, E, R>(body: Stream.Stream<A, E, R>) =>
-    Stream.unwrap(
-      socket(
-        Effect.map(
-          Effect.context<Credentials | HttpClient.HttpClient | Socket.WebSocketConstructor>(),
-          (context) => Stream.provideContext(body, context),
-        ),
-      ),
+    Effect.context<Credentials | HttpClient.HttpClient | Socket.WebSocketConstructor>().pipe(
+      Effect.map((context) => Stream.provideContext(body, context)),
+      socket,
+      Stream.unwrap,
     );
 
   const exec = Effect.fn(function* (command: Command, options?: ExecOptions) {

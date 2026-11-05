@@ -34,7 +34,7 @@ export const CreateVolumeHttp = Layer.effect(
       const client: CreateVolumeClient = {
         getOrCreate: ({ name }) =>
           prefix !== undefined && !name.startsWith(prefix)
-            ? Effect.fail(new NameOutsidePrefix({ name, prefix }))
+            ? Effect.fail(new NameOutsidePrefix({ objectName: name, prefix }))
             : authorize(ensureVolume(name).pipe(Effect.map(toVolumeAttributes))),
         get: (name) =>
           authorize(

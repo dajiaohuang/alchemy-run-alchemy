@@ -738,7 +738,7 @@ export const SandboxProvider = () =>
         }),
         reconcile: Effect.fn(function* ({ id, news, olds, output, bindings, session }) {
           const name = yield* resolveName(id, news.name, output?.name);
-          const labels = { ...(news.labels ?? {}), ...(yield* createInternalLabels(id)) };
+          const labels = { ...news.labels, ...(yield* createInternalLabels(id)) };
           const mounts = yield* allMounts(news, bindings);
           const base = yield* resolveCreate(name, news, labels, mounts);
           // Clients bindings need are installed into a snapshot derived from the base.

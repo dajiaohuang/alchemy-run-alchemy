@@ -100,10 +100,10 @@ export const ApiKey = Resource<ApiKey>("Daytona.ApiKey");
 
 /** Daytona created a key but returned no value for it. */
 export class ApiKeyValueMissing extends Data.TaggedError("Daytona.ApiKeyValueMissing")<{
-  readonly name: string;
+  readonly keyName: string;
 }> {
   override get message() {
-    return `Daytona returned no value for the new API key ${this.name}`;
+    return `Daytona returned no value for the new API key ${this.keyName}`;
   }
 }
 
@@ -202,7 +202,7 @@ export const ApiKeyProvider = () =>
           const value = Redacted.isRedacted(created.value)
             ? created.value
             : Redacted.make(created.value);
-          if (Redacted.value(value) === "") return yield* new ApiKeyValueMissing({ name });
+          if (Redacted.value(value) === "") return yield* new ApiKeyValueMissing({ keyName: name });
           return {
             name: created.name,
             permissions: created.permissions,

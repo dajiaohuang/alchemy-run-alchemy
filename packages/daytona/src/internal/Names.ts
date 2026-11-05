@@ -15,7 +15,7 @@ export const physicalName = (id: string, maxLength = 63) =>
 export const resolveName = Effect.fn(function* (
   id: string,
   name: string | undefined,
-  existing?: string | undefined,
+  existing?: string,
   maxLength?: number,
 ) {
   return name ?? existing ?? (yield* physicalName(id, maxLength));

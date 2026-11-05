@@ -123,7 +123,7 @@ export const isProgramRunning = (sandboxId: string, state: ProgramState) =>
   process.getSessionCommand({ sessionId: state.sessionId, commandId: state.commandId }).pipe(
     inSandbox(sandboxId),
     Effect.map((command) => command.exitCode === undefined),
-    Effect.catch(() => Effect.succeed(false)),
+    Effect.orElseSucceed(() => false),
   );
 
 /**

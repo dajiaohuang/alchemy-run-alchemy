@@ -115,14 +115,15 @@ export const ensureVolume = Effect.fn(function* (name: string) {
 
 export const deleteVolumeById = Effect.fn(function* (volumeId: string) {
   yield* volumes.deleteVolume({ volumeId }).pipe(
-    Effect.catchTag("VolumeNotFound", () => Effect.void),
-    // Refused while the volume is still being created (wait for it) or is
-    // already being deleted (nothing left to do).
-    Effect.catchTag("VolumeNotReady", (error) =>
-      Effect.flatMap(getVolumeById(volumeId), (live) =>
-        live === undefined ? Effect.void : Effect.fail(error),
-      ),
-    ),
+    Effect.catchTags({
+      VolumeNotFound: () => Effect.void,
+      // Refused while the volume is still being created (wait for it) or is
+      // already being deleted (nothing left to do).
+      VolumeNotReady: (error) =>
+        Effect.flatMap(getVolumeById(volumeId), (live) =>
+          live === undefined ? Effect.void : Effect.fail(error),
+        ),
+    }),
     Effect.retry({
       while: (e) => e._tag === "VolumeNotReady",
       schedule: Schedule.spaced("2 seconds"),
