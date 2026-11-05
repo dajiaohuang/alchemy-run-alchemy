@@ -46,6 +46,24 @@ const result = yield* sandbox.exec(["pnpm", "test"], { cwd: "/work" });
 const result = yield* sandbox.exec("pnpm install && pnpm test", { cwd: "/work" });
 ```
 
+## Follow a running command
+
+```typescript
+const process = yield* sandbox.start("pnpm dev", { cwd: "/work" });
+yield* Stream.runForEach(process.output, (chunk) => Console.log(chunk.fd, chunk.data));
+```
+
+`output` streams as the command runs. `write` feeds its stdin, `kill` signals it, and `wait` returns its exit code. Closing the scope detaches; the command keeps running.
+
+## Open a terminal
+
+```typescript
+const terminal = yield* sandbox.pty.open({ cols: 120, rows: 40 });
+yield* terminal.write("ls -la\n");
+```
+
+Modal can't resize a running terminal, so `resize` fails with `Modal.SandboxPtyResizeUnsupported`.
+
 ## Read and write files
 
 ```typescript
