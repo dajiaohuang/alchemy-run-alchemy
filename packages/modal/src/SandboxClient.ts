@@ -814,7 +814,7 @@ export const sandboxHandle = (
       secretIds: options.secrets?.map((s) => s.secretId),
       env: options.env,
       stdoutConfig: "TASK_EXEC_STDOUT_CONFIG_PIPE",
-      stderrConfig: pty ? "TASK_EXEC_STDERR_CONFIG_STDOUT" : "TASK_EXEC_STDERR_CONFIG_PIPE",
+      stderrConfig: pty ? undefined : "TASK_EXEC_STDERR_CONFIG_PIPE",
       ptyInfo: pty,
     });
     let stdinOffset = 0;
