@@ -29,7 +29,7 @@ export const Token = Modal.Secret("BindingsSecret", {
 });
 
 /** A Cloudflare R2 bucket the sandbox program mounts with Modal's cloud bucket mounts. */
-export const Uploads = Cloudflare.R2.Bucket("MountedUploads", {});
+export const Uploads = Cloudflare.R2.Bucket("MountedUploads", { forceDestroy: true });
 
 /** An account token scoped to the bucket: R2 derives its S3 keys from it. */
 export const UploadsToken = Cloudflare.ApiToken.AccountApiToken(

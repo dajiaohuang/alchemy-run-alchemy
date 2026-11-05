@@ -183,9 +183,10 @@ export const WebhookTokenProvider = () =>
             const observed = new Set<string>();
             for (const env of items ?? []) {
               if (!env.environmentId || !env.name) continue;
-              const { tokens } = yield* webhook.webhookTokenListForEnvironment({
-                environmentName: env.name,
-              });
+              // An environment deleted since the list holds no tokens.
+              const { tokens } = yield* webhook
+                .webhookTokenListForEnvironment({ environmentName: env.name })
+                .pipe(Effect.catchTag("EnvironmentNotFound", () => Effect.succeed({ tokens: [] })));
               if ((tokens ?? []).some((token) => token.tokenId === current.tokenId)) {
                 observed.add(env.environmentId);
               }

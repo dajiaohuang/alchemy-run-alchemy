@@ -31,11 +31,12 @@ test.provider(
           return yield* Modal.Secret("Secret", { env: { C: "3" } });
         }),
       );
-      expect(updated.secretId).toBe(created.secretId);
-      expect(yield* keysOf(created.secretId)).toEqual(["C"]);
+      // Modal overwrites a secret under a new id; the name stays.
+      expect(updated.name).toBe(created.name);
+      expect(yield* keysOf(updated.secretId)).toEqual(["C"]);
 
       yield* stack.destroy();
-      expect(yield* keysOf(created.secretId)).toBeUndefined();
+      expect(yield* keysOf(updated.secretId)).toBeUndefined();
     }),
   { tags: ["provider:modal", "provider:modal:secret", "live"], timeout: 120_000 },
 );

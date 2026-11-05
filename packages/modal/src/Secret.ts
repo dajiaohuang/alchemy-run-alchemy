@@ -187,7 +187,8 @@ export const SecretProvider = () =>
     Secret,
     Effect.gen(function* () {
       return {
-        stables: ["secretId", "name", "environment"],
+        // An overwrite gives the secret a new id, so only its name is stable.
+        stables: ["name", "environment"],
         diff: Effect.fn(function* ({ id, news, olds, output }) {
           if (!isResolved(news)) return undefined;
           if (envNameOf(news.environment) !== envNameOf(olds?.environment))
@@ -209,7 +210,7 @@ export const SecretProvider = () =>
         reconcile: Effect.fn(function* ({ id, news, output, session }) {
           const name = output?.name ?? (yield* objectName(id, news.name));
           // Values can't be observed, so overwriting is the sync: Modal
-          // replaces the variable set atomically and keeps the secret id.
+          // replaces the secret atomically, under a new secret id.
           yield* session.note(`Writing secret ${name}...`);
           return yield* putSecret(
             yield* secret.secretGetOrCreate,
