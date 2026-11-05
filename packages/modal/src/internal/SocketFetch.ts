@@ -233,7 +233,7 @@ export const socketFetch = async (
   init: RequestInit = {},
 ): Promise<Response> => {
   const request = input instanceof Request ? input : undefined;
-  const url = new URL(request ? request.url : input.toString());
+  const url = new URL(typeof input === "string" ? input : "href" in input ? input.href : input.url);
   // Only Modal's API is behind the Worker-to-Cloudflare path that resets;
   // presigned blob URLs (`modal-storage.com`) and the user's own endpoints
   // work over `fetch`.

@@ -3,7 +3,9 @@ import * as sandbox from "@distilled.cloud/modal/sandbox";
 import * as router from "@distilled.cloud/modal/task_command_router";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Sandbox from "alchemy/Sandbox";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
@@ -210,7 +212,7 @@ export interface SandboxFileStat extends SandboxFileEntry {
   /** Size in bytes. */
   readonly size: number;
   /** Last modification time. */
-  readonly modifiedAt: Date;
+  readonly modifiedAt: DateTime.Utc;
 }
 
 /** A tunnel to a port inside the sandbox. */
@@ -237,16 +239,10 @@ export type SandboxTaskError =
 /** Running a command in a sandbox. */
 export type SandboxExecError =
   | SandboxTaskError
-  | RouterOpError<"execStart">
-  | RouterOpError<"execStdinWrite">
-  | RouterOpError<"execStdioRead">
-  | RouterOpError<"execWait">;
+  | RouterOpError<"execStart" | "execStdinWrite" | "execStdioRead" | "execWait">;
 
 /** A started process: running it, following its output, writing its stdin, signalling it. */
-export type SandboxProcessError =
-  | SandboxExecError
-  | RouterOpError<"execPoll">
-  | RouterOpError<"execStdioFollow">;
+export type SandboxProcessError = SandboxExecError | RouterOpError<"execPoll" | "execStdioFollow">;
 
 /** Modal's task command router has no call to resize a running PTY. */
 export class SandboxPtyResizeUnsupported extends Data.TaggedError(
@@ -737,7 +733,7 @@ export const sandboxHandle = (
     const stdinWrite = yield* routerOps.execStdinWrite(at);
     const stdioRead = yield* routerOps.execStdioRead(at);
     const wait = yield* routerOps.execWait(at);
-    const execId = yield* Effect.sync(() => crypto.randomUUID());
+    const execId = yield* Effect.sync(() => SecureRandom.uuidV4Unsafe());
     yield* start({
       taskId: id,
       execId,
@@ -804,7 +800,7 @@ export const sandboxHandle = (
     const follow = yield* routerOps.execStdioFollow(at);
     const poll = yield* routerOps.execPoll(at);
     const wait = yield* routerOps.execWait(at);
-    const execId = yield* Effect.sync(() => crypto.randomUUID());
+    const execId = yield* Effect.sync(() => SecureRandom.uuidV4Unsafe());
     yield* begin({
       taskId: id,
       execId,
@@ -878,7 +874,7 @@ export const sandboxHandle = (
     Effect.gen(function* () {
       // The router has no signal call: the command records its pid, and
       // `kill` signals it with a second command.
-      const pidFile = `/tmp/.alchemy-exec-${yield* Effect.sync(() => crypto.randomUUID())}.pid`;
+      const pidFile = `/tmp/.alchemy-exec-${yield* Effect.sync(() => SecureRandom.uuidV4Unsafe())}.pid`;
       const running = yield* startExec(
         ["sh", "-c", 'echo $$ > "$0"; exec "$@"', pidFile, ...argvOf(command)],
         options,
@@ -976,7 +972,7 @@ export const sandboxHandle = (
               ? "file"
               : "other",
         size: Number(size),
-        modifiedAt: new Date(Number(mtime) * 1000),
+        modifiedAt: DateTime.makeUnsafe(Number(mtime) * 1000),
       } satisfies SandboxFileStat;
     }),
     remove: Effect.fn(function* (path, options = {}) {
@@ -1052,7 +1048,7 @@ export const sandboxHandle = (
     snapshotFilesystem: (_timeout) =>
       viaRouter(routerOps.snapshotFilesystem, (op, task) =>
         Effect.flatMap(
-          Effect.sync(() => crypto.randomUUID()),
+          Effect.sync(() => SecureRandom.uuidV4Unsafe()),
           // -1: the snapshot image never expires.
           (snapshotId) => op({ taskId: task, snapshotId, ttlSeconds: "-1" }),
         ),
@@ -1070,7 +1066,7 @@ export const sandboxHandle = (
     snapshotMemory: () =>
       viaRouter(routerOps.snapshotMemory, (op, task) =>
         Effect.flatMap(
-          Effect.sync(() => crypto.randomUUID()),
+          Effect.sync(() => SecureRandom.uuidV4Unsafe()),
           (idempotencyKey) => op({ taskId: task, idempotencyKey }),
         ),
       ).pipe(

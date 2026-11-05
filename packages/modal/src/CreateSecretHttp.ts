@@ -21,7 +21,7 @@ export type SecretsOps = Effect.Success<typeof SecretsOps>;
 export const makeSecretsClient = (
   environment: Effect.Effect<string | undefined>,
   ops: SecretsOps,
-  prefix: Effect.Effect<string | undefined> = Effect.succeed(undefined),
+  prefix: Effect.Effect<string | undefined> = Effect.undefined,
 ): SecretsClientOf<never> => ({
   put: (name, env) =>
     Effect.flatMap(Effect.all([environment, prefix]), ([e, stamp]) =>
@@ -77,7 +77,7 @@ export const CreateSecretHttp = Layer.effect(
       role: "contributor",
       environmentOf: (environment?: Environment, _options?: CreateOptions) => environment?.name,
       make: Effect.fn(function* (ops, environment?: Environment, options?: CreateOptions) {
-        const name = environment ? yield* environment.name : Effect.succeed(undefined);
+        const name = environment ? yield* environment.name : Effect.undefined;
         const stamp = yield* runtimeStamp("secret", environment, options);
         return makeSecretsClient(name, ops, stamp);
       }),

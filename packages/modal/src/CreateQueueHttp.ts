@@ -30,7 +30,7 @@ const handleOf = (attributes: QueueAttributes, ops: QueuesOps, name: string): Qu
 export const makeQueuesClient = (
   environment: Effect.Effect<string | undefined>,
   ops: QueuesOps,
-  prefix: Effect.Effect<string | undefined> = Effect.succeed(undefined),
+  prefix: Effect.Effect<string | undefined> = Effect.undefined,
 ): QueuesClientOf<never> => ({
   getOrCreate: (name) =>
     Effect.flatMap(Effect.all([environment, prefix]), ([env, stamp]) =>
@@ -85,7 +85,7 @@ export const CreateQueueHttp = Layer.effect(
       role: "contributor",
       environmentOf: (environment?: Environment, _options?: CreateOptions) => environment?.name,
       make: Effect.fn(function* (ops, environment?: Environment, options?: CreateOptions) {
-        const name = environment ? yield* environment.name : Effect.succeed(undefined);
+        const name = environment ? yield* environment.name : Effect.undefined;
         const stamp = yield* runtimeStamp("queue", environment, options);
         return makeQueuesClient(name, ops, stamp);
       }),

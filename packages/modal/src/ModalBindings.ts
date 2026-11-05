@@ -157,7 +157,7 @@ export const Bind: Effect.Effect<BindHost> = Effect.gen(function* () {
         // `CredentialsRequired`.
         const creds = yield* resolve.pipe(orDieCredentialsUnavailable("Modal"));
         if (identity === "deployer") {
-          yield* runtime.set(TOKEN_ENV.id, Output.literal(Redacted.value(creds.tokenId)));
+          yield* runtime.set(TOKEN_ENV.id, creds.tokenId.pipe(Redacted.value, Output.literal));
           yield* runtime.set(TOKEN_ENV.secret, Output.literal(creds.tokenSecret));
         } else {
           const user = yield* Identity(`${host.LogicalId}ModalIdentity`, { scoped: true });
@@ -238,7 +238,7 @@ export const withCredentials: <Op>(
   operation: Effect.Effect<Op, never, OperationServices>,
 ) {
   const context = yield* operationContext;
-  const resolved = yield* (operation as Effect.Effect<Op>).pipe(Effect.provide(context));
+  const resolved = yield* operation.pipe(Effect.provide(context));
   return isWorkerd() ? overSocket(resolved) : resolved;
 });
 
@@ -288,6 +288,4 @@ export const withRouter =
     readonly url: string;
     readonly jwt: string;
   }): Effect.Effect<(input: I) => Effect.Effect<O, E>> =>
-    Effect.succeed((input: I) =>
-      (operation(input) as Effect.Effect<O, E>).pipe(withTaskCommandRouter(access, options)),
-    );
+    Effect.succeed((input: I) => operation(input).pipe(withTaskCommandRouter(access, options)));

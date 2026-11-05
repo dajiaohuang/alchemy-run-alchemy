@@ -30,7 +30,7 @@ const handleOf = (attributes: DictAttributes, ops: DictsOps, name: string): Dict
 export const makeDictsClient = (
   environment: Effect.Effect<string | undefined>,
   ops: DictsOps,
-  prefix: Effect.Effect<string | undefined> = Effect.succeed(undefined),
+  prefix: Effect.Effect<string | undefined> = Effect.undefined,
 ): DictsClientOf<never> => ({
   getOrCreate: (name) =>
     Effect.flatMap(Effect.all([environment, prefix]), ([env, stamp]) =>
@@ -85,7 +85,7 @@ export const CreateDictHttp = Layer.effect(
       role: "contributor",
       environmentOf: (environment?: Environment, _options?: CreateOptions) => environment?.name,
       make: Effect.fn(function* (ops, environment?: Environment, options?: CreateOptions) {
-        const name = environment ? yield* environment.name : Effect.succeed(undefined);
+        const name = environment ? yield* environment.name : Effect.undefined;
         const stamp = yield* runtimeStamp("dict", environment, options);
         return makeDictsClient(name, ops, stamp);
       }),

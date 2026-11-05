@@ -38,8 +38,7 @@ export class FunctionCallFailed extends Data.TaggedError("Modal.FunctionCallFail
 export type InvokeError =
   | FunctionLookupError
   | OpError<InvokeOps, "map" | "putInputs" | "getOutputs">
-  | ErrorOf<typeof uploadBlob>
-  | ErrorOf<typeof downloadBlob>
+  | ErrorOf<typeof uploadBlob | typeof downloadBlob>
   | FunctionCallFailed
   | FunctionCallTimeout;
 

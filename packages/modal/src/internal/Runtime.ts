@@ -121,52 +121,50 @@ const baseDefinition = (
     readonly startupTimeout: number;
   },
   mounts: ModalMounts,
-): functions.Function => {
-  return {
-    moduleName: ENTRYPOINT_MODULE,
-    functionName: context.tag,
-    definitionType: "DEFINITION_TYPE_FILE",
-    functionType: "FUNCTION_TYPE_FUNCTION",
-    resources: {
-      milliCpu: props.cpu !== undefined ? Math.round(props.cpu * 1000) : undefined,
-      milliCpuMax: props.cpuLimit !== undefined ? Math.round(props.cpuLimit * 1000) : undefined,
-      memoryMb: props.memory,
-      memoryMbMax: props.memoryLimit,
-      gpuConfig: gpuConfig(props.gpu),
-      ephemeralDiskMb: props.ephemeralDisk,
-    },
-    volumeMounts: mounts.volumeMounts,
-    cloudBucketMounts: mounts.cloudBucketMounts,
-    proxyId: idOf(props.proxy, "proxyId"),
-    timeoutSecs: Math.round(context.timeout),
-    startupTimeoutSecs: Math.round(context.startupTimeout),
-    cloudProviderStr: props.cloud ?? "",
-    appName: context.appName ?? "",
-    schedulerPlacement:
-      props.regions !== undefined || props.nonpreemptible
-        ? { regions: props.regions, nonpreemptible: props.nonpreemptible }
-        : undefined,
-    autoscalerSettings: {
-      minContainers: props.minContainers,
-      maxContainers: props.maxContainers,
-      bufferContainers: props.bufferContainers,
-      scaleupWindow: props.scaleupWindow,
-      scaledownWindow: props.scaledownWindow,
-    },
-    // Older mirrors of `autoscalerSettings` the Python client still sets.
-    warmPoolSize: props.minContainers ?? 0,
-    concurrencyLimit: props.maxContainers ?? 0,
-    ExperimentalBufferContainers: props.bufferContainers ?? 0,
-    taskIdleTimeoutSecs: props.scaledownWindow ?? 0,
-    checkpointingEnabled: props.enableMemorySnapshot,
-    blockNetwork: props.blockNetwork,
-    untrusted: props.restrictModalAccess,
-    i6pnEnabled: props.i6pn,
-    methodDefinitionsSet: true,
-    mountClientDependencies: true,
-    ExperimentalConcurrentCancellations: true,
-  };
-};
+): functions.Function => ({
+  moduleName: ENTRYPOINT_MODULE,
+  functionName: context.tag,
+  definitionType: "DEFINITION_TYPE_FILE",
+  functionType: "FUNCTION_TYPE_FUNCTION",
+  resources: {
+    milliCpu: props.cpu !== undefined ? Math.round(props.cpu * 1000) : undefined,
+    milliCpuMax: props.cpuLimit !== undefined ? Math.round(props.cpuLimit * 1000) : undefined,
+    memoryMb: props.memory,
+    memoryMbMax: props.memoryLimit,
+    gpuConfig: gpuConfig(props.gpu),
+    ephemeralDiskMb: props.ephemeralDisk,
+  },
+  volumeMounts: mounts.volumeMounts,
+  cloudBucketMounts: mounts.cloudBucketMounts,
+  proxyId: idOf(props.proxy, "proxyId"),
+  timeoutSecs: Math.round(context.timeout),
+  startupTimeoutSecs: Math.round(context.startupTimeout),
+  cloudProviderStr: props.cloud ?? "",
+  appName: context.appName ?? "",
+  schedulerPlacement:
+    props.regions !== undefined || props.nonpreemptible
+      ? { regions: props.regions, nonpreemptible: props.nonpreemptible }
+      : undefined,
+  autoscalerSettings: {
+    minContainers: props.minContainers,
+    maxContainers: props.maxContainers,
+    bufferContainers: props.bufferContainers,
+    scaleupWindow: props.scaleupWindow,
+    scaledownWindow: props.scaledownWindow,
+  },
+  // Older mirrors of `autoscalerSettings` the Python client still sets.
+  warmPoolSize: props.minContainers ?? 0,
+  concurrencyLimit: props.maxContainers ?? 0,
+  ExperimentalBufferContainers: props.bufferContainers ?? 0,
+  taskIdleTimeoutSecs: props.scaledownWindow ?? 0,
+  checkpointingEnabled: props.enableMemorySnapshot,
+  blockNetwork: props.blockNetwork,
+  untrusted: props.restrictModalAccess,
+  i6pnEnabled: props.i6pn,
+  methodDefinitionsSet: true,
+  mountClientDependencies: true,
+  ExperimentalConcurrentCancellations: true,
+});
 
 /**
  * The lifecycle shared by every Modal runtime: a function in an App whose

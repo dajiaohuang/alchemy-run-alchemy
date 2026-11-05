@@ -62,7 +62,7 @@ export const buildFromOptions = Effect.fn(function* (
 export const makeImagesClient = (
   appId: Effect.Effect<string>,
   ops: ImagesOps,
-  environment: Effect.Effect<string | undefined> = Effect.succeed(undefined),
+  environment: Effect.Effect<string | undefined> = Effect.undefined,
 ): ImagesClient => ({
   fromTag: (tag) =>
     Effect.gen(function* () {

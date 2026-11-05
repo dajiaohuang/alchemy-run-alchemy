@@ -1,5 +1,4 @@
 import * as Binding from "alchemy/Binding";
-import type { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as Effect from "effect/Effect";
 import type { Dict } from "./Dict.ts";
 import type { ReadDictClient } from "./DictClient.ts";

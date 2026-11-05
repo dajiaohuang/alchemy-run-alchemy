@@ -31,7 +31,7 @@ const handleOf = (attributes: VolumeAttributes, ops: VolumesOps, name: string): 
 export const makeVolumesClient = (
   environment: Effect.Effect<string | undefined>,
   ops: VolumesOps,
-  prefix: Effect.Effect<string | undefined> = Effect.succeed(undefined),
+  prefix: Effect.Effect<string | undefined> = Effect.undefined,
 ): VolumesClientOf<never> => ({
   getOrCreate: (name) =>
     Effect.flatMap(Effect.all([environment, prefix]), ([env, stamp]) =>
@@ -87,7 +87,7 @@ export const CreateVolumeHttp = Layer.effect(
       role: "contributor",
       environmentOf: (environment?: Environment, _options?: CreateOptions) => environment?.name,
       make: Effect.fn(function* (ops, environment?: Environment, options?: CreateOptions) {
-        const name = environment ? yield* environment.name : Effect.succeed(undefined);
+        const name = environment ? yield* environment.name : Effect.undefined;
         const stamp = yield* runtimeStamp("volume", environment, options);
         return makeVolumesClient(name, ops, stamp);
       }),

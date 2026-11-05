@@ -80,7 +80,7 @@ export const RuntimeStamp = Effect.gen(function* () {
     options: CreateOptions | undefined,
   ) {
     const runtime = yield* CurrentRuntimeContext;
-    if (runtime === undefined) return Effect.succeed<string | undefined>(undefined);
+    if (runtime === undefined) return Effect.undefined;
     const scope = environment === undefined ? "" : `_${sanitizeKey(environment.LogicalId)}`;
     const key = `MODAL_${kind.toUpperCase()}_PREFIX${scope.toUpperCase()}`;
     if (Objects !== undefined) {
