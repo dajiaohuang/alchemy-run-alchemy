@@ -3,6 +3,7 @@ import * as Binding from "alchemy/Binding";
 import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
 import { ApiAccess, RuntimePrefix } from "./ArchilBindings.ts";
 import { makeSandboxHandle, type SandboxHandle } from "./Clients.ts";
 import type { Image } from "./Image.ts";
@@ -156,7 +157,7 @@ export const CreateSandboxHttp = Layer.effect(
       // Forks are stamped like the sandboxes they come from, so destroy
       // sweeps them too; an unnamed fork gets a random name.
       const forkName = Effect.fn(function* (name: string | undefined) {
-        const id = yield* Effect.sync(() => crypto.randomUUID().slice(0, 8));
+        const id = (yield* Random.nextIntBetween(0, 2 ** 31)).toString(36);
         return yield* fullName(name ?? `fork-${id}`);
       });
       const handle = (s: { sandbox_id: string; name: string }) =>

@@ -379,7 +379,7 @@ export const deployProgram = Effect.fn(function* (input: {
       `archil-sandbox services logs ${shellQuote(input.name)} 2>&1 | tail -n 40`,
     ).pipe(
       Effect.map((r) => r.stdout),
-      Effect.catch(() => Effect.succeed("")),
+      Effect.orElseSucceed(() => ""),
     );
     return yield* new ProgramDeployFailed({
       program: input.name,

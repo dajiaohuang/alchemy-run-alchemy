@@ -3,7 +3,7 @@ import type { RuntimeContext } from "alchemy/RuntimeContext";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ApiAccess } from "./ArchilBindings.ts";
-import { makeSandboxOps, type SandboxHandle, type SandboxOps } from "./Clients.ts";
+import { makeSandboxOps, type SandboxOps } from "./Clients.ts";
 import type { Sandbox } from "./Sandbox.ts";
 
 /**

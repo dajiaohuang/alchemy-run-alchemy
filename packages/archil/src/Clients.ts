@@ -756,7 +756,7 @@ export const makeSandboxOps = (
         result.exitCode === 0
           ? Effect.succeed(result.stdout)
           : Effect.fail(
-              new Process.ProcessError({
+              Process.ProcessError.make({
                 message: `${what} failed (exit ${result.exitCode ?? result.status}): ${result.stderr.trim()}`,
               }),
             ),
